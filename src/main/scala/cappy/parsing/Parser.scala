@@ -14,7 +14,7 @@ object Parser:
     def currentPos: SourcePos = getPos(current)
     def previousPos: SourcePos = getPos(current - 1)
   enum ParseError extends Positioned:
-    case Here()
+    case Here(msg: String | Null = null)
     case When(inner: ParseError, what: String)
     def push(what: String): ParseError = When(this, what).withPos(this.pos)
   case class ParseResult[+A](nextState: ParserState, result: Either[ParseError, A]):
@@ -29,7 +29,7 @@ object Parser:
       )
 
   type ParseFn[+A] = ParserState => ParseResult[A]
-  
+
   trait ParseInfo:
     /** A description of what this parser is parsing */
     def what: String | Null
@@ -37,6 +37,12 @@ object Parser:
     def canMatch(state: ParserState): Boolean
     /** Whether this parser is anonymous */
     def anonymous: Boolean = what == null
+
+    def clearWhat: ParseInfo = 
+      val oldInfo = this
+      new ParseInfo:
+        def what = null
+        def canMatch(state: ParserState) = oldInfo.canMatch(state)
 
   trait Parser[+A]:
     def parse: ParseFn[A]
@@ -85,14 +91,14 @@ object Parser:
         p.runParser(state) match
           case ParseResult(nextState, Right(result)) => ParseResult(nextState, Right(f(result)))
           case ParseResult(nextState, Left(error)) => ParseResult(nextState, Left(error))
-      def info: ParseInfo = p.info
+      def info: ParseInfo = p.info.clearWhat
 
     def flatMap[B](f: A => Parser[B]): Parser[B] = new Parser[B]:
       def parse: ParseFn[B] = state =>
         p.runParser(state) match
           case ParseResult(nextState, Right(result)) => f(result).runParser(nextState)
           case ParseResult(nextState, Left(error)) => ParseResult(nextState, Left(error))
-      def info: ParseInfo = p.info
+      def info: ParseInfo = p.info.clearWhat
 
   extension [A <: Positioned](p: Parser[A])
     def positioned: Parser[A] = new Parser[A]:
@@ -104,7 +110,7 @@ object Parser:
             val endPos = nextState.previousPos
             val pos = startPos `merge` endPos
             ParseResult(nextState, Right(result.withPos(pos)))
-      def info: ParseInfo = p.info
+      def info: ParseInfo = p.info.clearWhat
 
   def pairP[A, B](pa: => Parser[A], pb: => Parser[B]): Parser[(A, B)] =
     for
@@ -120,9 +126,9 @@ object Parser:
     case _ => Nothing
 
   def chainP[X <: Tuple](ps: X): Parser[TupleParserResult[X]] = ps match
-    case EmptyTuple => pureP(EmptyTuple).asInstanceOf
-    case (pa: Parser[a]) *: ps => tupP(pa, chainP(ps)).asInstanceOf
-    case _ => assert(false, "invalid parser tuple")
+    case EmptyTuple => pureP(EmptyTuple).asInstanceOf[Parser[TupleParserResult[X]]]
+    case (pa: Parser[a]) *: ps => tupP(pa, chainP(ps)).asInstanceOf[Parser[TupleParserResult[X]]]
+    case ps => assert(false, s"invalid parser tuple: $ps")
 
   extension [A <: Tuple](p: A)
     def p: Parser[TupleParserResult[p.type]] = chainP(p)
@@ -163,6 +169,18 @@ object Parser:
     def info: ParseInfo = new ParseInfo:
       def what = null
       def canMatch(state: ParserState): Boolean = true  // it always succeeds
+
+  def tryP[A](p: Parser[A]): Parser[Option[A]] = new Parser[Option[A]]:
+    def parse: ParseFn[Option[A]] = state =>
+      if p.info.canMatch(state) then
+        p.runParser(state) match
+          case ParseResult(nextState, Right(result)) => ParseResult(nextState, Right(Some(result)))
+          case ParseResult(nextState, Left(error)) => ParseResult(nextState, Left(error))
+      else
+        ParseResult(state, Right(None))
+    def info: ParseInfo = new ParseInfo:
+      def what = null
+      def canMatch(state: ParserState): Boolean = true  // it can always match
 
   def orP[A, B](p1: => Parser[A], p2: => Parser[B]): Parser[A | B] = new Parser[A | B]:
     def parse: ParseFn[A | B] = state =>
@@ -209,5 +227,55 @@ object Parser:
       def what = null
       def canMatch(state: ParserState): Boolean = true
 
+  def sepBy1P[A, B](p: Parser[A], sep: Parser[B]): Parser[List[A]] = new Parser[List[A]]:
+    def parse: ParseFn[List[A]] = state =>
+      sepByP(p, sep).runParser(state) match
+        case ParseResult(nextState, Right(result)) => 
+          if result.isEmpty then
+            ParseResult(nextState, Left(ParseError.Here("expected at least one element").withPos(nextState.currentPos)))
+          else
+            ParseResult(nextState, Right(result))
+        case ParseResult(nextState, Left(error)) => ParseResult(nextState, Left(error))
+    def info: ParseInfo =
+      new ParseInfo:
+        def what = null
+        def canMatch(state: ParserState): Boolean = p.info.canMatch(state)
+
   def tokenP[T <: Token: ClassTag]: Parser[T] = 
     predP(token => implicitly[ClassTag[T]].runtimeClass.isInstance(token)).map(_.asInstanceOf[T])
+
+  def surroundedByP[A](open: Parser[Any], close: Parser[Any], p: Parser[A]): Parser[A] =
+    (open, p, close).p.map((_, x, _) => x)
+
+  extension [A](p: Parser[A])
+    def surroundedBy(open: Parser[Any], close: Parser[Any]): Parser[A] =
+      surroundedByP(open, close, p)
+
+    def many: Parser[List[A]] =
+      manyP(p)
+
+    def many1: Parser[List[A]] =
+      many1P(p)
+
+    def sepBy(sep: Parser[Any]): Parser[List[A]] =
+      sepByP(p, sep)
+
+    def sepBy1(sep: Parser[Any]): Parser[List[A]] =
+      sepBy1P(p, sep)
+
+    def or[B >: A](p2: => Parser[B]): Parser[B] =
+      orP(p, p2)
+
+    def optional: Parser[Option[A]] =
+      optionalP(p)
+
+    def tryIt: Parser[Option[A]] =
+      tryP(p)
+
+  def lazyP[A](p: => Parser[A]): Parser[A] = new Parser[A]:
+    lazy val inner: Parser[A] = p
+    def parse: ParseFn[A] = state =>
+      inner.runParser(state)
+    def info: ParseInfo = new ParseInfo:
+      def what = null
+      def canMatch(state: ParserState): Boolean = inner.info.canMatch(state)

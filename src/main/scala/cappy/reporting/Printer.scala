@@ -3,6 +3,7 @@ package reporting
 
 import core.*
 import io.SourceFile
+import parsing.Parser.*
 
 object Printer:
   def showSourcePos(pos: SourcePos, message: List[String]): String =
@@ -69,3 +70,17 @@ object Printer:
       }
 
     sb.result()
+
+  def showParseError(error: ParseError): String =
+    def collectDescs(err: ParseError): List[String] = err match
+      case ParseError.Here(msg) =>
+        if msg == null then
+          List("parsing error")
+        else
+          List("parsing error: " + msg)
+      case ParseError.When(inner, desc) => ("when parsing " + desc) :: collectDescs(inner)
+    val msgs = collectDescs(error).reverse
+    showSourcePos(error.pos, msgs)
+
+  extension (err: ParseError)
+    def show: String = showParseError(err)
