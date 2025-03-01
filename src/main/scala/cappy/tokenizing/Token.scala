@@ -1,4 +1,4 @@
-package cappy.tokenizer
+package cappy.tokenizing
 import cappy.core.Positioned
 
 enum Token extends Positioned:

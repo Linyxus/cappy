@@ -1,7 +1,7 @@
 import cappy.*
 import core.*
 import io.*
-import tokenizer.*
+import tokenizing.*
 import reporting.*
 import cappy.reporting.Printer.showSourcePos
 

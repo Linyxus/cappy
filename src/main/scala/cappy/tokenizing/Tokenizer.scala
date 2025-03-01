@@ -1,4 +1,4 @@
-package cappy.tokenizer
+package cappy.tokenizing
 import cappy.io.SourceFile
 import cappy.core.*
 import scala.compiletime.ops.double
