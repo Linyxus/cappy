@@ -3,7 +3,7 @@ import core.*
 import io.*
 import tokenizing.*
 import reporting.*
-import cappy.reporting.Printer.showSourcePos
+import Printer.*
 
 @main def hello(): Unit =
   val source = SourceFile("test", """
