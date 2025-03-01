@@ -79,44 +79,44 @@ class Tokenizer(source: SourceFile):
   def nextToken(): Token | Error =
     val hasNewLine = skipWhitespaces()
 
-    if isAtEnd then Token.EOF.withCurrentPos
+    if isAtEnd then Token.EOF().withCurrentPos
     else if hasNewLine then
       if currentIndent > lastIndent then
         indent(currentIndent)
-        Token.INDENT.withCurrentPos
+        Token.INDENT().withCurrentPos
       else if currentIndent < lastIndent then
         dedent()
         if currentIndent == lastIndent then
-          Token.NEWLINE.withCurrentPos
+          Token.NEWLINE().withCurrentPos
         else
           Error(s"Invalid indentation level: $currentIndent, expected $lastIndent")
       else
-        Token.NEWLINE.withCurrentPos
+        Token.NEWLINE().withCurrentPos
     else withPosition:
       forward() match
         case '"' =>
           val startPos = currentPos - 1
-          var isClosed = false
           while !isAtEnd && peek != '"' && peek != '\n' && peek != '\r' do
-            if peek == '"' then isClosed = true
             advance()
-          if !isClosed then
-            Error("Unclosed string literal")
-          else
+          if !isAtEnd && peek == '"' then
+            advance()
             val content = source.content.substring(startPos, currentPos)
             Token.STR(content)
-        case '=' if expectChar('>') => Token.FAT_ARROW
-        case '=' => Token.EQUAL
-        case '(' => Token.LPAREN
-        case ')' => Token.RPAREN
-        case '[' => Token.LBRACK
-        case ']' => Token.RBRACK
-        case ':' => Token.COLON
-        case ',' => Token.COMMA
-        case '{' => Token.LBRACE
-        case '}' => Token.RBRACE
-        case '^' => Token.HAT
-        case '-' if expectChar('>') => Token.ARROW
+          else
+            val what = if isAtEnd then "end of file" else "new line"
+            Error(s"Unclosed string literal, unexpected $what")
+        case '=' if expectChar('>') => Token.FAT_ARROW()
+        case '=' => Token.EQUAL()
+        case '(' => Token.LPAREN()
+        case ')' => Token.RPAREN()
+        case '[' => Token.LBRACK()
+        case ']' => Token.RBRACK()
+        case ':' => Token.COLON()
+        case ',' => Token.COMMA()
+        case '{' => Token.LBRACE()
+        case '}' => Token.RBRACE()
+        case '^' => Token.HAT()
+        case '-' if expectChar('>') => Token.ARROW()
         case ch if ch.isLetter =>
           val startPos = currentPos - 1
           while !isAtEnd && peek.isLetterOrDigit do
