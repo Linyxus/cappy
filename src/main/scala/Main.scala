@@ -10,7 +10,7 @@ import Parsers.*
 
 @main def hello(): Unit =
   val source = SourceFile("test", """
-[cap C, D] -> Int
+(xs: List[Int], op: (_: Int) -> Int) -> List[Int]
 """.strip())
   val tokens = Tokenizer.tokenize(source)
   tokens.foreach: token =>
@@ -18,7 +18,7 @@ import Parsers.*
     println(msg)
   val tokenArray = (tokens.collect { case token: Token => token }).toArray
   val state = ParserState(tokenArray, 0)
-  captureArrowP.runParser(state) match
+  typeP.runParser(state) match
     case ParseResult(nextState, Left(err)) => println(err.show)
     case ParseResult(nextState, Right(result)) =>
       println(Printer.showSourcePos(result.pos, List(result.toString)))

@@ -14,9 +14,9 @@ object Parsers:
   def typeP: Parser[Type] = lazyP:
     longestMatch(
       termArrowP,
-      capturingTypeP,
       typeArrowP,
       captureArrowP,
+      capturingTypeP,
     )
 
   def typeAtomP: Parser[Type] = longestMatch(

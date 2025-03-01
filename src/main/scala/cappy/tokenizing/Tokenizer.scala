@@ -118,6 +118,7 @@ class Tokenizer(source: SourceFile):
         case '^' => Token.HAT()
         case '-' if expectChar('>') => Token.ARROW()
         case '<' if expectChar(':') => Token.LESSCOLON()
+        case '_' => Token.IDENT("_")
         case ch if ch.isLetter =>
           val startPos = currentPos - 1
           while !isAtEnd && peek.isLetterOrDigit do
