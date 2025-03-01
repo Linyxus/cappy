@@ -1,16 +1,32 @@
 package cappy.parsing
 import cappy.tokenizing.*
 import cappy.core.*
+import scala.reflect.ClassTag
 
 object Parser:
   case class ParserState(tokens: Array[Token], current: Int):
     def advance: ParserState = copy(current = current + 1)
     def currentToken: Option[Token] = if current < tokens.length then Some(tokens(current)) else None
-  case class ParseError(msg: String) extends Positioned
-  case class ParseTraceFrame(start: Int, end: Int, what: String | Null)
+    def getPos(idx: Int): SourcePos =
+      if idx < 0 then tokens.head.pos
+      else if idx >= tokens.length then tokens.last.pos
+      else tokens(idx).pos
+    def currentPos: SourcePos = getPos(current)
+    def previousPos: SourcePos = getPos(current - 1)
+  enum ParseError extends Positioned:
+    case Here()
+    case When(inner: ParseError, what: String)
+    def push(what: String): ParseError = When(this, what).withPos(this.pos)
   case class ParseResult[+A](nextState: ParserState, result: Either[ParseError, A]):
     def isOk: Boolean = result.isRight
     def isError: Boolean = result.isLeft
+
+    def push(what: String): ParseResult[A] = 
+      copy(
+        result = result match
+          case Left(err) => Left(err.push(what))
+          case Right(res) => Right(res)
+      )
 
   type ParseFn[+A] = ParserState => ParseResult[A]
   
@@ -26,6 +42,14 @@ object Parser:
     def parse: ParseFn[A]
     def info: ParseInfo
 
+    def runParser(state: ParserState): ParseResult[A] = 
+      if info.anonymous then
+        parse(state)
+      else
+        val start = state.current
+        val res = parse(state)
+        val end = res.nextState.current
+        res.push(info.what)
 
     def withInfo(newInfo: ParseInfo): Parser[A] = 
       val fn = parse
@@ -44,7 +68,7 @@ object Parser:
     def parse: ParseFn[Token] = state =>
       state.currentToken match
         case Some(token) if pred(token) => ParseResult(state.advance, Right(token))
-        case _ => ParseResult(state, Left(ParseError(s"predicate failed")))
+        case _ => ParseResult(state, Left(ParseError.Here().withPos(state.currentPos)))
     def info: ParseInfo = new ParseInfo:
       def what = desc
       def canMatch(state: ParserState): Boolean = state.currentToken.exists(pred)
@@ -58,18 +82,29 @@ object Parser:
   extension [A](p: Parser[A])
     def map[B](f: A => B): Parser[B] = new Parser[B]:
       def parse: ParseFn[B] = state =>
-        p.parse(state) match
+        p.runParser(state) match
           case ParseResult(nextState, Right(result)) => ParseResult(nextState, Right(f(result)))
           case ParseResult(nextState, Left(error)) => ParseResult(nextState, Left(error))
       def info: ParseInfo = p.info
 
     def flatMap[B](f: A => Parser[B]): Parser[B] = new Parser[B]:
       def parse: ParseFn[B] = state =>
-        p.parse(state) match
-          case ParseResult(nextState, Right(result)) => f(result).parse(nextState)
+        p.runParser(state) match
+          case ParseResult(nextState, Right(result)) => f(result).runParser(nextState)
           case ParseResult(nextState, Left(error)) => ParseResult(nextState, Left(error))
       def info: ParseInfo = p.info
 
+  extension [A <: Positioned](p: Parser[A])
+    def positioned: Parser[A] = new Parser[A]:
+      def parse: ParseFn[A] = state =>
+        val startPos = state.currentPos
+        p.runParser(state) match
+          case ParseResult(nextState, Left(err)) => ParseResult(nextState, Left(err))
+          case ParseResult(nextState, Right(result)) => 
+            val endPos = nextState.previousPos
+            val pos = startPos `merge` endPos
+            ParseResult(nextState, Right(result.withPos(pos)))
+      def info: ParseInfo = p.info
 
   def pairP[A, B](pa: => Parser[A], pb: => Parser[B]): Parser[(A, B)] =
     for
@@ -104,7 +139,7 @@ object Parser:
       while !succeed && current < ps.length do
         val p = ps(current)
         if p.info.canMatch(state) then
-          val res = p.parse(state)
+          val res = p.runParser(state)
           if res.isOk then
             succeed = true
             longest = res.nextState.current
@@ -122,7 +157,7 @@ object Parser:
 
   def optionalP[A](p: Parser[A]): Parser[Option[A]] = new Parser[Option[A]]:
     def parse: ParseFn[Option[A]] = state =>
-      p.parse(state) match
+      p.runParser(state) match
         case ParseResult(nextState, Right(result)) => ParseResult(nextState, Right(Some(result)))
         case ParseResult(nextState, Left(error)) => ParseResult(nextState, Right(None))
     def info: ParseInfo = new ParseInfo:
@@ -132,11 +167,11 @@ object Parser:
   def orP[A, B](p1: => Parser[A], p2: => Parser[B]): Parser[A | B] = new Parser[A | B]:
     def parse: ParseFn[A | B] = state =>
       if p1.info.canMatch(state) then
-        p1.parse(state) match
+        p1.runParser(state) match
           case ParseResult(nextState, Right(result)) => ParseResult(nextState, Right(result))
-          case ParseResult(nextState, Left(_)) => p2.parse(state)
+          case ParseResult(nextState, Left(_)) => p2.runParser(state)
       else
-        p2.parse(state)
+        p2.runParser(state)
     def info: ParseInfo = new ParseInfo:
       def what = null
       def canMatch(state: ParserState): Boolean = p1.info.canMatch(state) || p2.info.canMatch(state)
@@ -145,11 +180,11 @@ object Parser:
     def parse: ParseFn[List[A]] = state =>
       var results = List[A]()
       var nowState = state
-      var nowResult: ParseResult[A] = p.parse(nowState)
+      var nowResult: ParseResult[A] = p.runParser(nowState)
       while nowResult.isOk do
         nowState = nowResult.nextState
         results = nowResult.result.right.get :: results
-        nowResult = p.parse(nowState)
+        nowResult = p.runParser(nowState)
       ParseResult(nowState, Right(results))
 
     def info: ParseInfo = new ParseInfo:
@@ -163,14 +198,16 @@ object Parser:
     def parse: ParseFn[List[A]] = state =>
       var results: List[A] = List()
       var nowState: ParserState = state
-      var nowResult: ParseResult[A] = p.parse(nowState)
+      var nowResult: ParseResult[A] = p.runParser(nowState)
       while nowResult.isOk do
         nowState = nowResult.nextState
         results = nowResult.result.right.get :: results
-        nowResult = (sep, p).p.map((_, a) => a).parse(nowState)
+        nowResult = (sep, p).p.map((_, a) => a).runParser(nowState)
       ParseResult(nowState, Right(results.reverse))
 
     def info: ParseInfo = new ParseInfo:
       def what = null
       def canMatch(state: ParserState): Boolean = true
-    
+
+  def tokenP[T <: Token: ClassTag]: Parser[T] = 
+    predP(token => implicitly[ClassTag[T]].runtimeClass.isInstance(token)).map(_.asInstanceOf[T])
