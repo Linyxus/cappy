@@ -78,6 +78,10 @@ class Tokenizer(source: SourceFile):
 
   var needNewLine = false
 
+  def consumeInt(): Unit =
+    while !isAtEnd && peek.isDigit do
+      advance()
+
   def nextToken(): Token | Error =
     if needNewLine then
       needNewLine = false
@@ -123,8 +127,16 @@ class Tokenizer(source: SourceFile):
           case '}' => Token.RBRACE()
           case '^' => Token.HAT()
           case '-' if expectChar('>') => Token.ARROW()
+          case '-' if peek.isDigit =>
+            var startPos = currentPos - 1
+            consumeInt()
+            Token.INT(source.content.substring(startPos, currentPos))
           case '<' if expectChar(':') => Token.LESSCOLON()
           case '_' => Token.IDENT("_")
+          case ch if ch.isDigit =>
+            var startPos = currentPos - 1
+            consumeInt()
+            Token.INT(source.content.substring(startPos, currentPos))
           case ch if ch.isLetter =>
             val startPos = currentPos - 1
             while !isAtEnd && peek.isLetterOrDigit do

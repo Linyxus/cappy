@@ -225,7 +225,7 @@ object Parser:
         nowState = nowResult.nextState
         results = nowResult.result.right.get :: results
         nowResult = p.runParser(nowState)
-      ParseResult(nowState, Right(results))
+      ParseResult(nowState, Right(results.reverse))
 
     def info: ParseInfo = new ParseInfo:
       def what = null

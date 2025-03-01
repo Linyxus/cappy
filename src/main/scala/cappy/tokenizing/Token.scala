@@ -4,6 +4,7 @@ import cappy.core.Positioned
 enum Token extends Positioned:
   case IDENT(name: String)  // Variable or function name
   case STR(content: String)  // string literal
+  case INT(content: String)  // integer literal
   case EQUAL()  // =
   case LPAREN()  // (
   case RPAREN()  // )

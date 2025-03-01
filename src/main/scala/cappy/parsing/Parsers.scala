@@ -28,10 +28,14 @@ object Parsers:
       applyP,
       blockP,
       stringLitP,
+      intLitP,
     )
 
   def stringLitP: Parser[Term] =
     tokenP[Token.STR].map(t => Term.StrLit(t.content.substring(1, t.content.length - 1))).positioned
+
+  def intLitP: Parser[Term] =
+    tokenP[Token.INT].map(t => Term.IntLit(t.content.toInt)).positioned
 
   def blockP: Parser[Term] = 
     val clauseP: Parser[Definition | Term] = orP(
@@ -82,7 +86,7 @@ object Parsers:
   enum ApplyClause:
     case TermApply(terms: List[Term])
     case TypeApply(types: List[Type])
-    case CaptureApply(captures: List[CaptureRef])
+    case CaptureApply(captures: List[CaptureSet])
 
   def termApplyClauseP: Parser[ApplyClause] =
     termP
@@ -97,9 +101,9 @@ object Parsers:
       .map(types => ApplyClause.TypeApply(types))
 
   def captureApplyClauseP: Parser[ApplyClause] =
-    captureRefP
-      .sepBy(tokenP[Token.COMMA])
-      .surroundedBy((tokenP[Token.LBRACE], keywordP("cap")).p, tokenP[Token.RBRACE])
+    captureSetP
+      .sepBy1(tokenP[Token.COMMA])
+      .surroundedBy((tokenP[Token.LBRACK], keywordP("cap")).p, tokenP[Token.RBRACK])
       .map(captures => ApplyClause.CaptureApply(captures))
   
   def applyP: Parser[Term] =
