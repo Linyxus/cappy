@@ -10,6 +10,7 @@ enum Token extends Positioned:
   case LBRACK()  // [
   case RBRACK()  // ]
   case COLON()  // :
+  case LESSCOLON()  // <:
   case COMMA()  // ,
   case LBRACE() // {
   case RBRACE() // }

@@ -281,3 +281,9 @@ object Parser:
     def info: ParseInfo = new ParseInfo:
       def what = null
       def canMatch(state: ParserState): Boolean = inner.info.canMatch(state)
+
+  def keywordP(name: String): Parser[Unit] =
+    val p = predP:
+      case Token.IDENT(name) if name == name => true
+      case _ => false
+    p.map(_ => ())
