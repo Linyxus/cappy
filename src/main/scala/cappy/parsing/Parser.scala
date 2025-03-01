@@ -155,7 +155,9 @@ object Parser:
               longest = res.nextState.current
               result = res
         current += 1
-      result
+      if result == null then
+        ParseResult(state, Left(ParseError.Here().withPos(state.currentPos)))
+      else result
 
     def info: ParseInfo = new ParseInfo:
       def what = null

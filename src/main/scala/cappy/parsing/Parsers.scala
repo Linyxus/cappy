@@ -11,9 +11,30 @@ object Parsers:
 
   def termP: Parser[Term] = identP
 
-  def typeP: Parser[Type] = capturingTypeP
+  def typeP: Parser[Type] = lazyP:
+    longestMatch(
+      termArrowP,
+      capturingTypeP,
+    )
 
-  def typeAtomP: Parser[Type] = typeIdentP
+  def typeAtomP: Parser[Type] = longestMatch(
+    typeIdentP,
+    typeP.surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN]),
+  )
+
+  def termParamP: Parser[TermParam] =
+    (tokenP[Token.IDENT], tokenP[Token.COLON], typeP).p.map((name, _, tpe) => TermParam(name.name, tpe)).positioned.withWhat("a term parameter")
+
+  def termArrowP: Parser[Type] = 
+    val paramsP = termParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
+    val arrowP = tokenP[Token.ARROW]
+    val capsP = captureSetP.withWhat("a capture set after an arrow")
+    val p = (paramsP, arrowP, capsP.tryIt, typeP).p.map: (params, _, maybeCaps, resultType) =>
+      val arrowType = Type.Arrow(params, resultType)
+      maybeCaps match
+        case Some(cs) => Type.Capturing(arrowType, cs)
+        case None => arrowType
+    p.positioned.withWhat("a term function type")
 
   def typeIdentP: Parser[Type] = tokenP[Token.IDENT].map(t => Type.Ident(t.name)).positioned
 
