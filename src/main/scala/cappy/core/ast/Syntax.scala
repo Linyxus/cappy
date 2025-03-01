@@ -14,12 +14,14 @@ object Syntax:
   enum Term extends Positioned:
     case Ident(name: String)
     case StrLit(value: String)
+    case UnitLit()
     case Lambda(params: List[TermParam], body: Term)
     case TypeLambda(params: List[TypeParam], body: Term)
     case CaptureLambda(params: List[CaptureParam], body: Term)
     case Apply(fun: Term, args: List[Term])
     case TypeApply(term: Term, targs: List[Type])
     case CaptureApply(term: Term, captures: List[CaptureRef])
+    case Block(defs: List[Definition], expr: Term)
 
   enum Definition extends Positioned:
     case ValDef(name: String, tpe: Option[Type], expr: Term)

@@ -1,12 +1,35 @@
 package cappy
 
 import io.*
+import core.ast.*
 import tokenizing.*
 import parsing.*
 import reporting.*
 import Printer.*
 
 object Compiler:
+  enum ParseResult:
+    case TokenizationError(err: Tokenizer.Error)
+    case ParsingError(err: Parser.ParseError)
+    case Ok(result: List[Syntax.Definition])
+
+  def parse(source: SourceFile): ParseResult =
+    val tokens = Tokenizer.tokenize(source)
+    val errTokens = tokens.collect { case err: Tokenizer.Error => err }
+    if errTokens.nonEmpty then
+      ParseResult.TokenizationError(errTokens.head)
+    else
+      // println("Tokenization successful")
+      val tokenArray = (tokens.collect { case token: Token => token }).toArray
+      // tokenArray.foreach: token =>
+      //   println(Printer.showSourcePos(token.pos, List(token.toString)))
+      val state = Parser.ParserState(tokenArray, 0)
+      Parsers.programP.runParser(state) match
+        case Parser.ParseResult(nextState, Left(err)) =>
+          ParseResult.ParsingError(err)
+        case Parser.ParseResult(nextState, Right(result)) =>
+          ParseResult.Ok(result)
+
   def compile(source: SourceFile): Unit =
     val tokens = Tokenizer.tokenize(source)
     val errTokens = tokens.collect { case err: Tokenizer.Error => err }
@@ -20,7 +43,7 @@ object Compiler:
       tokenArray.foreach: token =>
         println(Printer.showSourcePos(token.pos, List(token.toString)))
       val state = Parser.ParserState(tokenArray, 0)
-      Parsers.termP.runParser(state) match
+      Parsers.definitionP.runParser(state) match
         case Parser.ParseResult(nextState, Left(err)) =>
           println(err.show)
         case Parser.ParseResult(nextState, Right(result)) =>

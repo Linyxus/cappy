@@ -85,6 +85,16 @@ object Parser:
       def what = desc
       def canMatch(state: ParserState): Boolean = true
 
+  def wsUntilEndP: Parser[Unit] = new Parser[Unit]:
+    def parse: ParseFn[Unit] = state =>
+      if (state.current `until` state.tokens.size).forall(i => state.tokens(i).isWhitespaceOrEOF) then
+        ParseResult(state.copy(current = state.tokens.size), Right(()))
+      else
+        ParseResult(state, Left(ParseError.Here(s"expecting EOF, but there is non-consumed input").withPos(state.currentPos)))
+    def info: ParseInfo = new ParseInfo:
+      def what = null
+      def canMatch(state: ParserState): Boolean = true
+
   extension [A](p: Parser[A])
     def map[B](f: A => B): Parser[B] = new Parser[B]:
       def parse: ParseFn[B] = state =>
@@ -196,6 +206,16 @@ object Parser:
       def what = null
       def canMatch(state: ParserState): Boolean = p1.info.canMatch(state) || p2.info.canMatch(state)
 
+  def chooseP[A, B](p1: => Parser[A], p2: => Parser[B]): Parser[A | B] = new Parser[A | B]:
+    def parse: ParseFn[A | B] = state =>
+      if p1.info.canMatch(state) then
+        p1.runParser(state)
+      else
+        p2.runParser(state)
+    def info: ParseInfo = new ParseInfo:
+      def what = null
+      def canMatch(state: ParserState): Boolean = p1.info.canMatch(state) || p2.info.canMatch(state)
+
   def manyP[A](p: Parser[A]): Parser[List[A]] = new Parser[List[A]]:
     def parse: ParseFn[List[A]] = state =>
       var results = List[A]()
@@ -281,6 +301,12 @@ object Parser:
     def info: ParseInfo = new ParseInfo:
       def what = null
       def canMatch(state: ParserState): Boolean = inner.info.canMatch(state)
+
+  def fail(msg: String): Parser[Nothing] = new Parser[Nothing]:
+    def parse: ParseFn[Nothing] = state => ParseResult(state, Left(ParseError.Here(msg).withPos(state.currentPos)))
+    def info: ParseInfo = new ParseInfo:
+      def what = null
+      def canMatch(state: ParserState): Boolean = false
 
   def keywordP(name: String): Parser[Unit] =
     val p = predP:

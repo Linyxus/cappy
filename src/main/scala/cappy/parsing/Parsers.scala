@@ -6,6 +6,17 @@ object Parsers:
   import Syntax.*
   import Parser.*
 
+  def valDefP: Parser[Definition] =
+    val tpeP = (tokenP[Token.COLON], typeP).p.map((_, tpe) => tpe)
+    val p = (keywordP("val"), tokenP[Token.IDENT], tpeP.tryIt, tokenP[Token.EQUAL], termP).p.map: (_, tk, maybeTpe, _, body) =>
+      Definition.ValDef(tk.name, maybeTpe, body)
+    p.positioned.withWhat("a value definition")
+
+  def definitionP: Parser[Definition] = valDefP
+
+  def programP: Parser[List[Definition]] =
+    (tokenP[Token.NEWLINE].optional, valDefP.sepBy(tokenP[Token.NEWLINE]), wsUntilEndP).p.map((_, defs, _) => defs)
+
   def identP: Parser[Term] = 
     tokenP[Token.IDENT].map(t => Term.Ident(t.name)).positioned
 
@@ -15,7 +26,32 @@ object Parsers:
       typeLambdaP,
       captureLambdaP,
       applyP,
+      blockP,
+      stringLitP,
     )
+
+  def stringLitP: Parser[Term] =
+    tokenP[Token.STR].map(t => Term.StrLit(t.content.substring(1, t.content.length - 1))).positioned
+
+  def blockP: Parser[Term] = 
+    val clauseP: Parser[Definition | Term] = orP(
+      valDefP,
+      termP,
+    ).withWhat("a clause in a block")
+    val clausesP = clauseP.sepBy(tokenP[Token.NEWLINE])
+    val p = (tokenP[Token.INDENT], clausesP, tokenP[Token.DEDENT].optional).p.flatMap: (_, clauses, _) =>
+      if clauses.isEmpty then
+        fail("A block must contain at least one clause")
+      else
+        clauses.last match
+          case _: Definition.ValDef =>
+            fail(s"The last clause in a block must be a term, but got: $clauses")
+          case term: Term =>
+            val defs = clauses.init.map:
+              case defn: Definition => defn
+              case term: Term => Definition.ValDef("_", None, term).withPos(term.pos)
+            pureP(Term.Block(defs, term))
+    p.positioned.withWhat("a block expression")
 
   def termAtomP: Parser[Term] = longestMatch(
     identP,

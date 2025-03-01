@@ -21,3 +21,7 @@ enum Token extends Positioned:
   case INDENT()  // >>> indent
   case DEDENT()  // <<< dedent
   case NEWLINE()  // new line with same indentation
+
+  def isWhitespaceOrEOF: Boolean = this match
+    case INDENT() | DEDENT() | NEWLINE() | EOF() => true
+    case _ => false

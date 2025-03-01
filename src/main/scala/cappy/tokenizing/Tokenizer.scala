@@ -76,55 +76,62 @@ class Tokenizer(source: SourceFile):
       advance()
     skippedNewline
 
+  var needNewLine = false
+
   def nextToken(): Token | Error =
-    val hasNewLine = skipWhitespaces()
-    if isAtEnd then Token.EOF().withCurrentPos
-    else if hasNewLine then
+    if needNewLine then
+      needNewLine = false
+      Token.NEWLINE().withCurrentPos
+    else
+      val hasNewLine = skipWhitespaces()
+      if isAtEnd then Token.EOF().withCurrentPos
+      else if hasNewLine then
       if currentIndent > lastIndent then
         indent(currentIndent)
         Token.INDENT().withCurrentPos
       else if currentIndent < lastIndent then
         dedent()
         if currentIndent == lastIndent then
-          Token.NEWLINE().withCurrentPos
+          needNewLine = true
+          Token.DEDENT().withCurrentPos
         else
           Error(s"Invalid indentation level: $currentIndent, expected $lastIndent")
       else
         Token.NEWLINE().withCurrentPos
-    else withPosition:
-      forward() match
-        case '"' =>
-          val startPos = currentPos - 1
-          while !isAtEnd && peek != '"' && peek != '\n' && peek != '\r' do
-            advance()
-          if !isAtEnd && peek == '"' then
-            advance()
+      else withPosition:
+        forward() match
+          case '"' =>
+            val startPos = currentPos - 1
+            while !isAtEnd && peek != '"' && peek != '\n' && peek != '\r' do
+              advance()
+            if !isAtEnd && peek == '"' then
+              advance()
+              val content = source.content.substring(startPos, currentPos)
+              Token.STR(content)
+            else
+              val what = if isAtEnd then "end of file" else "new line"
+              Error(s"Unclosed string literal, unexpected $what")
+          case '=' if expectChar('>') => Token.FAT_ARROW()
+          case '=' => Token.EQUAL()
+          case '(' => Token.LPAREN()
+          case ')' => Token.RPAREN()
+          case '[' => Token.LBRACK()
+          case ']' => Token.RBRACK()
+          case ':' => Token.COLON()
+          case ',' => Token.COMMA()
+          case '{' => Token.LBRACE()
+          case '}' => Token.RBRACE()
+          case '^' => Token.HAT()
+          case '-' if expectChar('>') => Token.ARROW()
+          case '<' if expectChar(':') => Token.LESSCOLON()
+          case '_' => Token.IDENT("_")
+          case ch if ch.isLetter =>
+            val startPos = currentPos - 1
+            while !isAtEnd && peek.isLetterOrDigit do
+              advance()
             val content = source.content.substring(startPos, currentPos)
-            Token.STR(content)
-          else
-            val what = if isAtEnd then "end of file" else "new line"
-            Error(s"Unclosed string literal, unexpected $what")
-        case '=' if expectChar('>') => Token.FAT_ARROW()
-        case '=' => Token.EQUAL()
-        case '(' => Token.LPAREN()
-        case ')' => Token.RPAREN()
-        case '[' => Token.LBRACK()
-        case ']' => Token.RBRACK()
-        case ':' => Token.COLON()
-        case ',' => Token.COMMA()
-        case '{' => Token.LBRACE()
-        case '}' => Token.RBRACE()
-        case '^' => Token.HAT()
-        case '-' if expectChar('>') => Token.ARROW()
-        case '<' if expectChar(':') => Token.LESSCOLON()
-        case '_' => Token.IDENT("_")
-        case ch if ch.isLetter =>
-          val startPos = currentPos - 1
-          while !isAtEnd && peek.isLetterOrDigit do
-            advance()
-          val content = source.content.substring(startPos, currentPos)
-          Token.IDENT(content)
-        case ch => Error(f"Unrecognised character: $ch")
+            Token.IDENT(content)
+          case ch => Error(f"Unrecognised character: $ch")
 
 object Tokenizer:
   case class Error(msg: String) extends Positioned
