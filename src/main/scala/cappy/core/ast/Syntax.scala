@@ -15,7 +15,7 @@ object Syntax:
     case Ident(name: String)
     case StrLit(value: String)
     case Lambda(params: List[TermParam], body: Term)
-    case TypeLambda(params: List[TypeParam], body: Type)
+    case TypeLambda(params: List[TypeParam], body: Term)
     case CaptureLambda(params: List[CaptureParam], body: Term)
     case Apply(fun: Term, args: List[Term])
     case TypeApply(term: Term, targs: List[Type])

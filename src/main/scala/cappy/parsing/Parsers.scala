@@ -9,7 +9,79 @@ object Parsers:
   def identP: Parser[Term] = 
     tokenP[Token.IDENT].map(t => Term.Ident(t.name)).positioned
 
-  def termP: Parser[Term] = identP
+  def termP: Parser[Term] = lazyP:
+    longestMatch(
+      termLambdaP,
+      typeLambdaP,
+      captureLambdaP,
+      applyP,
+    )
+
+  def termAtomP: Parser[Term] = longestMatch(
+    identP,
+    termP.surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
+  )
+
+  def termLambdaP: Parser[Term] =
+    val paramsP = termParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
+    val arrowP = tokenP[Token.FAT_ARROW]
+    val bodyP = termP
+    val p = (paramsP, arrowP, bodyP).p.map((params, _, body) => Term.Lambda(params, body))
+    p.positioned.withWhat("a term lambda")
+
+  def typeLambdaP: Parser[Term] =
+    val paramsP = typeParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
+    val arrowP = tokenP[Token.FAT_ARROW]
+    val bodyP = termP
+    val p = (paramsP, arrowP, bodyP).p.map((params, _, body) => Term.TypeLambda(params, body))
+    p.positioned.withWhat("a type lambda")
+
+  def captureLambdaP: Parser[Term] =
+    val paramsP = captureParamP.sepBy(tokenP[Token.COMMA]).surroundedBy((tokenP[Token.LBRACK], keywordP("cap")).p, tokenP[Token.RBRACK])
+    val arrowP = tokenP[Token.FAT_ARROW]
+    val bodyP = termP
+    val p = (paramsP, arrowP, bodyP).p.map((params, _, body) => Term.CaptureLambda(params, body))
+    p.positioned.withWhat("a capture lambda")
+
+  enum ApplyClause:
+    case TermApply(terms: List[Term])
+    case TypeApply(types: List[Type])
+    case CaptureApply(captures: List[CaptureRef])
+
+  def termApplyClauseP: Parser[ApplyClause] =
+    termP
+      .sepBy(tokenP[Token.COMMA])
+      .surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
+      .map(terms => ApplyClause.TermApply(terms))
+
+  def typeApplyClauseP: Parser[ApplyClause] =
+    typeP
+      .sepBy1(tokenP[Token.COMMA])
+      .surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
+      .map(types => ApplyClause.TypeApply(types))
+
+  def captureApplyClauseP: Parser[ApplyClause] =
+    captureRefP
+      .sepBy(tokenP[Token.COMMA])
+      .surroundedBy((tokenP[Token.LBRACE], keywordP("cap")).p, tokenP[Token.RBRACE])
+      .map(captures => ApplyClause.CaptureApply(captures))
+  
+  def applyP: Parser[Term] =
+    val clauseP = longestMatch(
+      termApplyClauseP.withWhat("a term apply clause"),
+      typeApplyClauseP.withWhat("a type apply clause"),
+      captureApplyClauseP.withWhat("a capture apply clause"),
+    )
+    val clausesP = clauseP.many
+    val p = (termAtomP, clausesP).p.map: (fun, clauses) =>
+      var result = fun
+      for clause <- clauses do
+        clause match
+          case ApplyClause.TermApply(terms) => result = Term.Apply(result, terms)
+          case ApplyClause.TypeApply(types) => result = Term.TypeApply(result, types)
+          case ApplyClause.CaptureApply(captures) => result = Term.CaptureApply(result, captures)
+      result
+    p.positioned
 
   def typeP: Parser[Type] = lazyP:
     longestMatch(

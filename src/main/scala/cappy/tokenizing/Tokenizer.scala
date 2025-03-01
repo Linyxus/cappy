@@ -78,7 +78,6 @@ class Tokenizer(source: SourceFile):
 
   def nextToken(): Token | Error =
     val hasNewLine = skipWhitespaces()
-
     if isAtEnd then Token.EOF().withCurrentPos
     else if hasNewLine then
       if currentIndent > lastIndent then
