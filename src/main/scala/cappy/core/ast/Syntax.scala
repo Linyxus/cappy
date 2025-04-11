@@ -24,8 +24,12 @@ object Syntax:
     case CaptureApply(term: Term, captures: List[CaptureSet])
     case Block(defs: List[Definition], expr: Term)
 
+  case class TypeParamList(params: List[TypeParam | CaptureParam]) extends Positioned
+  case class TermParamList(params: List[TermParam]) extends Positioned
+
   enum Definition extends Positioned:
     case ValDef(name: String, tpe: Option[Type], expr: Term)
+    case DefDef(name: String, paramss: List[TypeParamList | TermParamList], resultType: Option[Type], expr: Term)
 
   enum Type extends Positioned:
     case Ident(name: String)

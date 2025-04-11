@@ -12,10 +12,28 @@ object Parsers:
       Definition.ValDef(tk.name, maybeTpe, body)
     p.positioned.withWhat("a value definition")
 
-  def definitionP: Parser[Definition] = valDefP
+  def typeParamListP: Parser[TypeParamList] =
+    val paramP: Parser[TypeParam | CaptureParam] = captureParamP `or` typeParamP
+    val p = paramP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
+    p.map(params => TypeParamList(params)).positioned.withWhat("a type parameter list")
+
+  def termParamListP: Parser[TermParamList] =
+    val p = termParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
+    p.map(params => TermParamList(params)).positioned.withWhat("a term parameter list")
+
+  def paramListP: Parser[TypeParamList | TermParamList] = typeParamListP `or` termParamListP
+
+  def defDefP: Parser[Definition] =
+    val tpeP = (tokenP[Token.COLON], typeP).p.map((_, tpe) => tpe)
+    val p = (keywordP("def"), tokenP[Token.IDENT], paramListP.many, tpeP.tryIt, tokenP[Token.EQUAL], termP).p.map: (_, tk, paramss, maybeTpe, _, body) =>
+      Definition.DefDef(tk.name, paramss, maybeTpe, body)
+    p.positioned.withWhat("a function definition")
+
+  def definitionP: Parser[Definition] = 
+    valDefP `or` defDefP
 
   def programP: Parser[List[Definition]] =
-    (tokenP[Token.NEWLINE].optional, valDefP.sepBy(tokenP[Token.NEWLINE]), wsUntilEndP).p.map((_, defs, _) => defs)
+    (tokenP[Token.NEWLINE].optional, definitionP.sepBy(tokenP[Token.NEWLINE]), wsUntilEndP).p.map((_, defs, _) => defs)
 
   def identP: Parser[Term] = 
     tokenP[Token.IDENT].map(t => Term.Ident(t.name)).positioned
