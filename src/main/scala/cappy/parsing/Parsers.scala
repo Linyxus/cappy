@@ -24,7 +24,7 @@ object Parsers:
     longestMatch(
       termLambdaP,
       typeLambdaP,
-      captureLambdaP,
+      //captureLambdaP,
       applyP,
       blockP,
       stringLitP,
@@ -70,18 +70,19 @@ object Parsers:
     p.positioned.withWhat("a term lambda")
 
   def typeLambdaP: Parser[Term] =
-    val paramsP = typeParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
+    val paramP: Parser[TypeParam | CaptureParam] = captureParamP `or` typeParamP
+    val paramsP = paramP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
     val arrowP = tokenP[Token.FAT_ARROW]
     val bodyP = termP
     val p = (paramsP, arrowP, bodyP).p.map((params, _, body) => Term.TypeLambda(params, body))
     p.positioned.withWhat("a type lambda")
 
-  def captureLambdaP: Parser[Term] =
-    val paramsP = captureParamP.sepBy(tokenP[Token.COMMA]).surroundedBy((tokenP[Token.LBRACK], keywordP("cap")).p, tokenP[Token.RBRACK])
-    val arrowP = tokenP[Token.FAT_ARROW]
-    val bodyP = termP
-    val p = (paramsP, arrowP, bodyP).p.map((params, _, body) => Term.CaptureLambda(params, body))
-    p.positioned.withWhat("a capture lambda")
+  // def captureLambdaP: Parser[Term] =
+  //   val paramsP = captureParamP.sepBy(tokenP[Token.COMMA]).surroundedBy((tokenP[Token.LBRACK], keywordP("cap")).p, tokenP[Token.RBRACK])
+  //   val arrowP = tokenP[Token.FAT_ARROW]
+  //   val bodyP = termP
+  //   val p = (paramsP, arrowP, bodyP).p.map((params, _, body) => Term.CaptureLambda(params, body))
+  //   p.positioned.withWhat("a capture lambda")
 
   enum ApplyClause:
     case TermApply(terms: List[Term])
@@ -127,7 +128,7 @@ object Parsers:
     longestMatch(
       termArrowP,
       typeArrowP,
-      captureArrowP,
+      //captureArrowP,
       capturingTypeP,
     )
 
@@ -146,7 +147,11 @@ object Parsers:
     p.positioned.withWhat("a type parameter")
 
   def captureParamP: Parser[CaptureParam] =
-    tokenP[Token.IDENT].map(t => CaptureParam(t.name)).positioned.withWhat("a capture parameter")
+    //tokenP[Token.IDENT].map(t => CaptureParam(t.name)).positioned.withWhat("a capture parameter")
+    val boundP = (tokenP[Token.LESSCOLON], captureSetP).p.map((_, cs) => cs)
+    val p = (keywordP("cap"), tokenP[Token.IDENT], boundP.tryIt).p.map: (_, name, maybeBound) =>
+      CaptureParam(name.name, maybeBound)
+    p.positioned.withWhat("a capture parameter")
 
   def termArrowP: Parser[Type] = 
     val paramsP = termParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
@@ -160,7 +165,8 @@ object Parsers:
     p.positioned.withWhat("a term function type")
 
   def typeArrowP: Parser[Type] =
-    val paramsP = typeParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
+    val paramP: Parser[TypeParam | CaptureParam] = captureParamP `or` typeParamP
+    val paramsP = paramP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
     val arrowP = tokenP[Token.ARROW]
     val capsP = captureSetP.withWhat("a capture set after an arrow")
     val p = (paramsP, arrowP, capsP.tryIt, typeP).p.map: (params, _, maybeCaps, resultType) =>
@@ -170,16 +176,16 @@ object Parsers:
         case None => arrowType
     p.positioned.withWhat("a type function type")
 
-  def captureArrowP: Parser[Type] =
-    val paramsP = captureParamP.sepBy(tokenP[Token.COMMA]).surroundedBy((tokenP[Token.LBRACK], keywordP("cap")).p, tokenP[Token.RBRACK])
-    val arrowP = tokenP[Token.ARROW]
-    val capsP = captureSetP.withWhat("a capture set after an arrow")
-    val p = (paramsP, arrowP, capsP.tryIt, typeP).p.map: (params, _, maybeCaps, resultType) =>
-      val arrowType = Type.CaptureArrow(params, resultType)
-      maybeCaps match
-        case Some(cs) => Type.Capturing(arrowType, cs)
-        case None => arrowType
-    p.positioned.withWhat("a capture function type")
+  // def captureArrowP: Parser[Type] =
+  //   val paramsP = captureParamP.sepBy(tokenP[Token.COMMA]).surroundedBy((tokenP[Token.LBRACK], keywordP("cap")).p, tokenP[Token.RBRACK])
+  //   val arrowP = tokenP[Token.ARROW]
+  //   val capsP = captureSetP.withWhat("a capture set after an arrow")
+  //   val p = (paramsP, arrowP, capsP.tryIt, typeP).p.map: (params, _, maybeCaps, resultType) =>
+  //     val arrowType = Type.CaptureArrow(params, resultType)
+  //     maybeCaps match
+  //       case Some(cs) => Type.Capturing(arrowType, cs)
+  //       case None => arrowType
+  //   p.positioned.withWhat("a capture function type")
 
   def typeIdentP: Parser[Type] = tokenP[Token.IDENT].map(t => Type.Ident(t.name)).positioned
 

@@ -7,7 +7,7 @@ import tokenizing.*
 object Syntax:
   case class TermParam(name: String, tpe: Type) extends Positioned
   case class TypeParam(name: String, bound: Option[Type]) extends Positioned
-  case class CaptureParam(name: String) extends Positioned
+  case class CaptureParam(name: String, bound: Option[CaptureSet]) extends Positioned
   case class CaptureRef(name: String) extends Positioned
   case class CaptureSet(elems: List[CaptureRef]) extends Positioned
 
@@ -17,7 +17,7 @@ object Syntax:
     case IntLit(value: Int)
     case UnitLit()
     case Lambda(params: List[TermParam], body: Term)
-    case TypeLambda(params: List[TypeParam], body: Term)
+    case TypeLambda(params: List[TypeParam | CaptureParam], body: Term)
     case CaptureLambda(params: List[CaptureParam], body: Term)
     case Apply(fun: Term, args: List[Term])
     case TypeApply(term: Term, targs: List[Type])
@@ -30,7 +30,7 @@ object Syntax:
   enum Type extends Positioned:
     case Ident(name: String)
     case Arrow(params: List[TermParam], result: Type)
-    case TypeArrow(params: List[TypeParam], result: Type)
-    case CaptureArrow(params: List[CaptureParam], result: Type)
+    case TypeArrow(params: List[TypeParam | CaptureParam], result: Type)
+    //case CaptureArrow(params: List[CaptureParam], result: Type)
     case Capturing(inner: Type, captureSet: CaptureSet)
     case AppliedType(tycon: Type, args: List[Type])
