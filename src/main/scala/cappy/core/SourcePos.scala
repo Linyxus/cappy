@@ -20,3 +20,7 @@ trait Positioned:
   def withPos(pos: SourcePos): this.type =
     setPos(pos)
     this
+
+  def withPosFrom(others: Positioned*): this.type =
+    val pos = others.map(_.pos).reduce((a, b) => a.merge(b))
+    withPos(pos)

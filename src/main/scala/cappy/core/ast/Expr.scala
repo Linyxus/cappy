@@ -52,16 +52,21 @@ object Expr:
       setKind(kind)
       this
 
+  enum Binder extends Positioned:
+    case TermBinder(name: String, tpe: Type)
+    case TypeBinder(name: String, bound: Type)
+    case CaptureBinder(name: String, bound: CaptureSet)
+
+    val name: String
+
+  import Binder.*
+
   enum Type extends Positioned, HasKind:
     case Base(base: BaseType)
     case BinderRef(idx: Int)
     case Capturing(inner: Type, captureSet: CaptureSet)
     case TermArrow(params: List[TermBinder], result: Type)
     case TypeArrow(params: List[TypeBinder | CaptureBinder], result: Type)
-
-  case class TermBinder(name: String, tpe: Type) extends Positioned
-  case class TypeBinder(name: String, bound: Type) extends Positioned
-  case class CaptureBinder(name: String, bound: CaptureSet) extends Positioned
 
   enum Term extends Positioned, Typed:
     case BinderRef(idx: Int)
@@ -70,3 +75,7 @@ object Expr:
     case UnitLit()
     case TermLambda(params: List[TermBinder], body: Term)
     case TypeLambda(params: List[TypeBinder | CaptureBinder], body: Term)
+
+  object Definitions:
+    def anyType: Type = Type.Base(BaseType.AnyType).withKind(TypeKind.Star)
+    def capCaptureSet: CaptureSet = CaptureSet(List(CaptureRef.CAP()))

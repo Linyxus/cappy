@@ -11,6 +11,9 @@ val x2: Ref^{cap} = newRef()
 val test: () -> Unit = () =>
   swap[cap {x1}, {x1}](x1, x1)
   swap(x1, x2)
+def test(): Unit =
+  swap[cap {x1}, {x1}](x1, x1)
+  swap(x1, x2)
 """)
   val result = Compiler.parse(source)
   result match
