@@ -34,13 +34,30 @@ object Expr:
   case class CaptureSet(elems: List[CaptureRef]) extends Positioned
 
   enum TypeKind:
-    case Star
-    case Tycon(arity: Int)
+    case Star  // *
+    case Arrow(arity: Int, res: TypeKind)  // [T1, T2, ...] -> K
 
-  enum Type extends Positioned:
+  /** A trait for types that have a kind */
+  trait HasKind:
+    private var myKind: TypeKind | Null = null
+
+    /** The kind of the type */
+    def kind: TypeKind = myKind.nn
+
+    /** Set the kind of the type */
+    def setKind(kind: TypeKind): Unit = myKind = kind
+
+    /** Set the kind of the type and return self */
+    def withKind(kind: TypeKind): this.type =
+      setKind(kind)
+      this
+
+  enum Type extends Positioned, HasKind:
     case Base(base: BaseType)
     case BinderRef(idx: Int)
     case Capturing(inner: Type, captureSet: CaptureSet)
+    case TermArrow(params: List[TermBinder], result: Type)
+    case TypeArrow(params: List[TypeBinder | CaptureBinder], result: Type)
 
   case class TermBinder(name: String, tpe: Type) extends Positioned
   case class TypeBinder(name: String, bound: Type) extends Positioned
