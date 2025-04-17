@@ -20,8 +20,8 @@ object Syntax:
     case TypeLambda(params: List[TypeParam | CaptureParam], body: Term)
     //case CaptureLambda(params: List[CaptureParam], body: Term)
     case Apply(fun: Term, args: List[Term])
-    case TypeApply(term: Term, targs: List[Type])
-    case CaptureApply(term: Term, captures: List[CaptureSet])
+    case TypeApply(term: Term, targs: List[Type | CaptureSet])
+    //case CaptureApply(term: Term, captures: List[CaptureSet])
     case Block(defs: List[Definition], expr: Term)
   import Term.*
 

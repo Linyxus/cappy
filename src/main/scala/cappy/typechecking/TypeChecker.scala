@@ -157,6 +157,5 @@ object TypeChecker:
           t1.withTpe(tpe)
     case Syntax.Term.Apply(fun, args) => ???
     case Syntax.Term.TypeApply(term, targs) => ???
-    case Syntax.Term.CaptureApply(term, captures) => ???
     case Syntax.Term.Block(defs, expr) => ???
   

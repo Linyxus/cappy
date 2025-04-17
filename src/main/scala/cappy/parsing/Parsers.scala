@@ -109,8 +109,8 @@ object Parsers:
 
   enum ApplyClause:
     case TermApply(terms: List[Term])
-    case TypeApply(types: List[Type])
-    case CaptureApply(captures: List[CaptureSet])
+    case TypeApply(types: List[Type | CaptureSet])
+    //case CaptureApply(captures: List[CaptureSet])
 
   def termApplyClauseP: Parser[ApplyClause] =
     termP
@@ -119,22 +119,15 @@ object Parsers:
       .map(terms => ApplyClause.TermApply(terms))
 
   def typeApplyClauseP: Parser[ApplyClause] =
-    typeP
+    (captureSetP `or` typeP: Parser[CaptureSet | Type])
       .sepBy1(tokenP[Token.COMMA])
       .surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
       .map(types => ApplyClause.TypeApply(types))
-
-  def captureApplyClauseP: Parser[ApplyClause] =
-    captureSetP
-      .sepBy1(tokenP[Token.COMMA])
-      .surroundedBy((tokenP[Token.LBRACK], keywordP("cap")).p, tokenP[Token.RBRACK])
-      .map(captures => ApplyClause.CaptureApply(captures))
   
   def applyP: Parser[Term] =
     val clauseP = longestMatch(
       termApplyClauseP.withWhat("a term apply clause"),
       typeApplyClauseP.withWhat("a type apply clause"),
-      captureApplyClauseP.withWhat("a capture apply clause"),
     )
     val clausesP = clauseP.many
     val p = (termAtomP, clausesP).p.map: (fun, clauses) =>
@@ -143,7 +136,7 @@ object Parsers:
         clause match
           case ApplyClause.TermApply(terms) => result = Term.Apply(result, terms)
           case ApplyClause.TypeApply(types) => result = Term.TypeApply(result, types)
-          case ApplyClause.CaptureApply(captures) => result = Term.CaptureApply(result, captures)
+          //case ApplyClause.CaptureApply(captures) => result = Term.CaptureApply(result, captures)
       result
     p.positioned
 
