@@ -45,9 +45,6 @@ object Parsers:
       //captureLambdaP,
       applyP,
       blockP,
-      stringLitP,
-      intLitP,
-      unitLitP,
     )
 
   def stringLitP: Parser[Term] =
@@ -57,7 +54,7 @@ object Parsers:
     tokenP[Token.INT].map(t => Term.IntLit(t.content.toInt)).positioned
 
   def unitLitP: Parser[Term] =
-    tokenP[Token.UNIT].map(_ => Term.UnitLit()).positioned
+    (tokenP[Token.LPAREN], tokenP[Token.RPAREN]).p.map(_ => Term.UnitLit()).positioned
 
   def blockP: Parser[Term] = 
     val clauseP: Parser[Definition | Term] = orP(
@@ -70,7 +67,7 @@ object Parsers:
         fail("A block must contain at least one clause")
       else
         clauses.last match
-          case _: Definition.ValDef =>
+          case _: Definition.ValDef | _: Definition.DefDef =>
             fail(s"The last clause in a block must be a term, but got: $clauses")
           case term: Term =>
             val defs = clauses.init.map:
@@ -81,11 +78,15 @@ object Parsers:
 
   def termAtomP: Parser[Term] = longestMatch(
     identP,
+    stringLitP,
+    intLitP,
+    unitLitP,
     termP.surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
   )
 
   def termLambdaP: Parser[Term] =
-    val paramsP = termParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
+    val paramsP: Parser[List[TermParam]] = 
+      termParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
     val arrowP = tokenP[Token.FAT_ARROW]
     val bodyP = termP
     val p = (paramsP, arrowP, bodyP).p.map((params, _, body) => Term.Lambda(params, body))
@@ -176,7 +177,8 @@ object Parsers:
     p.positioned.withWhat("a capture parameter")
 
   def termArrowP: Parser[Type] = 
-    val paramsP = termParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
+    val paramsP = 
+      termParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
     val arrowP = tokenP[Token.ARROW]
     val capsP = captureSetP.withWhat("a capture set after an arrow")
     val p = (paramsP, arrowP, capsP.tryIt, typeP).p.map: (params, _, maybeCaps, resultType) =>

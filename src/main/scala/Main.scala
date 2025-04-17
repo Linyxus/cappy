@@ -5,9 +5,12 @@ import Printer.*
 
 @main def hello(): Unit =
   val source = SourceFile("test", """
-def foo[cap C](ops: List[() ->{C} Unit]): Unit = test
-def bar[cap C, X](comps: List[() ->{C} X]): List[X] = test
-def baz[cap C <: {a}, cap D, A, B](f: (z: A) ->{C} B, g: (z: B) ->{D} A) = test
+val swap: [cap C1, C2] -> (x: Ref^{C1}, y: Ref^{C2}) -> Unit = 0
+val x1: Ref^{cap} = ()
+val x2: Ref^{cap} = newRef()
+val test: () -> Unit = () =>
+  swap[cap {x1}, {x1}](x1, x1)
+  swap(x1, x2)
 """)
   val result = Compiler.parse(source)
   result match

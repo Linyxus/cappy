@@ -117,7 +117,6 @@ class Tokenizer(source: SourceFile):
               Error(s"Unclosed string literal, unexpected $what")
           case '=' if expectChar('>') => Token.FAT_ARROW()
           case '=' => Token.EQUAL()
-          case '(' if expectChar(')') => Token.UNIT()
           case '(' => Token.LPAREN()
           case ')' => Token.RPAREN()
           case '[' => Token.LBRACK()
