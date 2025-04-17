@@ -77,8 +77,10 @@ object Expr:
     case TypeArrow(params: List[TypeBinder | CaptureBinder], result: Type)
 
     def like(other: Type): this.type =
-      assert(other.hasKind, s"Type $other does not have a kind or position when calling like")
-      this.withKind(other.kind).withPosFrom(other)
+      assert(other.hasKind, s"Type $other does not have a kind when calling like")
+      if other.hasPos then
+        this.withPosFrom(other)
+      this.withKind(other.kind)
 
   enum Term extends Positioned, Typed:
     case BinderRef(idx: Int)
