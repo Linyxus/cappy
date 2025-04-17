@@ -47,6 +47,7 @@ object Parsers:
       blockP,
       stringLitP,
       intLitP,
+      unitLitP,
     )
 
   def stringLitP: Parser[Term] =
@@ -54,6 +55,9 @@ object Parsers:
 
   def intLitP: Parser[Term] =
     tokenP[Token.INT].map(t => Term.IntLit(t.content.toInt)).positioned
+
+  def unitLitP: Parser[Term] =
+    tokenP[Token.UNIT].map(_ => Term.UnitLit()).positioned
 
   def blockP: Parser[Term] = 
     val clauseP: Parser[Definition | Term] = orP(
