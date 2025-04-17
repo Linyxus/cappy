@@ -22,7 +22,7 @@ object TypeChecker:
     def empty: Context = Context(Nil)
 
   enum TypeError extends Positioned:
-    case UnboundVariable(name: String)
+    case UnboundVariable(name: String, addenda: String = "")
     case TypeMismatch(expected: Type, actual: Type)
 
   def ctx(using myCtx: Context): Context = myCtx
@@ -75,11 +75,21 @@ object TypeChecker:
       case Left(error) :: _ => Left(error)
       case Right(elem) :: rest => go(rest, elem :: acc)
     go(checkElems, Nil)
+
+  def findBaseType(name: String): Option[BaseType] = name match
+    case "Unit" => Some(BaseType.UnitType)
+    case "Int" => Some(BaseType.IntType)
+    case "String" => Some(BaseType.StrType)
+    case "Any" => Some(BaseType.AnyType)
+    case _ => None
     
   def checkType(tpe: Syntax.Type)(using Context): Result[Type] = tpe match
-    case Syntax.Type.Ident(name) => lookupBinder(name) match
-      case Some((binder: Binder.TypeBinder, idx)) => Right(Type.BinderRef(idx).withKind(TypeKind.Star).withPos(tpe.pos))
-      case _ => Left(TypeError.UnboundVariable(name).withPos(tpe.pos))
+    case Syntax.Type.Ident(name) => 
+      findBaseType(name) match
+        case Some(baseType) => Right(Type.Base(baseType).withKind(TypeKind.Star).withPos(tpe.pos))
+        case None => lookupBinder(name) match
+          case Some((binder: Binder.TypeBinder, idx)) => Right(Type.BinderRef(idx).withKind(TypeKind.Star).withPos(tpe.pos))
+          case _ => Left(TypeError.UnboundVariable(name).withPos(tpe.pos))
     case Syntax.Type.Arrow(params, result) => 
       def go(ps: List[Syntax.TermParam], acc: List[TermBinder])(using Context): Result[List[TermBinder]] = ps match
         case Nil => Right(acc.reverse)
@@ -87,7 +97,7 @@ object TypeChecker:
           checkTermParam(p).flatMap: binder =>
             go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
       go(params, Nil).flatMap: params =>
-        checkType(result).map: result1 =>
+        checkType(result)(using ctx.extend(params)).map: result1 =>
           Type.TermArrow(params, result1).withPosFrom(tpe)
     case Syntax.Type.TypeArrow(params, result) => 
       def go(ps: List[Syntax.TypeParam | Syntax.CaptureParam], acc: List[TypeBinder | CaptureBinder])(using Context): Result[List[TypeBinder | CaptureBinder]] = ps match
@@ -96,7 +106,7 @@ object TypeChecker:
           checkCaptureOrTypeParam(p).flatMap: binder =>
             go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
       go(params, Nil).flatMap: params =>
-        checkType(result).map: result1 =>
+        checkType(result)(using ctx.extend(params)).map: result1 =>
           Type.TypeArrow(params, result1).withPosFrom(tpe)
     case Syntax.Type.Capturing(inner, captureSet) =>
       for
