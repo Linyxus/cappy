@@ -4,6 +4,9 @@ import cappy.core.*
 import scala.reflect.ClassTag
 
 object Parser:
+  case class ParserContext(var errors: List[ParseError])
+  object ParserContext:
+    def empty: ParserContext = ParserContext(errors = List())
   case class ParserState(tokens: Array[Token], current: Int):
     def advance: ParserState = copy(current = current + 1)
     def currentToken: Option[Token] = if current < tokens.length then Some(tokens(current)) else None
@@ -28,7 +31,7 @@ object Parser:
           case Right(res) => Right(res)
       )
 
-  type ParseFn[+A] = ParserState => ParseResult[A]
+  type ParseFn[+A] = ParserContext ?=> ParserState => ParseResult[A]
 
   trait ParseInfo:
     /** A description of what this parser is parsing */
@@ -48,17 +51,23 @@ object Parser:
     def parse: ParseFn[A]
     def info: ParseInfo
 
-    def runParser(state: ParserState): ParseResult[A] = 
+    def runParser(state: ParserState)(using ctx: ParserContext): ParseResult[A] = 
       if info.anonymous then
         parse(state)
       else
         val start = state.current
         val res = parse(state)
         val end = res.nextState.current
-        res.push(info.what)
+        val res1 = res.push(info.what)
+        res1 match
+          case ParseResult(nextState, Left(err)) =>
+            // log error to the context
+            ctx.errors = err :: ctx.errors
+          case _ =>
+        res1
 
     def withInfo(newInfo: ParseInfo): Parser[A] = 
-      val fn = parse
+      val fn: ParseFn[A] = parse
       new Parser[A]:
         def parse: ParseFn[A] = fn
         def info: ParseInfo = newInfo

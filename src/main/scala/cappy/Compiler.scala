@@ -24,9 +24,12 @@ object Compiler:
       // tokenArray.foreach: token =>
       //   println(Printer.showSourcePos(token.pos, List(token.toString)))
       val state = Parser.ParserState(tokenArray, 0)
-      Parsers.programP.runParser(state) match
+      val ctx = Parser.ParserContext.empty
+      Parsers.programP.runParser(state)(using ctx) match
         case Parser.ParseResult(nextState, Left(err)) =>
-          ParseResult.ParsingError(err)
+          val errs = ctx.errors.sortBy(_.pos.span.end)
+          val farestErr = errs.last
+          ParseResult.ParsingError(farestErr)
         case Parser.ParseResult(nextState, Right(result)) =>
           ParseResult.Ok(result)
 
@@ -43,7 +46,8 @@ object Compiler:
       tokenArray.foreach: token =>
         println(Printer.showSourcePos(token.pos, List(token.toString)))
       val state = Parser.ParserState(tokenArray, 0)
-      Parsers.definitionP.runParser(state) match
+      val ctx = Parser.ParserContext.empty
+      Parsers.definitionP.runParser(state)(using ctx) match
         case Parser.ParseResult(nextState, Left(err)) =>
           println(err.show)
         case Parser.ParseResult(nextState, Right(result)) =>
