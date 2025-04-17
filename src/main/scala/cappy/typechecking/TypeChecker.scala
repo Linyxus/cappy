@@ -30,7 +30,8 @@ object TypeChecker:
   type Result[+A] = Either[TypeError, A]
 
   def lookupBinder(name: String)(using ctx: Context): Option[(Binder, Int)] =
-    ctx.binders.zipWithIndex.find((binder, _) => binder.name == name)
+    ctx.binders.zipWithIndex.find((binder, _) => binder.name == name).map: (bd, idx) =>
+      (bd.shift(idx + 1), idx)
 
   def checkTermParam(param: Syntax.TermParam)(using ctx: Context): Result[TermBinder] =
     checkType(param.tpe).map: tpe =>
@@ -65,6 +66,7 @@ object TypeChecker:
       Right(CaptureRef.CAP().withPosFrom(ref))
     else lookupBinder(ref.name) match
       case Some((binder: (Binder.CaptureBinder | Binder.TermBinder), idx)) => Right(CaptureRef.BinderRef(idx).withPosFrom(ref))
+      case Some((binder: Binder.TypeBinder, idx)) => Left(TypeError.UnboundVariable(ref.name, s"I found a type name, but was looking for either a term or capture name").withPos(ref.pos))
       case _ => Left(TypeError.UnboundVariable(ref.name).withPos(ref.pos))
 
   def checkCaptureSet(captureSet: Syntax.CaptureSet)(using ctx: Context): Result[CaptureSet] =
@@ -89,6 +91,7 @@ object TypeChecker:
         case Some(baseType) => Right(Type.Base(baseType).withKind(TypeKind.Star).withPos(tpe.pos))
         case None => lookupBinder(name) match
           case Some((binder: Binder.TypeBinder, idx)) => Right(Type.BinderRef(idx).withKind(TypeKind.Star).withPos(tpe.pos))
+          case Some((binder: Binder, idx)) => Left(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a type").withPos(tpe.pos))
           case _ => Left(TypeError.UnboundVariable(name).withPos(tpe.pos))
     case Syntax.Type.Arrow(params, result) => 
       def go(ps: List[Syntax.TermParam], acc: List[TermBinder])(using Context): Result[List[TermBinder]] = ps match
@@ -98,7 +101,7 @@ object TypeChecker:
             go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
       go(params, Nil).flatMap: params =>
         checkType(result)(using ctx.extend(params)).map: result1 =>
-          Type.TermArrow(params, result1).withPosFrom(tpe)
+          Type.TermArrow(params, result1).withPosFrom(tpe).withKind(TypeKind.Star)
     case Syntax.Type.TypeArrow(params, result) => 
       def go(ps: List[Syntax.TypeParam | Syntax.CaptureParam], acc: List[TypeBinder | CaptureBinder])(using Context): Result[List[TypeBinder | CaptureBinder]] = ps match
         case Nil => Right(acc.reverse)
@@ -107,12 +110,53 @@ object TypeChecker:
             go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
       go(params, Nil).flatMap: params =>
         checkType(result)(using ctx.extend(params)).map: result1 =>
-          Type.TypeArrow(params, result1).withPosFrom(tpe)
+          Type.TypeArrow(params, result1).withPosFrom(tpe).withKind(TypeKind.Star)
     case Syntax.Type.Capturing(inner, captureSet) =>
       for
         inner1 <- checkType(inner)
         captureSet1 <- checkCaptureSet(captureSet)
       yield
-        Type.Capturing(inner1, captureSet1).withPosFrom(tpe)
+        Type.Capturing(inner1, captureSet1).withPosFrom(tpe).withKind(TypeKind.Star)
     case Syntax.Type.AppliedType(tycon, args) => ???
+
+  def checkTerm(t: Syntax.Term)(using Context): Result[Term] = t match
+    case Syntax.Term.Ident(name) => lookupBinder(name) match
+      case Some((binder: Binder.TermBinder, idx)) => 
+        val tpe = binder.tpe
+        // TODO: deal with capture and reach refinements
+        Right(Term.BinderRef(idx).withPosFrom(t).withTpe(tpe))
+      case Some((binder: Binder, idx)) => Left(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
+      case None => Left(TypeError.UnboundVariable(name).withPos(t.pos))
+    case Syntax.Term.StrLit(value) => 
+      Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType))
+    case Syntax.Term.IntLit(value) => 
+      Right(Term.IntLit(value).withPosFrom(t).withTpe(Definitions.intType))
+    case Syntax.Term.UnitLit() => 
+      Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
+    case Syntax.Term.Lambda(params, body) => 
+      def go(ps: List[Syntax.TermParam], acc: List[TermBinder])(using Context): Result[List[TermBinder]] = ps match
+        case Nil => Right(acc.reverse)
+        case p :: ps =>
+          checkTermParam(p).flatMap: binder =>
+            go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
+      go(params, Nil).flatMap: params =>
+        checkTerm(body)(using ctx.extend(params)).map: body1 =>
+          val t1 = Term.TermLambda(params, body1).withPosFrom(t)
+          val tpe = Type.TermArrow(params, body1.tpe)
+          t1.withTpe(tpe)
+    case Syntax.Term.TypeLambda(params, body) =>
+      def go(ps: List[Syntax.TypeParam | Syntax.CaptureParam], acc: List[TypeBinder | CaptureBinder])(using Context): Result[List[TypeBinder | CaptureBinder]] = ps match
+        case Nil => Right(acc.reverse)
+        case p :: ps =>
+          checkCaptureOrTypeParam(p).flatMap: binder =>
+            go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
+      go(params, Nil).flatMap: params =>
+        checkTerm(body)(using ctx.extend(params)).map: body1 =>
+          val t1 = Term.TypeLambda(params, body1).withPosFrom(t)
+          val tpe = Type.TypeArrow(params, body1.tpe)
+          t1.withTpe(tpe)
+    case Syntax.Term.Apply(fun, args) => ???
+    case Syntax.Term.TypeApply(term, targs) => ???
+    case Syntax.Term.CaptureApply(term, captures) => ???
+    case Syntax.Term.Block(defs, expr) => ???
   

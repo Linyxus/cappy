@@ -7,11 +7,7 @@ import Printer.*
 
 @main def hello(): Unit =
   val source = SourceFile("test", """
-val t: (x: Int) -> Int^{x} = ()
-val t: (x: Int) -> Int^{cap} = ()
-val t: (x: Int, y: Int^{x}) -> Int^{x,y} = ()
-val t: [X, cap C] -> (x: X^{C}, y: Int^{x}) -> Int^{x,y} = ()
-val t: [X <: (x: Int) -> Int^{x}, cap C] -> (x: X^{C}, y: Int^{x}) -> Int^{x,y} = ()
+val t: [cap C] -> (x: Int^{C}) -> Int^{C} = [cap C] => (x: Int^{C}) => [cap D, E, F, G] => x
 """)
   val result = Compiler.parse(source)
   result match
@@ -29,6 +25,12 @@ val t: [X <: (x: Int) -> Int^{x}, cap C] -> (x: X^{C}, y: Int^{x}) -> Int^{x,y} 
             res match
               case Right(tpe) =>
                 println(Printer.showSourcePos(tpe.pos, List("success!", tpe.toString)))
+              case Left(err) =>
+                println(Printer.showSourcePos(err.pos, List("error!", err.toString)))
+            val res2 = TypeChecker.checkTerm(body)(using TypeChecker.Context.empty)
+            res2 match
+              case Right(term) =>
+                println(Printer.showSourcePos(term.pos, List("success!", term.tpe.toString)))
               case Left(err) =>
                 println(Printer.showSourcePos(err.pos, List("error!", err.toString)))
           case _ =>

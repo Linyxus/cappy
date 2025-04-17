@@ -44,6 +44,9 @@ object Expr:
     /** The kind of the type */
     def kind: TypeKind = myKind.nn
 
+    /** Whether the type has a kind */
+    def hasKind: Boolean = myKind != null
+
     /** Set the kind of the type */
     def setKind(kind: TypeKind): Unit = myKind = kind
 
@@ -59,6 +62,11 @@ object Expr:
 
     val name: String
 
+    def kindStr: String = this match
+      case TermBinder(_, _) => "term"
+      case TypeBinder(_, _) => "type"
+      case CaptureBinder(_, _) => "capture"
+
   import Binder.*
 
   enum Type extends Positioned, HasKind:
@@ -67,6 +75,10 @@ object Expr:
     case Capturing(inner: Type, captureSet: CaptureSet)
     case TermArrow(params: List[TermBinder], result: Type)
     case TypeArrow(params: List[TypeBinder | CaptureBinder], result: Type)
+
+    def like(other: Type): this.type =
+      assert(other.hasKind, s"Type $other does not have a kind or position when calling like")
+      this.withKind(other.kind).withPosFrom(other)
 
   enum Term extends Positioned, Typed:
     case BinderRef(idx: Int)
@@ -78,4 +90,76 @@ object Expr:
 
   object Definitions:
     def anyType: Type = Type.Base(BaseType.AnyType).withKind(TypeKind.Star)
+    def strType: Type = Type.Base(BaseType.StrType).withKind(TypeKind.Star)
+    def intType: Type = Type.Base(BaseType.IntType).withKind(TypeKind.Star)
+    def unitType: Type = Type.Base(BaseType.UnitType).withKind(TypeKind.Star)
     def capCaptureSet: CaptureSet = CaptureSet(List(CaptureRef.CAP()))
+
+  class TypeMap:
+    var localBinders: List[Binder] = Nil
+
+    def withBinder[T](bd: Binder)(op: => T): T =
+      localBinders = bd :: localBinders
+      try op finally localBinders = localBinders.tail
+
+    def apply(tp: Type): Type = mapOver(tp)
+
+    def mapBinder(param: Binder): Binder = param match
+      case TermBinder(name, tpe) => TermBinder(name, apply(tpe)).withPosFrom(param)
+      case TypeBinder(name, bound) => TypeBinder(name, apply(bound)).withPosFrom(param)
+      case CaptureBinder(name, bound) => CaptureBinder(name, mapCaptureSet(bound)).withPosFrom(param)
+
+    def mapCaptureSet(captureSet: CaptureSet): CaptureSet =
+      CaptureSet(captureSet.elems.map(mapCaptureRef)).withPosFrom(captureSet)
+
+    def mapCaptureRef(ref: CaptureRef): CaptureRef = ref
+
+    def mapOver(tp: Type): Type = tp match
+      case Type.Capturing(inner, captureSet) =>
+        Type.Capturing(apply(inner), mapCaptureSet(captureSet)).like(tp)
+      case Type.TermArrow(params, result) => 
+        def go(ps: List[TermBinder], bs: List[Binder]): Type =
+          ps match
+            case Nil => Type.TermArrow(bs.reverse.asInstanceOf, apply(result)).like(tp)
+            case p :: ps =>
+              val p1 = mapBinder(p)
+              withBinder(p1):
+                go(ps, p1 :: bs)
+        go(params, Nil)
+      case Type.TypeArrow(params, result) =>
+        def go(ps: List[TypeBinder | CaptureBinder], bs: List[Binder]): Type =
+          ps match
+            case Nil => Type.TypeArrow(bs.reverse.asInstanceOf, apply(result)).like(tp)
+            case p :: ps =>
+              val p1 = mapBinder(p)
+              withBinder(p1):
+                go(ps, p1 :: bs)
+        go(params, Nil)
+      case _ => tp
+
+  class ShiftType(amount: Int) extends TypeMap:
+    override def mapCaptureRef(ref: CaptureRef): CaptureRef = ref match
+      case CaptureRef.BinderRef(idx) if idx >= localBinders.size =>
+        CaptureRef.BinderRef(idx + amount).withPosFrom(ref)
+      case ref => ref
+
+  extension (tpe: Type)
+    def shift(amount: Int): Type =
+      val shift = ShiftType(amount)
+      val result = shift(tpe)
+      assert(result.hasPos == tpe.hasPos && result.hasKind)
+      result
+
+  extension (captureSet: CaptureSet)
+    def shift(amount: Int): CaptureSet =
+      val shifter = ShiftType(amount)
+      val result = shifter.mapCaptureSet(captureSet)
+      assert(result.hasPos == captureSet.hasPos)
+      result
+
+  extension (binder: Binder)
+    def shift(amount: Int): Binder =
+      binder match
+        case TermBinder(name, tpe) => TermBinder(name, tpe.shift(amount)).withPosFrom(binder)
+        case TypeBinder(name, bound) => TypeBinder(name, bound.shift(amount)).withPosFrom(binder)
+        case CaptureBinder(name, bound) => CaptureBinder(name, bound.shift(amount)).withPosFrom(binder)
