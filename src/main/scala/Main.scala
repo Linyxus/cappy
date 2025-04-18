@@ -11,8 +11,8 @@ val t: Int^{cap} =
   val x: Int^{cap} = 0
   val x1: Int^{cap} = x
   val y: Int^{x} = x
-  val z: Int^{x1} = y
-  x
+  def add(): Int = 0
+  add
 """)
   val result = Compiler.parse(source)
   result match

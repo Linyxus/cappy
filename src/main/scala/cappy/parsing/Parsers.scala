@@ -58,7 +58,7 @@ object Parsers:
 
   def blockP: Parser[Term] = 
     val clauseP: Parser[Definition | Term] = orP(
-      valDefP,
+      definitionP,
       termP,
     ).withWhat("a clause in a block")
     val clausesP = clauseP.sepBy(tokenP[Token.NEWLINE])
