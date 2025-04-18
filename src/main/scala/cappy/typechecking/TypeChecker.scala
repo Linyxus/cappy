@@ -103,6 +103,10 @@ object TypeChecker:
     case "Int" => Some(BaseType.IntType)
     case "String" => Some(BaseType.StrType)
     case "Any" => Some(BaseType.AnyType)
+    case "i32" => Some(BaseType.I32)
+    case "i64" => Some(BaseType.I64)
+    case "f32" => Some(BaseType.F32)
+    case "f64" => Some(BaseType.F64)
     case _ => None
     
   def checkType(tpe: Syntax.Type)(using Context): Result[Type] = tpe match

@@ -9,7 +9,7 @@ import Printer.*
   val source = SourceFile("test", """
 val t: Unit =
   val x = 1
-  val y = [X <: Int^{cap}] => 0
+  def add(x: i32, y: i32): i32 = #i32add
   ()
 """)
   val result = Compiler.parse(source)

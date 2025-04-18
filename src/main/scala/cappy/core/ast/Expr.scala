@@ -26,6 +26,11 @@ object Expr:
     case IntType
     case UnitType
     case AnyType
+    /** Primitive types in WebAssembly */
+    case I32
+    case I64
+    case F32
+    case F64
 
   enum CaptureRef extends Positioned:
     case BinderRef(idx: Int)
