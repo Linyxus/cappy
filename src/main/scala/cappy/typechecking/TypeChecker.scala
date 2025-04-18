@@ -168,7 +168,7 @@ object TypeChecker:
       checkTermParamList(params).flatMap: params =>
         checkTerm(body)(using ctx.extend(params)).map: body1 =>
           val t1 = Term.TermLambda(params, body1).withPosFrom(t)
-          val tpe = Type.TermArrow(params, body1.tpe)
+          val tpe = Type.TermArrow(params, body1.tpe).withKind(TypeKind.Star)
           t1.withTpe(tpe)
     case Syntax.Term.TypeLambda(params, body) =>
       checkTypeParamList(params).flatMap: params =>
