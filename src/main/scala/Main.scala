@@ -7,7 +7,10 @@ import Printer.*
 
 @main def hello(): Unit =
   val source = SourceFile("test", """
-val t: Unit = int_add
+val t: Unit =
+  val x = 1
+  val y = [X <: Int^{cap}] => 0
+  ()
 """)
   val result = Compiler.parse(source)
   result match
@@ -35,4 +38,6 @@ val t: Unit = int_add
                     println(Printer.showSourcePos(err.pos, List("error!", err.toString)))
               case Left(err) =>
                 println(Printer.showSourcePos(err.pos, List("error!", err.toString)))
+          case Syntax.Definition.DefDef(name, params, resultType, body) =>
+            println(Printer.showSourcePos(defn.pos, List(defn.toString)))
           case _ =>

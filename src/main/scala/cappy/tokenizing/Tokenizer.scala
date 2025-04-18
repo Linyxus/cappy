@@ -68,6 +68,8 @@ class Tokenizer(source: SourceFile):
   extension[A <: Positioned] (self: A)
     def withCurrentPos: self.type = withPosition(self)
 
+  val SPECIAL_CHARS = Set('_', '#')
+
   def skipWhitespaces(): Boolean =
     var skippedNewline = false
     while !isAtEnd && peek.isWhitespace do
@@ -132,14 +134,15 @@ class Tokenizer(source: SourceFile):
             consumeInt()
             Token.INT(source.content.substring(startPos, currentPos))
           case '<' if expectChar(':') => Token.LESSCOLON()
-          case '_' => Token.IDENT("_")
+          // case '_' => Token.IDENT("_")
           case ch if ch.isDigit =>
             var startPos = currentPos - 1
             consumeInt()
             Token.INT(source.content.substring(startPos, currentPos))
-          case ch if ch.isLetter =>
+          case ch if ch.isLetter || SPECIAL_CHARS.contains(ch) =>
             val startPos = currentPos - 1
-            while !isAtEnd && peek.isLetterOrDigit do
+            def isValidChar(ch: Char): Boolean = ch.isLetterOrDigit || SPECIAL_CHARS.contains(ch)
+            while !isAtEnd && isValidChar(peek) do
               advance()
             val content = source.content.substring(startPos, currentPos)
             Token.IDENT(content)
