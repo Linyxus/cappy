@@ -20,6 +20,9 @@ extension (tpe: Type)
 extension (ref: Term.BinderRef)
   def singletonCaptureSet: CaptureSet = CaptureSet(List(CaptureRef.BinderRef(ref.idx)))
 
+extension (ref: Term.SymbolRef)
+  def singletonCaptureSet: CaptureSet = CaptureSet(List(CaptureRef.SymbolRef(ref.sym)))
+
 class AvoidLocalBinder(approx: CaptureSet) extends TypeMap:
   var ok: Boolean = true
   override def mapCaptureSet(captureSet: CaptureSet): CaptureSet = 
@@ -66,6 +69,7 @@ object TypePrinter:
 
   def show(captureRef: CaptureRef)(using TypeChecker.Context): String = captureRef match
     case CaptureRef.BinderRef(idx) => TypeChecker.getBinder(idx).name
+    case CaptureRef.SymbolRef(sym) => sym.name
     case CaptureRef.CAP() => "cap"
 
 extension (tpe: Type)

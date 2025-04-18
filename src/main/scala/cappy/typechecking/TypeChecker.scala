@@ -183,7 +183,11 @@ object TypeChecker:
 
   def checkTerm(t: Syntax.Term)(using Context): Result[Term] = t match
     case Syntax.Term.Ident(name) => lookupAll(name) match
-      case Some(sym: Symbol) => Right(Term.SymbolRef(sym).withPosFrom(t).withTpe(sym.tpe))
+      case Some(sym: Symbol) => 
+        val tpe = sym.tpe
+        val ref: Term.SymbolRef = Term.SymbolRef(sym)
+        val tpe1 = Type.Capturing(tpe.stripCaptures, ref.singletonCaptureSet).withKind(TypeKind.Star)
+        Right(ref.withPosFrom(t).withTpe(tpe1))
       case Some((binder: Binder.TermBinder, idx)) => 
         val tpe = binder.tpe
         val ref: Term.BinderRef = Term.BinderRef(idx)
