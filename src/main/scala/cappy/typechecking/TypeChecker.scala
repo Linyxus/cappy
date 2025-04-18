@@ -26,8 +26,13 @@ object TypeChecker:
 
   enum TypeError extends Positioned:
     case UnboundVariable(name: String, addenda: String = "")
-    case TypeMismatch(expected: Type, actual: Type)
-    case LeakingLocalBinder(tp: Type)
+    case TypeMismatch(expected: String, actual: String)
+    case LeakingLocalBinder(tp: String)
+
+    override def toString(): String = this match
+      case UnboundVariable(name, addenda) => s"Unbound variable: $name$addenda"
+      case TypeMismatch(expected, actual) => s"Type mismatch: expected $expected, but got $actual"
+      case LeakingLocalBinder(tp) => s"Leaking local binder: $tp"
 
   def ctx(using myCtx: Context): Context = myCtx
   
@@ -184,7 +189,7 @@ object TypeChecker:
                   if TypeComparer.checkSubtype(expr1.tpe, expected1) then
                     val bd = TermBinder(name, expected1).withPos(d.pos)
                     Right((bd.asInstanceOf[TermBinder], expr1))
-                  else Left(TypeError.TypeMismatch(expected1, expr1.tpe).withPos(expected.pos))
+                  else Left(TypeError.TypeMismatch(expected1.show, expr1.tpe.show).withPos(expected.pos))
         case Syntax.Definition.DefDef(name, paramss, resultType, expr) => 
           def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[Term] = pss match
             case Nil => checkTerm(expr).flatMap: expr1 =>
@@ -194,7 +199,7 @@ object TypeChecker:
                   checkType(expected).flatMap: expected1 =>
                     if TypeComparer.checkSubtype(expr1.tpe, expected1) then
                       Right(expr1.withTpe(expected1))
-                    else Left(TypeError.TypeMismatch(expected1, expr1.tpe).withPos(expected.pos))
+                    else Left(TypeError.TypeMismatch(expected1.show, expr1.tpe.show).withPos(expected.pos))
             case (ps: Syntax.TermParamList) :: pss =>
               checkTermParamList(ps.params).flatMap: params =>
                 go(pss)(using ctx.extend(params)).map: body1 =>
@@ -228,7 +233,7 @@ object TypeChecker:
                 if tm.ok then
                   Right(Term.Bind(bd, boundExpr, bodyExpr).withPosFrom(d, bodyExpr).withTpe(resType1))
                 else
-                  Left(TypeError.LeakingLocalBinder(resType).withPos(d.pos))
+                  Left(TypeError.LeakingLocalBinder(resType.show(using ctx.extend(bd))).withPos(d.pos))
       go(stmts)
     case Syntax.Term.Apply(fun, args) => ???
     case Syntax.Term.TypeApply(term, targs) => ???

@@ -9,6 +9,9 @@ import Printer.*
   val source = SourceFile("test", """
 val t: Int^{cap} =
   val x: Int^{cap} = 0
+  val x1: Int^{cap} = x
+  val y: Int^{x} = x
+  val z: Int^{x1} = y
   x
 """)
   val result = Compiler.parse(source)

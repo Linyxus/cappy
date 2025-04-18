@@ -35,6 +35,37 @@ class AvoidLocalBinder(approx: CaptureSet) extends TypeMap:
         else
           ok = false
           ref :: Nil
+      case ref @ CaptureRef.BinderRef(idx) if idx > localBinders.size =>
+        CaptureRef.BinderRef(idx - 1).maybeWithPosFrom(ref) :: Nil
       case ref => ref :: Nil
     CaptureSet(elems1).maybeWithPosFrom(captureSet)
+
+object TypePrinter:
+  def show(base: BaseType): String = base match
+    case BaseType.AnyType => "Any"
+    case BaseType.IntType => "Int"
+    case BaseType.StrType => "Str"
+    case BaseType.UnitType => "Unit"
+
+  def show(tpe: Type)(using TypeChecker.Context): String = tpe match
+    case Type.Base(base) => show(base)
+    case Type.BinderRef(idx) => TypeChecker.getBinder(idx).name
+    case Type.Capturing(inner, captureSet) => s"${show(inner)}^{${show(captureSet)}}"
+    case Type.TermArrow(params, result) => s"(${params.map(show).mkString(", ")}) -> ${show(result)}"
+    case Type.TypeArrow(params, result) => s"(${params.map(show).mkString(", ")}) -> ${show(result)}"
+
+  def show(binder: Binder)(using TypeChecker.Context): String = binder match
+    case Binder.TermBinder(name, tpe) => s"$name: ${show(tpe)}"
+    case Binder.TypeBinder(name, tpe) => s"$name: ${show(tpe)}"
+    case Binder.CaptureBinder(name, tpe) => s"$name: ${show(tpe)}"
+
+  def show(captureSet: CaptureSet)(using TypeChecker.Context): String = 
+    captureSet.elems.map(show).mkString(", ")
+
+  def show(captureRef: CaptureRef)(using TypeChecker.Context): String = captureRef match
+    case CaptureRef.BinderRef(idx) => TypeChecker.getBinder(idx).name
+    case CaptureRef.CAP() => "cap"
+
+extension (tpe: Type)
+  def show(using TypeChecker.Context): String = TypePrinter.show(tpe)
   
