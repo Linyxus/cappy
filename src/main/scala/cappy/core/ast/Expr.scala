@@ -211,6 +211,13 @@ object Expr:
         CaptureRef.BinderRef(idx + amount).maybeWithPosFrom(ref)
       case ref => ref
 
+    override def apply(tp: Type): Type =
+      tp match
+        case Type.BinderRef(idx) if idx >= localBinders.size =>
+          Type.BinderRef(idx + amount).like(tp)
+        case _ => mapOver(tp)
+      
+
   extension (tpe: Type)
     def shift(amount: Int): Type =
       val shift = ShiftType(amount)

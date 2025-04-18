@@ -10,6 +10,8 @@ import Printer.*
 val x: i64 = 1
 val y: i64 = x
 def add(x: i64, y: i64): i64 = #i64add(x, y)
+def identity[T](x: T): T = x
+val z: i64 = #i64add(x, z)
 """)
   val result = Compiler.parse(source)
   result match

@@ -279,6 +279,7 @@ object TypeChecker:
             case None => Right(expr1)
             case Some(expected) =>
               checkType(expected).flatMap: expected1 =>
+                println(s"check subtype ${expr1.tpe} and $expected1")
                 if TypeComparer.checkSubtype(expr1.tpe, expected1) then
                   Right(expr1.withTpe(expected1))
                 else Left(TypeError.TypeMismatch(expected1.show, expr1.tpe.show).withPos(expected.pos))

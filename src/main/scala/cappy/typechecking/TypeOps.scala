@@ -51,17 +51,31 @@ object TypePrinter:
     case BaseType.F32 => "f32"
     case BaseType.F64 => "f64"
 
-  def show(tpe: Type)(using TypeChecker.Context): String = tpe match
-    case Type.Base(base) => show(base)
-    case Type.BinderRef(idx) => TypeChecker.getBinder(idx).name
-    case Type.Capturing(inner, captureSet) => s"${show(inner)}^${show(captureSet)}"
-    case Type.TermArrow(params, result) => s"(${params.map(show).mkString(", ")}) -> ${show(result)}"
-    case Type.TypeArrow(params, result) => s"(${params.map(show).mkString(", ")}) -> ${show(result)}"
+  def show(tpe: Type)(using ctx: TypeChecker.Context): String = 
+    //println(s"show $tpe")
+    tpe match
+      case Type.Base(base) => show(base)
+      case Type.BinderRef(idx) => TypeChecker.getBinder(idx).name
+      case Type.Capturing(inner, captureSet) => s"${show(inner)}^${show(captureSet)}"
+      case Type.TermArrow(params, result) => 
+        def showParams(params: List[Binder.TermBinder])(using TypeChecker.Context): List[String] = params match
+          case Nil => Nil
+          case p :: ps => 
+            val s = show(p)
+            s :: showParams(ps)(using ctx.extend(p))
+        s"(${showParams(params).mkString(", ")}) -> ${show(result)(using ctx.extend(params))}"
+      case Type.TypeArrow(params, result) =>
+        def showParams(params: List[Binder.TypeBinder | Binder.CaptureBinder])(using TypeChecker.Context): List[String] = params match
+          case Nil => Nil
+          case p :: ps => 
+            val s = show(p)
+            s :: showParams(ps)(using ctx.extend(p))
+        s"(${showParams(params).mkString(", ")}) -> ${show(result)(using ctx.extend(params))}"
 
   def show(binder: Binder)(using TypeChecker.Context): String = binder match
     case Binder.TermBinder(name, tpe) => s"$name: ${show(tpe)}"
-    case Binder.TypeBinder(name, tpe) => s"$name: ${show(tpe)}"
-    case Binder.CaptureBinder(name, tpe) => s"$name: ${show(tpe)}"
+    case Binder.TypeBinder(name, tpe) => s"$name <: ${show(tpe)}"
+    case Binder.CaptureBinder(name, tpe) => s"$name <: ${show(tpe)}"
 
   def show(captureSet: CaptureSet)(using TypeChecker.Context): String = 
     val elems = captureSet.elems.map(show).mkString(", ")

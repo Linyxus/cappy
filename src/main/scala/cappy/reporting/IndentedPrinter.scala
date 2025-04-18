@@ -7,9 +7,10 @@ trait IndentedPrinter:
   var buf: StringBuilder = StringBuilder()
 
   def indented[T](op: => T): T =
+    val oldLevel = indentLevel
     indentLevel += 1
     try op
-    finally indentLevel -= 1
+    finally indentLevel = oldLevel
 
   def newline(): Unit =
     if !justNewlined then

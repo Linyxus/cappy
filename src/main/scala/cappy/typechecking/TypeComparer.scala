@@ -29,7 +29,7 @@ object TypeComparer:
       case (_, Type.Base(BaseType.AnyType)) => true
       case (Type.BinderRef(idx1), tp2) => getBinder(idx1) match
         case Binder.TypeBinder(name, bound) => checkSubtype(bound, tp2)
-        case _ => assert(false, "binder kind is absurd")
+        case bd => assert(false, s"binder kind (idx=$idx1) is absurd, $bd")
       case (Type.Capturing(inner, captureSet), tp2) =>
         checkSubcapture(captureSet, tp2.captureSet) && checkSubtype(inner, tp2)
       case (tp1, Type.Capturing(inner, captureSet)) =>

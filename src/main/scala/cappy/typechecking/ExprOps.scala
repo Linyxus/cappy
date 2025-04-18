@@ -7,59 +7,60 @@ import Expr.*
 import TypeChecker.*
 
 class ExprPrinter extends IndentedPrinter:
-  def show(t: Expr.Term)(using Context): Unit = t match
-    case Term.BinderRef(idx) => print(getBinder(idx).name)
-    case Term.SymbolRef(sym) => print(sym.name)
-    case Term.StrLit(value) => print(s""""$value"""")
-    case Term.IntLit(value) => print(value.toString)
-    case Term.UnitLit() => print("()")
-    case Term.TermLambda(params, body) =>
-      print("(")
-      def showBinders(bds: List[Binder])(using Context): List[String] = bds match
-        case Nil => Nil
-        case p :: ps =>
-          val s = TypePrinter.show(p)
-          s :: showBinders(ps)(using ctx.extend(p))
-      print(showBinders(params).mkString(", "))
-      print(") => {")
-      newline()
-      indented:
-        show(body)(using ctx.extend(params))
-      newline()
-      println("}")
-    case Term.TypeLambda(params, body) =>
-      print("[")
-      def showBinders(bds: List[Binder])(using Context): List[String] = bds match
-        case Nil => Nil
-        case p :: ps =>
-          val s = TypePrinter.show(p)
-          s :: showBinders(ps)(using ctx.extend(p))
-      print(showBinders(params).mkString(", "))
-      print("] => {")
-      newline()
-      indented:
-        show(body)(using ctx.extend(params))
-      newline()
-      println("}")
-    case Term.Bind(binder, expr, body) =>
-      print("val ")
-      print(binder.name)
-      print(": ")
-      showType(binder.tpe)
-      print(" = ")
-      newline()
-      indented:
-        show(expr)
-      newline()
-      show(body)(using ctx.extend(binder))
-    case Term.PrimOp(op, args) =>
-      print(op.toString)
-      print("(")
-      args.zipWithIndex.foreach: (arg, idx) =>
-        show(arg)
-        if idx < args.size - 1 then
-          print(", ")
-      print(")")
+  def show(t: Expr.Term)(using Context): Unit = 
+    t match
+      case Term.BinderRef(idx) => print(getBinder(idx).name)
+      case Term.SymbolRef(sym) => print(sym.name)
+      case Term.StrLit(value) => print(s""""$value"""")
+      case Term.IntLit(value) => print(value.toString)
+      case Term.UnitLit() => print("()")
+      case Term.TermLambda(params, body) =>
+        print("(")
+        def showBinders(bds: List[Binder])(using Context): List[String] = bds match
+          case Nil => Nil
+          case p :: ps =>
+            val s = TypePrinter.show(p)
+            s :: showBinders(ps)(using ctx.extend(p))
+        print(showBinders(params).mkString(", "))
+        print(") => {")
+        newline()
+        indented:
+          show(body)(using ctx.extend(params))
+        newline()
+        println("}")
+      case Term.TypeLambda(params, body) =>
+        print("[")
+        def showBinders(bds: List[Binder])(using Context): List[String] = bds match
+          case Nil => Nil
+          case p :: ps =>
+            val s = TypePrinter.show(p)
+            s :: showBinders(ps)(using ctx.extend(p))
+        print(showBinders(params).mkString(", "))
+        print("] => {")
+        newline()
+        indented:
+          show(body)(using ctx.extend(params))
+        newline()
+        println("}")
+      case Term.Bind(binder, expr, body) =>
+        print("val ")
+        print(binder.name)
+        print(": ")
+        showType(binder.tpe)
+        print(" = ")
+        newline()
+        indented:
+          show(expr)
+        newline()
+        show(body)(using ctx.extend(binder))
+      case Term.PrimOp(op, args) =>
+        print(op.toString)
+        print("(")
+        args.zipWithIndex.foreach: (arg, idx) =>
+          show(arg)
+          if idx < args.size - 1 then
+            print(", ")
+        print(")")
 
   def showType(tpe: Type)(using Context): Unit =
     print(TypePrinter.show(tpe))
