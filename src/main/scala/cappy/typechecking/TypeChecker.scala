@@ -28,11 +28,13 @@ object TypeChecker:
     case UnboundVariable(name: String, addenda: String = "")
     case TypeMismatch(expected: String, actual: String)
     case LeakingLocalBinder(tp: String)
+    case GeneralError(msg: String)
 
     override def toString(): String = this match
       case UnboundVariable(name, addenda) => s"Unbound variable: $name$addenda"
       case TypeMismatch(expected, actual) => s"Type mismatch: expected $expected, but got $actual"
       case LeakingLocalBinder(tp) => s"Leaking local binder: $tp"
+      case GeneralError(msg) => msg
 
   def ctx(using myCtx: Context): Context = myCtx
   
@@ -56,8 +58,12 @@ object TypeChecker:
     val bound: Result[Type] = param.bound match
       case None => Right(Definitions.anyType.withPosFrom(param))
       case Some(tpe) => 
-        // TODO: check that the bound is pure
-        checkType(tpe)
+        checkType(tpe).flatMap: tpe1 =>
+          val cs = tpe1.captureSet
+          if TypeComparer.checkSubcapture(cs, CaptureSet.empty) then
+            Right(tpe1)
+          else
+            Left(TypeError.GeneralError(s"Type parameter ${param.name} has a non-pure bound type: ${tpe1.show}, consider boxing it").withPos(param.pos))
     bound.map: tpe =>
       val binder: TypeBinder = TypeBinder(param.name, tpe)
       binder.maybeWithPosFrom(param)
