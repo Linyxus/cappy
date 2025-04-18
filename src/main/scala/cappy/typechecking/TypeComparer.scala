@@ -19,6 +19,7 @@ object TypeComparer:
           case Binder.TermBinder(name, tpe) => checkSubcapture(tpe.captureSet, cs2)
           case Binder.CaptureBinder(name, bound) => checkSubcapture(bound, cs2)
           case _: Binder.TypeBinder => assert(false, "binder kind is absurd")
+        case CaptureRef.SymbolRef(sym) => checkSubcapture(sym.tpe.captureSet, cs2)
         case CaptureRef.CAP() => false
     }
 

@@ -34,6 +34,7 @@ object Expr:
 
   enum CaptureRef extends Positioned:
     case BinderRef(idx: Int)
+    case SymbolRef(sym: Symbol)
     case CAP()
 
   case class CaptureSet(elems: List[CaptureRef]) extends Positioned:
@@ -116,6 +117,7 @@ object Expr:
 
   enum Term extends Positioned, Typed:
     case BinderRef(idx: Int)
+    case SymbolRef(sym: Symbol)
     case StrLit(value: String)
     case IntLit(value: Int)
     case UnitLit()
@@ -124,11 +126,10 @@ object Expr:
     case Bind(binder: TermBinder, bound: Term, body: Term)
     case PrimOp(op: PrimitiveOp, args: List[Term])
 
-  case class Symbol(name: String, from: Module) extends Positioned
+  case class Symbol(name: String, var tpe: Type, from: Module) extends Positioned
   enum Definition extends Positioned:
     case ValDef(sym: Symbol, tpe: Type, body: Term)
-  class Module(computeDefns: Module => List[Definition]):
-    val defns: List[Definition] = computeDefns(this)
+  class Module(var defns: List[Definition])
 
   object Definitions:
     def anyType: Type = Type.Base(BaseType.AnyType).withKind(TypeKind.Star)

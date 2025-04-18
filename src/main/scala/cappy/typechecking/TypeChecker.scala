@@ -10,7 +10,7 @@ object TypeChecker:
   import Binder.*
 
   /** Type checking context. */
-  case class Context(binders: List[Binder]):
+  case class Context(binders: List[Binder], symbols: List[Symbol]):
     /** Extend the context with a list of binders. */
     def extend(bds: List[Binder]): Context =
       if bds.isEmpty then this
@@ -21,8 +21,19 @@ object TypeChecker:
         copy(binders = newBinders)
     def extend(bd: Binder): Context = extend(bd :: Nil)
 
+    def addSymbol(sym: Symbol): Context =
+      copy(symbols = sym :: symbols)
+
+    def addSymbols(syms: List[Symbol]): Context =
+      if syms.isEmpty then this
+      else
+        var newSymbols = symbols
+        for sym <- syms do
+          newSymbols = sym :: newSymbols
+        copy(symbols = newSymbols)
+
   object Context:
-    def empty: Context = Context(Nil)
+    def empty: Context = Context(Nil, Nil)
 
   enum TypeError extends Positioned:
     case UnboundVariable(name: String, addenda: String = "")
@@ -43,6 +54,16 @@ object TypeChecker:
   def lookupBinder(name: String)(using ctx: Context): Option[(Binder, Int)] =
     ctx.binders.zipWithIndex.find((binder, _) => binder.name == name).map: (bd, idx) =>
       (bd.shift(idx + 1), idx)
+
+  def lookupSymbol(name: String)(using ctx: Context): Option[Symbol] =
+    ctx.symbols.find(_.name == name)
+
+  def lookupAll(name: String)(using ctx: Context): Option[(Binder, Int) | Symbol] =
+    lookupBinder(name) match
+      case Some(bd) => Some(bd)
+      case None => lookupSymbol(name) match
+        case Some(sym) => Some(sym)
+        case None => None
 
   def getBinder(idx: Int)(using ctx: Context): Binder =
     assert(idx >= 0 && idx < ctx.binders.length, s"invalid binder index: $idx")
@@ -84,7 +105,8 @@ object TypeChecker:
   def checkCaptureRef(ref: Syntax.CaptureRef)(using ctx: Context): Result[CaptureRef] =
     if ref.name == "cap" then
       Right(CaptureRef.CAP().maybeWithPosFrom(ref))
-    else lookupBinder(ref.name) match
+    else lookupAll(ref.name) match
+      case Some(sym: Symbol) => Right(CaptureRef.SymbolRef(sym).maybeWithPosFrom(ref))
       case Some((binder: (Binder.CaptureBinder | Binder.TermBinder), idx)) => Right(CaptureRef.BinderRef(idx).maybeWithPosFrom(ref))
       case Some((binder: Binder.TypeBinder, idx)) => Left(TypeError.UnboundVariable(ref.name, s"I found a type name, but was looking for either a term or capture name").withPos(ref.pos))
       case _ => Left(TypeError.UnboundVariable(ref.name).withPos(ref.pos))
@@ -160,7 +182,8 @@ object TypeChecker:
     go(params, Nil)
 
   def checkTerm(t: Syntax.Term)(using Context): Result[Term] = t match
-    case Syntax.Term.Ident(name) => lookupBinder(name) match
+    case Syntax.Term.Ident(name) => lookupAll(name) match
+      case Some(sym: Symbol) => Right(Term.SymbolRef(sym).withPosFrom(t).withTpe(sym.tpe))
       case Some((binder: Binder.TermBinder, idx)) => 
         val tpe = binder.tpe
         val ref: Term.BinderRef = Term.BinderRef(idx)
@@ -187,40 +210,6 @@ object TypeChecker:
           val tpe = Type.TypeArrow(params, body1.tpe)
           t1.withTpe(tpe)
     case Syntax.Term.Block(stmts) => 
-      def checkDef(d: Syntax.Definition)(using Context): Result[(TermBinder, Term)] = d match
-        case Syntax.Definition.ValDef(name, tpe, expr) =>
-          checkTerm(expr).flatMap: expr1 =>
-            tpe match
-              case None => 
-                val bd = TermBinder(name, expr1.tpe).withPos(d.pos)
-                Right((bd.asInstanceOf[TermBinder], expr1))
-              case Some(expected) =>
-                checkType(expected).flatMap: expected1 =>
-                  if TypeComparer.checkSubtype(expr1.tpe, expected1) then
-                    val bd = TermBinder(name, expected1).withPos(d.pos)
-                    Right((bd.asInstanceOf[TermBinder], expr1))
-                  else Left(TypeError.TypeMismatch(expected1.show, expr1.tpe.show).withPos(expected.pos))
-        case Syntax.Definition.DefDef(name, paramss, resultType, expr) => 
-          def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[Term] = pss match
-            case Nil => checkTerm(expr).flatMap: expr1 =>
-              resultType match
-                case None => Right(expr1)
-                case Some(expected) =>
-                  checkType(expected).flatMap: expected1 =>
-                    if TypeComparer.checkSubtype(expr1.tpe, expected1) then
-                      Right(expr1.withTpe(expected1))
-                    else Left(TypeError.TypeMismatch(expected1.show, expr1.tpe.show).withPos(expected.pos))
-            case (ps: Syntax.TermParamList) :: pss =>
-              checkTermParamList(ps.params).flatMap: params =>
-                go(pss)(using ctx.extend(params)).map: body1 =>
-                  Term.TermLambda(params, body1).withPosFrom(t).withTpe(Type.TermArrow(params, body1.tpe).withKind(TypeKind.Star))
-            case (ps: Syntax.TypeParamList) :: pss =>
-              checkTypeParamList(ps.params).flatMap: params =>
-                go(pss)(using ctx.extend(params)).map: body1 =>
-                  Term.TypeLambda(params, body1).withPosFrom(t).withTpe(Type.TypeArrow(params, body1.tpe).withKind(TypeKind.Star))
-          go(paramss).flatMap: expr1 =>
-            val bd = TermBinder(name, expr1.tpe).withPos(d.pos)
-            Right((bd.asInstanceOf[TermBinder], expr1))
       def go(stmts: List[Syntax.Definition | Syntax.Term])(using Context): Result[Term] = 
         stmts match
           case Nil => 
@@ -265,4 +254,93 @@ object TypeChecker:
       case _ => Left(TypeError.GeneralError(s"Argument number mismatch for primitive operation, expected ${formals.length}, but got ${args.length}").withPos(pos))
     go(args, formals, Nil).map: args1 =>
       Term.PrimOp(op, args1).withPos(pos).withTpe(Type.Base(resType).withKind(TypeKind.Star))
+
+  def checkDef(d: Syntax.Definition)(using Context): Result[(TermBinder, Term)] = d match
+    case Syntax.Definition.ValDef(name, tpe, expr) =>
+      checkTerm(expr).flatMap: expr1 =>
+        tpe match
+          case None => 
+            val bd = TermBinder(name, expr1.tpe).withPos(d.pos)
+            Right((bd.asInstanceOf[TermBinder], expr1))
+          case Some(expected) =>
+            checkType(expected).flatMap: expected1 =>
+              if TypeComparer.checkSubtype(expr1.tpe, expected1) then
+                val bd = TermBinder(name, expected1).withPos(d.pos)
+                Right((bd.asInstanceOf[TermBinder], expr1))
+              else Left(TypeError.TypeMismatch(expected1.show, expr1.tpe.show).withPos(expected.pos))
+    case Syntax.Definition.DefDef(name, paramss, resultType, expr) => 
+      def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[Term] = pss match
+        case Nil => checkTerm(expr).flatMap: expr1 =>
+          resultType match
+            case None => Right(expr1)
+            case Some(expected) =>
+              checkType(expected).flatMap: expected1 =>
+                if TypeComparer.checkSubtype(expr1.tpe, expected1) then
+                  Right(expr1.withTpe(expected1))
+                else Left(TypeError.TypeMismatch(expected1.show, expr1.tpe.show).withPos(expected.pos))
+        case (ps: Syntax.TermParamList) :: pss =>
+          checkTermParamList(ps.params).flatMap: params =>
+            go(pss)(using ctx.extend(params)).map: body1 =>
+              Term.TermLambda(params, body1).withPosFrom(d).withTpe(Type.TermArrow(params, body1.tpe).withKind(TypeKind.Star))
+        case (ps: Syntax.TypeParamList) :: pss =>
+          checkTypeParamList(ps.params).flatMap: params =>
+            go(pss)(using ctx.extend(params)).map: body1 =>
+              Term.TypeLambda(params, body1).withPosFrom(d).withTpe(Type.TypeArrow(params, body1.tpe).withKind(TypeKind.Star))
+      go(paramss).flatMap: expr1 =>
+        val bd = TermBinder(name, expr1.tpe).withPos(d.pos)
+        Right((bd.asInstanceOf[TermBinder], expr1))
+
+  def extractDefType(d: Syntax.Definition.DefDef)(using Context): Result[Type] = 
+    def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[Type] = pss match
+      case Nil => 
+        d.resultType match
+          case None => Left(TypeError.GeneralError("Explicit type annotation is required for top-level definitions").withPos(d.pos))
+          case Some(resultType) => checkType(resultType)
+      case (ps: Syntax.TermParamList) :: pss =>
+        checkTermParamList(ps.params).flatMap: params =>
+          go(pss)(using ctx.extend(params)).flatMap: resultType1 =>
+            Right(Type.TermArrow(params, resultType1).withKind(TypeKind.Star))
+      case (ps: Syntax.TypeParamList) :: pss =>
+        checkTypeParamList(ps.params).flatMap: params =>
+          go(pss)(using ctx.extend(params)).flatMap: resultType1 =>
+            Right(Type.TypeArrow(params, resultType1).withKind(TypeKind.Star))
+    go(d.paramss)
+
+  def extractValType(d: Syntax.Definition.ValDef)(using Context): Result[Type] = 
+    d.tpe match
+      case None => Left(TypeError.GeneralError("Explicit type annotation is required for top-level definitions").withPos(d.pos))
+      case Some(expected) => checkType(expected)
+
+  def extractDefnType(d: Syntax.Definition)(using Context): Result[Type] = d match
+    case d: Syntax.Definition.ValDef => extractValType(d)
+    case d: Syntax.Definition.DefDef => extractDefType(d)
+
+  def checkModule(defns: List[Syntax.Definition])(using Context): Result[Module] = 
+    val mod = Expr.Module(Nil)
+    def hasDuplicatedName: Boolean =
+      val names = defns.map(_.name)
+      names.distinct.length != names.length
+    if hasDuplicatedName then
+      Left(TypeError.GeneralError("Duplicated definition name").withPos(defns.head.pos))
+    else
+      def extractSymTypes(xs: List[(Symbol, Syntax.Definition)]): Result[Unit] = xs match
+        case Nil => Right(())
+        case (sym, defn) :: xs =>
+          extractDefnType(defn).flatMap: tpe =>
+            sym.tpe = tpe
+            extractSymTypes(xs)
+      val syms = defns.map: defn =>
+        Symbol(defn.name, Definitions.anyType, mod).withPosFrom(defn)
+      extractSymTypes(syms `zip` defns)
+      val ctx1 = ctx.addSymbols(syms)
+      def checkDefns(defns: List[(Symbol, Syntax.Definition)]): Result[List[Expr.Definition]] = defns match
+        case Nil => Right(Nil)
+        case (sym, defn) :: defns =>
+          checkDef(defn)(using ctx1).flatMap: (bd, expr) =>
+            checkDefns(defns).map: defns1 =>
+              val d = Expr.Definition.ValDef(sym, expr.tpe, expr)
+              d :: defns1
+      checkDefns(syms `zip` defns).map: defns1 =>
+        mod.defns = defns1
+        mod
   
