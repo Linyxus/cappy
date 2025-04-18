@@ -171,7 +171,7 @@ object TypeChecker:
     case Syntax.Term.StrLit(value) => 
       Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType))
     case Syntax.Term.IntLit(value) => 
-      Right(Term.IntLit(value).withPosFrom(t).withTpe(Definitions.intType))
+      Right(Term.IntLit(value).withPosFrom(t).withTpe(Definitions.i64Type))
     case Syntax.Term.UnitLit() => 
       Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
     case Syntax.Term.Lambda(params, body) => 
@@ -245,6 +245,24 @@ object TypeChecker:
                 else
                   Left(TypeError.LeakingLocalBinder(resType.show(using ctx.extend(bd))).withPos(d.pos))
       go(stmts)
+    case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if PrimitiveOp.fromName(name).isDefined => 
+      PrimitiveOp.fromName(name).get match
+        case PrimitiveOp.I32Add => checkPrimOpArgs(PrimitiveOp.I32Add, args, List(BaseType.I32, BaseType.I32), BaseType.I32, t.pos)
+        case PrimitiveOp.I32Mul => checkPrimOpArgs(PrimitiveOp.I32Mul, args, List(BaseType.I32, BaseType.I32), BaseType.I32, t.pos)
+        case PrimitiveOp.I64Add => checkPrimOpArgs(PrimitiveOp.I64Add, args, List(BaseType.I64, BaseType.I64), BaseType.I64, t.pos)
+        case PrimitiveOp.I64Mul => checkPrimOpArgs(PrimitiveOp.I64Mul, args, List(BaseType.I64, BaseType.I64), BaseType.I64, t.pos)
     case Syntax.Term.Apply(fun, args) => ???
     case Syntax.Term.TypeApply(term, targs) => ???
+
+  def checkPrimOpArgs(op: PrimitiveOp, args: List[Syntax.Term], formals: List[BaseType], resType: BaseType, pos: SourcePos)(using Context): Result[Term] = 
+    def go(args: List[Syntax.Term], formals: List[BaseType], acc: List[Term]): Result[List[Term]] = (args, formals) match
+      case (Nil, Nil) => Right(acc.reverse)
+      case (arg :: args, formal :: formals) =>
+        checkTerm(arg).flatMap: arg1 =>
+          if TypeComparer.checkSubtype(arg1.tpe, Type.Base(formal).withKind(TypeKind.Star)) then
+            go(args, formals, arg1 :: acc)
+          else Left(TypeError.TypeMismatch(TypePrinter.show(formal), arg1.tpe.show).withPos(arg.pos))
+      case _ => Left(TypeError.GeneralError(s"Argument number mismatch for primitive operation, expected ${formals.length}, but got ${args.length}").withPos(pos))
+    go(args, formals, Nil).map: args1 =>
+      Term.PrimOp(op, args1).withPos(pos).withTpe(Type.Base(resType).withKind(TypeKind.Star))
   

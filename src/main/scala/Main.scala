@@ -9,8 +9,8 @@ import Printer.*
   val source = SourceFile("test", """
 val t: Unit =
   val x = 1
-  def add(x: i32, y: i32): i32 = #i32add
-  ()
+  def add(x: i64, y: i64): i64 = #i64add(x, y)
+  add
 """)
   val result = Compiler.parse(source)
   result match

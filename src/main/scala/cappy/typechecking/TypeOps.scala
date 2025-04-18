@@ -43,6 +43,10 @@ object TypePrinter:
     case BaseType.IntType => "Int"
     case BaseType.StrType => "Str"
     case BaseType.UnitType => "Unit"
+    case BaseType.I32 => "i32"
+    case BaseType.I64 => "i64"
+    case BaseType.F32 => "f32"
+    case BaseType.F64 => "f64"
 
   def show(tpe: Type)(using TypeChecker.Context): String = tpe match
     case Type.Base(base) => show(base)

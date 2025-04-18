@@ -100,6 +100,20 @@ object Expr:
   object Type:
     private var nextId: Int = 0
 
+  enum PrimitiveOp extends Positioned:
+    case I32Add
+    case I32Mul
+    case I64Add
+    case I64Mul
+
+  object PrimitiveOp:
+    def fromName(name: String): Option[PrimitiveOp] = name match
+      case "#i32add" => Some(PrimitiveOp.I32Add)
+      case "#i32mul" => Some(PrimitiveOp.I32Mul)
+      case "#i64add" => Some(PrimitiveOp.I64Add)
+      case "#i64mul" => Some(PrimitiveOp.I64Mul)
+      case _ => None
+
   enum Term extends Positioned, Typed:
     case BinderRef(idx: Int)
     case StrLit(value: String)
@@ -108,11 +122,19 @@ object Expr:
     case TermLambda(params: List[TermBinder], body: Term)
     case TypeLambda(params: List[TypeBinder | CaptureBinder], body: Term)
     case Bind(binder: TermBinder, bound: Term, body: Term)
+    case PrimOp(op: PrimitiveOp, args: List[Term])
+
+  case class Symbol(name: String, from: Module) extends Positioned
+  enum Definition extends Positioned:
+    case ValDef(sym: Symbol, tpe: Type, body: Term)
+  class Module(computeDefns: Module => List[Definition]):
+    val defns: List[Definition] = computeDefns(this)
 
   object Definitions:
     def anyType: Type = Type.Base(BaseType.AnyType).withKind(TypeKind.Star)
     def strType: Type = Type.Base(BaseType.StrType).withKind(TypeKind.Star)
     def intType: Type = Type.Base(BaseType.IntType).withKind(TypeKind.Star)
+    def i64Type: Type = Type.Base(BaseType.I64).withKind(TypeKind.Star)
     def unitType: Type = Type.Base(BaseType.UnitType).withKind(TypeKind.Star)
     def capCaptureSet: CaptureSet = CaptureSet(List(CaptureRef.CAP()))
 
