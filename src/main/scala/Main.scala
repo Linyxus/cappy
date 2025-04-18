@@ -7,7 +7,7 @@ import Printer.*
 
 @main def hello(): Unit =
   val source = SourceFile("test", """
-val t: [cap C] -> (x: Int^{C}) -> Int^{C} = [cap C] => (x: Int^{C}) => [cap D, E, F, G] => x
+val t: (x: Any) -> Int = (x: Int) => 0
 """)
   val result = Compiler.parse(source)
   result match
@@ -20,17 +20,19 @@ val t: [cap C] -> (x: Int^{C}) -> Int^{C} = [cap C] => (x: Int^{C}) => [cap D, E
         //println(Printer.showSourcePos(defn.pos, List(defn.toString)))
         defn match
           case Syntax.Definition.ValDef(name, Some(tpe), body) =>
-            println(s"val $name: $tpe")
+            println(s"val $name: $tpe = $body")
             val res = TypeChecker.checkType(tpe)(using TypeChecker.Context.empty)
             res match
               case Right(tpe) =>
                 println(Printer.showSourcePos(tpe.pos, List("success!", tpe.toString)))
-              case Left(err) =>
-                println(Printer.showSourcePos(err.pos, List("error!", err.toString)))
-            val res2 = TypeChecker.checkTerm(body)(using TypeChecker.Context.empty)
-            res2 match
-              case Right(term) =>
-                println(Printer.showSourcePos(term.pos, List("success!", term.tpe.toString)))
+                val res2 = TypeChecker.checkTerm(body)(using TypeChecker.Context.empty)
+                res2 match
+                  case Right(term) =>
+                    println(Printer.showSourcePos(term.pos, List("success!", term.tpe.toString)))
+                    val res3 = TypeComparer.checkSubtype(term.tpe, tpe)(using TypeChecker.Context.empty)
+                    println(s"subtype check: $res3")
+                  case Left(err) =>
+                    println(Printer.showSourcePos(err.pos, List("error!", err.toString)))
               case Left(err) =>
                 println(Printer.showSourcePos(err.pos, List("error!", err.toString)))
           case _ =>

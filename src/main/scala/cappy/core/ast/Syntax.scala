@@ -22,7 +22,7 @@ object Syntax:
     case Apply(fun: Term, args: List[Term])
     case TypeApply(term: Term, targs: List[Type | CaptureSet])
     //case CaptureApply(term: Term, captures: List[CaptureSet])
-    case Block(defs: List[Definition], expr: Term)
+    case Block(stmts: List[Definition | Term])
   import Term.*
 
   case class TypeParamList(params: List[TypeParam | CaptureParam]) extends Positioned

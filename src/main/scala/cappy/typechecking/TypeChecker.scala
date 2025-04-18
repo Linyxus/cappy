@@ -18,6 +18,8 @@ object TypeChecker:
         for bd <- bds do
           newBinders = bd :: newBinders
         copy(binders = newBinders)
+    def extend(bd: Binder): Context = extend(bd :: Nil)
+
   object Context:
     def empty: Context = Context(Nil)
 
@@ -32,6 +34,11 @@ object TypeChecker:
   def lookupBinder(name: String)(using ctx: Context): Option[(Binder, Int)] =
     ctx.binders.zipWithIndex.find((binder, _) => binder.name == name).map: (bd, idx) =>
       (bd.shift(idx + 1), idx)
+
+  def getBinder(idx: Int)(using ctx: Context): Binder =
+    assert(idx >= 0 && idx < ctx.binders.length)
+    val bd = ctx.binders(idx)
+    bd.shift(idx + 1)
 
   def checkTermParam(param: Syntax.TermParam)(using ctx: Context): Result[TermBinder] =
     checkType(param.tpe).map: tpe =>
@@ -157,5 +164,5 @@ object TypeChecker:
           t1.withTpe(tpe)
     case Syntax.Term.Apply(fun, args) => ???
     case Syntax.Term.TypeApply(term, targs) => ???
-    case Syntax.Term.Block(defs, expr) => ???
+    case Syntax.Term.Block(stmts) => ???
   

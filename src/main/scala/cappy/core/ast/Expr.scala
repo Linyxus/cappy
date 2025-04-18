@@ -31,7 +31,12 @@ object Expr:
     case BinderRef(idx: Int)
     case CAP()
 
-  case class CaptureSet(elems: List[CaptureRef]) extends Positioned
+  case class CaptureSet(elems: List[CaptureRef]) extends Positioned:
+    def ++ (other: CaptureSet): CaptureSet = CaptureSet(elems ++ other.elems)
+
+  object CaptureSet:
+    def empty: CaptureSet = CaptureSet(Nil)
+    def universal: CaptureSet = CaptureSet(List(CaptureRef.CAP()))
 
   enum TypeKind:
     case Star  // *

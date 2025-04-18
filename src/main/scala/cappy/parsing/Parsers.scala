@@ -63,17 +63,7 @@ object Parsers:
     ).withWhat("a clause in a block")
     val clausesP = clauseP.sepBy(tokenP[Token.NEWLINE])
     val p = (tokenP[Token.INDENT], clausesP, tokenP[Token.DEDENT].optional).p.flatMap: (_, clauses, _) =>
-      if clauses.isEmpty then
-        fail("A block must contain at least one clause")
-      else
-        clauses.last match
-          case _: Definition.ValDef | _: Definition.DefDef =>
-            fail(s"The last clause in a block must be a term, but got: $clauses")
-          case term: Term =>
-            val defs = clauses.init.map:
-              case defn: Definition => defn
-              case term: Term => Definition.ValDef("_", None, term).withPos(term.pos)
-            pureP(Term.Block(defs, term))
+      pureP(Term.Block(clauses))
     p.positioned.withWhat("a block expression")
 
   def termAtomP: Parser[Term] = longestMatch(
