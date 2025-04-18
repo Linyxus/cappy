@@ -342,7 +342,7 @@ object TypeChecker:
         case (sym, defn) :: defns =>
           checkDef(defn)(using ctx1).flatMap: (bd, expr) =>
             checkDefns(defns).map: defns1 =>
-              val d = Expr.Definition.ValDef(sym, expr.tpe, expr)
+              val d = Expr.Definition.ValDef(sym, sym.tpe, expr)
               d :: defns1
       checkDefns(syms `zip` defns).map: defns1 =>
         mod.defns = defns1
