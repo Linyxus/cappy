@@ -50,7 +50,7 @@ object TypePrinter:
   def show(tpe: Type)(using TypeChecker.Context): String = tpe match
     case Type.Base(base) => show(base)
     case Type.BinderRef(idx) => TypeChecker.getBinder(idx).name
-    case Type.Capturing(inner, captureSet) => s"${show(inner)}^{${show(captureSet)}}"
+    case Type.Capturing(inner, captureSet) => s"${show(inner)}^${show(captureSet)}"
     case Type.TermArrow(params, result) => s"(${params.map(show).mkString(", ")}) -> ${show(result)}"
     case Type.TypeArrow(params, result) => s"(${params.map(show).mkString(", ")}) -> ${show(result)}"
 
@@ -60,7 +60,8 @@ object TypePrinter:
     case Binder.CaptureBinder(name, tpe) => s"$name: ${show(tpe)}"
 
   def show(captureSet: CaptureSet)(using TypeChecker.Context): String = 
-    captureSet.elems.map(show).mkString(", ")
+    val elems = captureSet.elems.map(show).mkString(", ")
+    s"{$elems}"
 
   def show(captureRef: CaptureRef)(using TypeChecker.Context): String = captureRef match
     case CaptureRef.BinderRef(idx) => TypeChecker.getBinder(idx).name
