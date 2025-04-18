@@ -319,6 +319,6 @@ object Parser:
 
   def keywordP(name: String): Parser[Unit] =
     val p = predP:
-      case Token.IDENT(name) if name == name => true
+      case Token.IDENT(name1) if name == name1 => true
       case _ => false
     p.map(_ => ())
