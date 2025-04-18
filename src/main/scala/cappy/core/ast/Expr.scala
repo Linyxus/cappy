@@ -103,22 +103,38 @@ object Expr:
     def unitType: Type = Type.Base(BaseType.UnitType).withKind(TypeKind.Star)
     def capCaptureSet: CaptureSet = CaptureSet(List(CaptureRef.CAP()))
 
+  enum Variance:
+    case Covariant
+    case Contravariant
+    case Invariant
+
+    def negate: Variance = this match
+      case Covariant => Contravariant
+      case Contravariant => Covariant
+      case Invariant => Invariant
+
   class TypeMap:
     var localBinders: List[Binder] = Nil
+    var variance: Variance = Variance.Covariant
 
     def withBinder[T](bd: Binder)(op: => T): T =
       localBinders = bd :: localBinders
       try op finally localBinders = localBinders.tail
 
+    def withVariance[T](v: Variance)(op: => T): T =
+      val old = variance
+      variance = v
+      try op finally variance = old
+
     def apply(tp: Type): Type = mapOver(tp)
 
     def mapBinder(param: Binder): Binder = param match
-      case TermBinder(name, tpe) => TermBinder(name, apply(tpe)).withPosFrom(param)
-      case TypeBinder(name, bound) => TypeBinder(name, apply(bound)).withPosFrom(param)
-      case CaptureBinder(name, bound) => CaptureBinder(name, mapCaptureSet(bound)).withPosFrom(param)
+      case TermBinder(name, tpe) => TermBinder(name, apply(tpe)).maybeWithPosFrom(param)
+      case TypeBinder(name, bound) => TypeBinder(name, apply(bound)).maybeWithPosFrom(param)
+      case CaptureBinder(name, bound) => CaptureBinder(name, mapCaptureSet(bound)).maybeWithPosFrom(param)
 
     def mapCaptureSet(captureSet: CaptureSet): CaptureSet =
-      CaptureSet(captureSet.elems.map(mapCaptureRef)).withPosFrom(captureSet)
+      CaptureSet(captureSet.elems.map(mapCaptureRef)).maybeWithPosFrom(captureSet)
 
     def mapCaptureRef(ref: CaptureRef): CaptureRef = ref
 
@@ -130,7 +146,8 @@ object Expr:
           ps match
             case Nil => Type.TermArrow(bs.reverse.asInstanceOf, apply(result)).like(tp)
             case p :: ps =>
-              val p1 = mapBinder(p)
+              val p1 = withVariance(variance.negate):
+                mapBinder(p)
               withBinder(p1):
                 go(ps, p1 :: bs)
         go(params, Nil)
@@ -139,7 +156,8 @@ object Expr:
           ps match
             case Nil => Type.TypeArrow(bs.reverse.asInstanceOf, apply(result)).like(tp)
             case p :: ps =>
-              val p1 = mapBinder(p)
+              val p1 = withVariance(variance.negate):
+                mapBinder(p)
               withBinder(p1):
                 go(ps, p1 :: bs)
         go(params, Nil)
@@ -148,7 +166,7 @@ object Expr:
   class ShiftType(amount: Int) extends TypeMap:
     override def mapCaptureRef(ref: CaptureRef): CaptureRef = ref match
       case CaptureRef.BinderRef(idx) if idx >= localBinders.size =>
-        CaptureRef.BinderRef(idx + amount).withPosFrom(ref)
+        CaptureRef.BinderRef(idx + amount).maybeWithPosFrom(ref)
       case ref => ref
 
   extension (tpe: Type)
@@ -168,6 +186,6 @@ object Expr:
   extension (binder: Binder)
     def shift(amount: Int): Binder =
       binder match
-        case TermBinder(name, tpe) => TermBinder(name, tpe.shift(amount)).withPosFrom(binder)
-        case TypeBinder(name, bound) => TypeBinder(name, bound.shift(amount)).withPosFrom(binder)
-        case CaptureBinder(name, bound) => CaptureBinder(name, bound.shift(amount)).withPosFrom(binder)
+        case TermBinder(name, tpe) => TermBinder(name, tpe.shift(amount)).maybeWithPosFrom(binder)
+        case TypeBinder(name, bound) => TypeBinder(name, bound.shift(amount)).maybeWithPosFrom(binder)
+        case CaptureBinder(name, bound) => CaptureBinder(name, bound.shift(amount)).maybeWithPosFrom(binder)

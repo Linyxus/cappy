@@ -24,3 +24,9 @@ trait Positioned:
   def withPosFrom(others: Positioned*): this.type =
     val pos = others.map(_.pos).reduce((a, b) => a.merge(b))
     withPos(pos)
+
+  def maybeWithPosFrom(others: Positioned*): this.type =
+    if others.exists(_.hasPos) then
+      withPosFrom(others.filter(_.hasPos)*)
+    else
+      this
