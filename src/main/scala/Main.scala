@@ -7,7 +7,9 @@ import Printer.*
 
 @main def hello(): Unit =
   val source = SourceFile("test", """
-val t: (x: Any) -> Int = (x: Int) => 0
+val t: Int^{cap} =
+  val x: Int^{cap} = 0
+  x
 """)
   val result = Compiler.parse(source)
   result match

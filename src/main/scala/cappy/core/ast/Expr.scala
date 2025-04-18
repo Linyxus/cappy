@@ -94,6 +94,7 @@ object Expr:
     case UnitLit()
     case TermLambda(params: List[TermBinder], body: Term)
     case TypeLambda(params: List[TypeBinder | CaptureBinder], body: Term)
+    case Bind(binder: TermBinder, bound: Term, body: Term)
 
   object Definitions:
     def anyType: Type = Type.Base(BaseType.AnyType).withKind(TypeKind.Star)

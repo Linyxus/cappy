@@ -3,6 +3,7 @@ package typechecking
 
 import core.*
 import core.ast.*
+import cappy.core.ast.Syntax.Definition
 
 object TypeChecker:
   import Expr.*
@@ -126,6 +127,22 @@ object TypeChecker:
         Type.Capturing(inner1, captureSet1).withPosFrom(tpe).withKind(TypeKind.Star)
     case Syntax.Type.AppliedType(tycon, args) => ???
 
+  def checkTermParamList(params: List[Syntax.TermParam])(using Context): Result[List[TermBinder]] =
+    def go(ps: List[Syntax.TermParam], acc: List[TermBinder])(using Context): Result[List[TermBinder]] = ps match
+      case Nil => Right(acc.reverse)
+      case p :: ps =>
+        checkTermParam(p).flatMap: binder =>
+          go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
+    go(params, Nil)
+
+  def checkTypeParamList(params: List[Syntax.TypeParam | Syntax.CaptureParam])(using Context): Result[List[TypeBinder | CaptureBinder]] =
+    def go(ps: List[Syntax.TypeParam | Syntax.CaptureParam], acc: List[TypeBinder | CaptureBinder])(using Context): Result[List[TypeBinder | CaptureBinder]] = ps match
+      case Nil => Right(acc.reverse)
+      case p :: ps =>
+        checkCaptureOrTypeParam(p).flatMap: binder =>
+          go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
+    go(params, Nil)
+
   def checkTerm(t: Syntax.Term)(using Context): Result[Term] = t match
     case Syntax.Term.Ident(name) => lookupBinder(name) match
       case Some((binder: Binder.TermBinder, idx)) => 
@@ -141,28 +158,71 @@ object TypeChecker:
     case Syntax.Term.UnitLit() => 
       Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
     case Syntax.Term.Lambda(params, body) => 
-      def go(ps: List[Syntax.TermParam], acc: List[TermBinder])(using Context): Result[List[TermBinder]] = ps match
-        case Nil => Right(acc.reverse)
-        case p :: ps =>
-          checkTermParam(p).flatMap: binder =>
-            go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
-      go(params, Nil).flatMap: params =>
+      checkTermParamList(params).flatMap: params =>
         checkTerm(body)(using ctx.extend(params)).map: body1 =>
           val t1 = Term.TermLambda(params, body1).withPosFrom(t)
           val tpe = Type.TermArrow(params, body1.tpe)
           t1.withTpe(tpe)
     case Syntax.Term.TypeLambda(params, body) =>
-      def go(ps: List[Syntax.TypeParam | Syntax.CaptureParam], acc: List[TypeBinder | CaptureBinder])(using Context): Result[List[TypeBinder | CaptureBinder]] = ps match
-        case Nil => Right(acc.reverse)
-        case p :: ps =>
-          checkCaptureOrTypeParam(p).flatMap: binder =>
-            go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
-      go(params, Nil).flatMap: params =>
+      checkTypeParamList(params).flatMap: params =>
         checkTerm(body)(using ctx.extend(params)).map: body1 =>
           val t1 = Term.TypeLambda(params, body1).withPosFrom(t)
           val tpe = Type.TypeArrow(params, body1.tpe)
           t1.withTpe(tpe)
+    case Syntax.Term.Block(stmts) => 
+      def checkDef(d: Syntax.Definition)(using Context): Result[(TermBinder, Term)] = d match
+        case Syntax.Definition.ValDef(name, tpe, expr) =>
+          checkTerm(expr).flatMap: expr1 =>
+            tpe match
+              case None => 
+                val bd = TermBinder(name, expr1.tpe).withPos(d.pos)
+                Right((bd.asInstanceOf[TermBinder], expr1))
+              case Some(expected) =>
+                checkType(expected).flatMap: expected1 =>
+                  if TypeComparer.checkSubtype(expr1.tpe, expected1) then
+                    val bd = TermBinder(name, expected1).withPos(d.pos)
+                    Right((bd.asInstanceOf[TermBinder], expr1))
+                  else Left(TypeError.TypeMismatch(expected1, expr1.tpe).withPos(expected.pos))
+        case Syntax.Definition.DefDef(name, paramss, resultType, expr) => 
+          def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[Term] = pss match
+            case Nil => checkTerm(expr).flatMap: expr1 =>
+              resultType match
+                case None => Right(expr1)
+                case Some(expected) =>
+                  checkType(expected).flatMap: expected1 =>
+                    if TypeComparer.checkSubtype(expr1.tpe, expected1) then
+                      Right(expr1.withTpe(expected1))
+                    else Left(TypeError.TypeMismatch(expected1, expr1.tpe).withPos(expected.pos))
+            case (ps: Syntax.TermParamList) :: pss =>
+              checkTermParamList(ps.params).flatMap: params =>
+                go(pss)(using ctx.extend(params)).map: body1 =>
+                  Term.TermLambda(params, body1).withPosFrom(t).withTpe(Type.TermArrow(params, body1.tpe).withKind(TypeKind.Star))
+            case (ps: Syntax.TypeParamList) :: pss =>
+              checkTypeParamList(ps.params).flatMap: params =>
+                go(pss)(using ctx.extend(params)).map: body1 =>
+                  Term.TypeLambda(params, body1).withPosFrom(t).withTpe(Type.TypeArrow(params, body1.tpe).withKind(TypeKind.Star))
+          go(paramss).flatMap: expr1 =>
+            val bd = TermBinder(name, expr1.tpe).withPos(d.pos)
+            Right((bd.asInstanceOf[TermBinder], expr1))
+      def go(stmts: List[Syntax.Definition | Syntax.Term])(using Context): Result[Term] = 
+        stmts match
+          case Nil => 
+            Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
+          case (t: Syntax.Term) :: Nil => 
+            checkTerm(t)
+          case (d: Syntax.Definition) :: Nil =>
+            checkDef(d).map: (bd, expr) =>
+              val retType = Definitions.unitType
+              Term.Bind(bd, expr, Term.UnitLit().withPosFrom(d).withTpe(retType)).withPosFrom(d).withTpe(retType)
+          case d :: ds =>
+            val d1 = d match
+              case d: Syntax.Definition => d
+              case t: Syntax.Term => Syntax.Definition.ValDef(Fresh.freshName("_"), None, t).withPosFrom(t)
+            checkDef(d1).flatMap: (bd, boundExpr) =>
+              go(ds)(using ctx.extend(bd :: Nil)).map: bodyExpr =>
+                val resType = bodyExpr.tpe
+                Term.Bind(bd, boundExpr, bodyExpr).withPosFrom(d, bodyExpr).withTpe(resType)
+      go(stmts)
     case Syntax.Term.Apply(fun, args) => ???
     case Syntax.Term.TypeApply(term, targs) => ???
-    case Syntax.Term.Block(stmts) => ???
   
