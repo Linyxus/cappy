@@ -14,11 +14,8 @@ extension (tpe: Type)
     case Type.TypeArrow(params, result) => CaptureSet.empty
 
   def stripCaptures: Type = tpe match
-    case Type.Base(base) => tpe
-    case Type.BinderRef(idx) => tpe
     case Type.Capturing(inner, captureSet) => inner.stripCaptures
-    case Type.TermArrow(params, result) => Type.TermArrow(params, result.stripCaptures)
-    case Type.TypeArrow(params, result) => Type.TypeArrow(params, result.stripCaptures)
+    case _ => tpe
 
 extension (ref: Term.BinderRef)
   def singletonCaptureSet: CaptureSet = CaptureSet(List(CaptureRef.BinderRef(ref.idx)))
