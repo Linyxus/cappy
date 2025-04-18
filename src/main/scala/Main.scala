@@ -24,9 +24,8 @@ def add(x: i64, y: i64): i64 = #i64add(x, y)
         case Left(err) => 
           println(Printer.showSourcePos(err.pos, List(err.toString)))
         case Right(mod) =>
-          mod.defns.foreach: defn =>
-            println(defn)
-      
+          println(ExprPrinter.show(mod)(using TypeChecker.Context.empty))
+
       // result.foreach: defn =>
         //println(Printer.showSourcePos(defn.pos, List(defn.toString)))
         // defn match

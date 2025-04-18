@@ -107,6 +107,12 @@ object Expr:
     case I64Add
     case I64Mul
 
+    override def toString: String = this match
+      case I32Add => "#i32add"
+      case I32Mul => "#i32mul"
+      case I64Add => "#i64add"
+      case I64Mul => "#i64mul"
+
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match
       case "#i32add" => Some(PrimitiveOp.I32Add)
