@@ -7,11 +7,9 @@ import Printer.*
 
 @main def hello(): Unit =
   val source = SourceFile("test", """
-val x: i64 = 1
-val y: i64 = x
-def add(x: i64, y: i64): i64 = #i64add(x, y)
-def identity[T](x: T): T = x
-val z: i64 = #i64add(x, z)
+def x: i64 = 1
+def y: i64 = x
+def z: i64 = #i64add(x, y)
 """)
   val result = Compiler.parse(source)
   result match
@@ -20,7 +18,7 @@ val z: i64 = #i64add(x, z)
     case Compiler.ParseResult.ParsingError(err) =>
       println(err.show)
     case Compiler.ParseResult.Ok(result) =>
-      result.foreach(println)
+      result.foreach(d => println(Printer.showSourcePos(d.pos, List(d.toString))))
       val mod = TypeChecker.checkModule(result)(using TypeChecker.Context.empty)
       mod match
         case Left(err) => 

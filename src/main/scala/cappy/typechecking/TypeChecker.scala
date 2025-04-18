@@ -337,10 +337,16 @@ object TypeChecker:
       val syms = defns.map: defn =>
         Symbol(defn.name, Definitions.anyType, mod).withPosFrom(defn)
       extractSymTypes(syms `zip` defns)
-      val ctx1 = ctx.addSymbols(syms)
       def checkDefns(defns: List[(Symbol, Syntax.Definition)]): Result[List[Expr.Definition]] = defns match
         case Nil => Right(Nil)
         case (sym, defn) :: defns =>
+          val ctx1 = 
+            if defn.isInstanceOf[Syntax.Definition.ValDef] then
+              // self-recursion is not allowed for val defs
+              println(s"self-recursion is not allowed for val defs, ${defn.name}, $defn")
+              ctx.addSymbols(syms.filterNot(_.name == defn.name))
+            else
+              ctx.addSymbols(syms)
           checkDef(defn)(using ctx1).flatMap: (bd, expr) =>
             checkDefns(defns).map: defns1 =>
               val d = Expr.Definition.ValDef(sym, sym.tpe, expr)
