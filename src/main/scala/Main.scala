@@ -7,11 +7,8 @@ import Printer.*
 
 @main def hello(): Unit =
   val source = SourceFile("test", """
-val t: Int^{cap} =
-  val x: Int^{cap} = 0
-  val x1: Int^{cap} = x
-  val y: Int^{x} = x
-  def add(): Int = 0
+val t: Unit =
+  def add(x: Int^{cap}, y: Int^{cap}): () ->{x,y} Unit = () => ()
   add
 """)
   val result = Compiler.parse(source)

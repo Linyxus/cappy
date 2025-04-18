@@ -82,10 +82,18 @@ object Expr:
     case TypeArrow(params: List[TypeBinder | CaptureBinder], result: Type)
 
     def like(other: Type): this.type =
-      assert(other.hasKind, s"Type $other does not have a kind when calling like")
+      assert(other.hasKind, s"Type $other (id=${other.id}) does not have a kind when calling like")
       if other.hasPos then
         this.withPosFrom(other)
       this.withKind(other.kind)
+
+    val id: Int =
+      Type.nextId += 1
+      //assert(Type.nextId != 20, "Gotcha!")  // for debugging
+      Type.nextId
+  
+  object Type:
+    private var nextId: Int = 0
 
   enum Term extends Positioned, Typed:
     case BinderRef(idx: Int)
