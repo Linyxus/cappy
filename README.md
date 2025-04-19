@@ -1,2 +1,11 @@
 # cavia
- Experimental compiler for capybara.
+
+Experimental compiler for System Capybara.
+
+Features:
+- Scala-like syntax
+- Capture tracking and therefore ownership and borrow checking
+- Using WebAssembly as the target language
+- Safe yet versatile!
+
+This is currently a toy.
