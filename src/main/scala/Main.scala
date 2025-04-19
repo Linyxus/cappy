@@ -5,12 +5,8 @@ import typechecking.*
 import core.ast.*
 import Printer.*
 
-@main def hello(): Unit =
-  val source = SourceFile("test", """
-def x: i64 = 1
-def y: i64 = x
-def z: i64 = #i64add(x, y)
-""")
+@main def hello(path: String): Unit =
+  val source = SourceFile.fromPath(path)
   val result = Compiler.parse(source)
   result match
     case Compiler.ParseResult.TokenizationError(err) =>
@@ -18,33 +14,12 @@ def z: i64 = #i64add(x, y)
     case Compiler.ParseResult.ParsingError(err) =>
       println(err.show)
     case Compiler.ParseResult.Ok(result) =>
-      result.foreach(d => println(Printer.showSourcePos(d.pos, List(d.toString))))
+      println(s"--- tree after parser")
+      result.foreach(println)
       val mod = TypeChecker.checkModule(result)(using TypeChecker.Context.empty)
       mod match
         case Left(err) => 
           println(Printer.showSourcePos(err.pos, List(err.toString)))
         case Right(mod) =>
+          println(s"--- tree after typechecker")
           println(ExprPrinter.show(mod)(using TypeChecker.Context.empty))
-
-      // result.foreach: defn =>
-        //println(Printer.showSourcePos(defn.pos, List(defn.toString)))
-        // defn match
-        //   case Syntax.Definition.ValDef(name, Some(tpe), body) =>
-        //     println(s"val $name: $tpe = $body")
-        //     val res = TypeChecker.checkType(tpe)(using TypeChecker.Context.empty)
-        //     res match
-        //       case Right(tpe) =>
-        //         println(Printer.showSourcePos(tpe.pos, List("success!", tpe.toString)))
-        //         val res2 = TypeChecker.checkTerm(body)(using TypeChecker.Context.empty)
-        //         res2 match
-        //           case Right(term) =>
-        //             println(Printer.showSourcePos(term.pos, List("success!", term.tpe.toString)))
-        //             val res3 = TypeComparer.checkSubtype(term.tpe, tpe)(using TypeChecker.Context.empty)
-        //             println(s"subtype check: $res3")
-        //           case Left(err) =>
-        //             println(Printer.showSourcePos(err.pos, List("error!", err.toString)))
-        //       case Left(err) =>
-        //         println(Printer.showSourcePos(err.pos, List("error!", err.toString)))
-        //   case Syntax.Definition.DefDef(name, params, resultType, body) =>
-        //     println(Printer.showSourcePos(defn.pos, List(defn.toString)))
-        //   case _ =>
