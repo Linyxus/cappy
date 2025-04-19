@@ -242,85 +242,132 @@ object TypeChecker:
         else None
       case _ => Some(ref)
 
-  def checkTerm(t: Syntax.Term)(using Context): Result[Term] = t match
-    case Syntax.Term.Ident(name) => lookupAll(name) match
-      case Some(sym: Symbol) => 
-        val tpe = sym.tpe
-        val ref: Term.SymbolRef = Term.SymbolRef(sym)
-        if !tpe.isPure then markFree(ref)
-        val tpe1 = Type.Capturing(tpe.stripCaptures, ref.singletonCaptureSet).withKind(TypeKind.Star)
-        Right(ref.withPosFrom(t).withTpe(tpe1))
-      case Some((binder: Binder.TermBinder, idx)) => 
-        val tpe = binder.tpe
-        val ref: Term.BinderRef = Term.BinderRef(idx)
-        if !tpe.isPure then markFree(ref)
-        //println(s"checkTerm $t, binder = $binder, idx = $idx, tpe = $tpe, binders = ${ctx.binders}")
-        val tpe1 = Type.Capturing(tpe.stripCaptures, ref.singletonCaptureSet).withKind(TypeKind.Star)
-        Right(ref.withPosFrom(t).withTpe(tpe1))
-      case Some((binder: Binder, idx)) => Left(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
-      case None => Left(TypeError.UnboundVariable(name).withPos(t.pos))
-    case Syntax.Term.StrLit(value) => 
-      Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType))
-    case Syntax.Term.IntLit(value) => 
-      Right(Term.IntLit(value).withPosFrom(t).withTpe(Definitions.i64Type))
-    case Syntax.Term.UnitLit() => 
-      Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
-    case Syntax.Term.Lambda(params, body) => 
-      checkTermParamList(params).flatMap: params =>
-        val ctx1 = ctx.extend(params)
-        val env1 = CaptureEnv.empty(ctx1.binders.length)
-        checkTerm(body)(using ctx1.withEnv(env1)).map: body1 =>
-          val t1 = Term.TermLambda(params, body1).withPosFrom(t)
-          val cv = env1.cv
-          val cv1 = dropLocalParams(cv.toList, params.length)
-          val tpe = Type.TermArrow(params, body1.tpe).withKind(TypeKind.Star)
-          val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
-          t1.withTpe(tpe1)
-    case Syntax.Term.TypeLambda(params, body) =>
-      checkTypeParamList(params).flatMap: params =>
-        val ctx1 = ctx.extend(params)
-        val env1 = CaptureEnv.empty(ctx1.binders.length)
-        checkTerm(body)(using ctx1.withEnv(env1)).map: body1 =>
-          val t1 = Term.TypeLambda(params, body1).withPosFrom(t)
-          val cv = env1.cv
-          val cv1 = dropLocalParams(cv.toList, params.length)
-          val tpe = Type.TypeArrow(params, body1.tpe).withKind(TypeKind.Star)
-          val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
-          t1.withTpe(tpe1)
-    case Syntax.Term.Block(stmts) => 
-      def go(stmts: List[Syntax.Definition | Syntax.Term])(using Context): Result[Term] = 
-        stmts match
-          case Nil => 
-            Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
-          case (t: Syntax.Term) :: Nil => 
-            checkTerm(t)
-          case (d: Syntax.Definition) :: Nil =>
-            checkDef(d).map: (bd, expr) =>
-              val retType = Definitions.unitType
-              Term.Bind(bd, expr, Term.UnitLit().withPosFrom(d).withTpe(retType)).withPosFrom(d).withTpe(retType)
-          case d :: ds =>
-            val d1 = d match
-              case d: Syntax.Definition => d
-              case t: Syntax.Term => Syntax.Definition.ValDef(Fresh.freshName("_"), None, t).withPosFrom(t)
-            checkDef(d1).flatMap: (bd, boundExpr) =>
-              go(ds)(using ctx.extend(bd :: Nil)).flatMap: bodyExpr =>
-                val resType = bodyExpr.tpe
-                val tm = AvoidLocalBinder(bd.tpe.captureSet)
-                val resType1 = tm.apply(resType)
-                //println(s"avoid from $resType to $resType1")
-                if tm.ok then
-                  Right(Term.Bind(bd, boundExpr, bodyExpr).withPosFrom(d, bodyExpr).withTpe(resType1))
-                else
-                  Left(TypeError.LeakingLocalBinder(resType.show(using ctx.extend(bd))).withPos(d.pos))
-      go(stmts)
-    case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if PrimitiveOp.fromName(name).isDefined => 
-      PrimitiveOp.fromName(name).get match
-        case PrimitiveOp.I32Add => checkPrimOpArgs(PrimitiveOp.I32Add, args, List(BaseType.I32, BaseType.I32), BaseType.I32, t.pos)
-        case PrimitiveOp.I32Mul => checkPrimOpArgs(PrimitiveOp.I32Mul, args, List(BaseType.I32, BaseType.I32), BaseType.I32, t.pos)
-        case PrimitiveOp.I64Add => checkPrimOpArgs(PrimitiveOp.I64Add, args, List(BaseType.I64, BaseType.I64), BaseType.I64, t.pos)
-        case PrimitiveOp.I64Mul => checkPrimOpArgs(PrimitiveOp.I64Mul, args, List(BaseType.I64, BaseType.I64), BaseType.I64, t.pos)
-    case Syntax.Term.Apply(fun, args) => ???
-    case Syntax.Term.TypeApply(term, targs) => ???
+  def checkTerm(t: Syntax.Term, expected: Type = Type.NoType)(using Context): Result[Term] = 
+    val result = t match
+      case Syntax.Term.Ident(name) => lookupAll(name) match
+        case Some(sym: Symbol) => 
+          val tpe = sym.tpe
+          val ref: Term.SymbolRef = Term.SymbolRef(sym)
+          if !tpe.isPure then markFree(ref)
+          val tpe1 = Type.Capturing(tpe.stripCaptures, ref.singletonCaptureSet).withKind(TypeKind.Star)
+          Right(ref.withPosFrom(t).withTpe(tpe1))
+        case Some((binder: Binder.TermBinder, idx)) => 
+          val tpe = binder.tpe
+          val ref: Term.BinderRef = Term.BinderRef(idx)
+          if !tpe.isPure then markFree(ref)
+          //println(s"checkTerm $t, binder = $binder, idx = $idx, tpe = $tpe, binders = ${ctx.binders}")
+          val tpe1 = Type.Capturing(tpe.stripCaptures, ref.singletonCaptureSet).withKind(TypeKind.Star)
+          Right(ref.withPosFrom(t).withTpe(tpe1))
+        case Some((binder: Binder, idx)) => Left(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
+        case None => Left(TypeError.UnboundVariable(name).withPos(t.pos))
+      case Syntax.Term.StrLit(value) => 
+        Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType))
+      case Syntax.Term.IntLit(value) => 
+        Right(Term.IntLit(value).withPosFrom(t).withTpe(Definitions.i64Type))
+      case Syntax.Term.UnitLit() => 
+        Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
+      case Syntax.Term.Lambda(params, body) => 
+        checkTermParamList(params).flatMap: params =>
+          val ctx1 = ctx.extend(params)
+          val env1 = CaptureEnv.empty(ctx1.binders.length)
+          checkTerm(body)(using ctx1.withEnv(env1)).map: body1 =>
+            val t1 = Term.TermLambda(params, body1).withPosFrom(t)
+            val cv = env1.cv
+            val cv1 = dropLocalParams(cv.toList, params.length)
+            val tpe = Type.TermArrow(params, body1.tpe).withKind(TypeKind.Star)
+            val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
+            t1.withTpe(tpe1)
+      case Syntax.Term.TypeLambda(params, body) =>
+        checkTypeParamList(params).flatMap: params =>
+          val ctx1 = ctx.extend(params)
+          val env1 = CaptureEnv.empty(ctx1.binders.length)
+          checkTerm(body)(using ctx1.withEnv(env1)).map: body1 =>
+            val t1 = Term.TypeLambda(params, body1).withPosFrom(t)
+            val cv = env1.cv
+            val cv1 = dropLocalParams(cv.toList, params.length)
+            val tpe = Type.TypeArrow(params, body1.tpe).withKind(TypeKind.Star)
+            val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
+            t1.withTpe(tpe1)
+      case Syntax.Term.Block(stmts) => 
+        def go(stmts: List[Syntax.Definition | Syntax.Term])(using Context): Result[Term] = 
+          stmts match
+            case Nil => 
+              Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
+            case (t: Syntax.Term) :: Nil => 
+              checkTerm(t)
+            case (d: Syntax.Definition) :: Nil =>
+              checkDef(d).map: (bd, expr) =>
+                val retType = Definitions.unitType
+                Term.Bind(bd, expr, Term.UnitLit().withPosFrom(d).withTpe(retType)).withPosFrom(d).withTpe(retType)
+            case d :: ds =>
+              val d1 = d match
+                case d: Syntax.Definition => d
+                case t: Syntax.Term => Syntax.Definition.ValDef(Fresh.freshName("_"), None, t).withPosFrom(t)
+              checkDef(d1).flatMap: (bd, boundExpr) =>
+                go(ds)(using ctx.extend(bd :: Nil)).flatMap: bodyExpr =>
+                  val resType = bodyExpr.tpe
+                  val tm = AvoidLocalBinder(bd.tpe.captureSet)
+                  val resType1 = tm.apply(resType)
+                  //println(s"avoid from $resType to $resType1")
+                  if tm.ok then
+                    Right(Term.Bind(bd, boundExpr, bodyExpr).withPosFrom(d, bodyExpr).withTpe(resType1))
+                  else
+                    Left(TypeError.LeakingLocalBinder(resType.show(using ctx.extend(bd))).withPos(d.pos))
+        go(stmts)
+      case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if PrimitiveOp.fromName(name).isDefined => 
+        PrimitiveOp.fromName(name).get match
+          case PrimitiveOp.I32Add => checkPrimOpArgs(PrimitiveOp.I32Add, args, List(BaseType.I32, BaseType.I32), BaseType.I32, t.pos)
+          case PrimitiveOp.I32Mul => checkPrimOpArgs(PrimitiveOp.I32Mul, args, List(BaseType.I32, BaseType.I32), BaseType.I32, t.pos)
+          case PrimitiveOp.I64Add => checkPrimOpArgs(PrimitiveOp.I64Add, args, List(BaseType.I64, BaseType.I64), BaseType.I64, t.pos)
+          case PrimitiveOp.I64Mul => checkPrimOpArgs(PrimitiveOp.I64Mul, args, List(BaseType.I64, BaseType.I64), BaseType.I64, t.pos)
+      case Syntax.Term.Apply(fun, args) => 
+        checkTerm(fun).flatMap: fun1 =>
+          val funType = fun1.tpe
+          funType.stripCaptures match
+            case Type.TermArrow(formals, resultType) =>
+              if args.length != formals.length then
+                Left(TypeError.GeneralError(s"Argument number mismatch, expected ${formals.length}, but got ${args.length}").withPos(t.pos))
+              else
+                def go(xs: List[(Syntax.Term, Type)], acc: List[Term]): Result[Term] = xs match
+                  case Nil =>
+                    val args = acc.reverse
+                    substituteAll(resultType, args).map: resultType1 =>
+                      Term.Apply(fun1, args).withPosFrom(t).withTpe(resultType1)
+                  case (arg, formal) :: xs => 
+                    checkTerm(arg, expected = formal).flatMap: arg1 =>
+                      def mxs1: Result[List[(Syntax.Term, Type)]] = hopefully:
+                        xs.map: (arg, formal) =>
+                          (arg, substitute(formal, arg1).!!)
+                      mxs1.flatMap: xs1 =>
+                        go(xs1, arg1 :: acc)
+                go(args `zip` (formals.map(_.tpe)), Nil)
+            case _ => Left(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(t.pos))
+      case Syntax.Term.TypeApply(term, targs) => ???
+    result.flatMap: t1 =>
+      if !expected.exists || TypeComparer.checkSubtype(t1.tpe, expected) then
+        Right(t1)
+      else Left(TypeError.TypeMismatch(expected.show, t1.tpe.show).withPos(t.pos))
+
+  def substitute(tpe: Type, arg: Term): Result[Type] =
+    arg match
+      case ref: VarRef =>
+        val tm = OpenTermBinderExact(ref)
+        Right(tm.apply(tpe))
+      case _ => 
+        val argType = arg.tpe
+        val tm = OpenTermBinder(argType)
+        val result = tm.apply(tpe)
+        if tm.ok then
+          Right(result)
+        else
+          Left(TypeError.GeneralError(s"Cannot substitute $arg into $tpe because the argument occurs in a invariant position").withPos(arg.pos))
+
+  def substituteAll(tpe: Type, args: List[Term]): Result[Type] =
+    args match
+      case Nil => Right(tpe)
+      case arg :: args =>
+        substitute(tpe, arg).flatMap: tpe1 =>
+          substituteAll(tpe1, args)
 
   def checkPrimOpArgs(op: PrimitiveOp, args: List[Syntax.Term], formals: List[BaseType], resType: BaseType, pos: SourcePos)(using Context): Result[Term] = 
     def go(args: List[Syntax.Term], formals: List[BaseType], acc: List[Term]): Result[List[Term]] = (args, formals) match

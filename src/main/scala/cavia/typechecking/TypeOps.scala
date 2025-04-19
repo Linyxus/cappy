@@ -108,4 +108,48 @@ object TypePrinter:
 
 extension (tpe: Type)
   def show(using TypeChecker.Context): String = TypePrinter.show(tpe)
-  
+
+class OpenTermBinder(tpe: Type) extends TypeMap:
+  var ok: Boolean = true
+  override def mapCaptureSet(captureSet: CaptureSet): CaptureSet =
+    val elems1 = captureSet.elems.flatMap: ref =>
+      ref match
+        case CaptureRef.Ref(Term.BinderRef(idx)) if idx >= localBinders.size => 
+          if idx > localBinders.size then
+            CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref) :: Nil
+          else
+            if variance == Variance.Covariant then
+              tpe.captureSet.elems
+            else if variance == Variance.Contravariant then
+              Nil
+            else
+              ok = false
+              ref :: Nil
+        case _ => ref :: Nil
+    CaptureSet(elems1).maybeWithPosFrom(captureSet)
+
+  override def apply(tp: Type): Type =
+    tp match
+      case Type.BinderRef(idx) if idx >= localBinders.size =>
+        if idx > localBinders.size then
+          Type.BinderRef(idx - 1).like(tp)
+        else assert(false, "openning term binder, but found it as type")
+      case _ => mapOver(tp)
+
+class OpenTermBinderExact(argRef: VarRef) extends TypeMap:
+  override def mapCaptureRef(ref: CaptureRef): CaptureRef =
+    ref match
+      case CaptureRef.Ref(Term.BinderRef(idx)) if idx == localBinders.size =>
+        argRef.asCaptureRef
+      case CaptureRef.Ref(Term.BinderRef(idx)) if idx > localBinders.size =>
+        CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref)
+      case _ => ref
+
+  override def apply(tp: Type): Type =
+    tp match
+      case Type.BinderRef(idx) if idx >= localBinders.size =>
+        if idx > localBinders.size then
+          Type.BinderRef(idx - 1).like(tp)
+        else assert(false, "openning term binder, but found it as type")
+      case _ => mapOver(tp)
+

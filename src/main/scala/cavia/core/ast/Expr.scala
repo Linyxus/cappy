@@ -137,6 +137,7 @@ object Expr:
     case TypeLambda(params: List[TypeBinder | CaptureBinder], body: Term)
     case Bind(binder: TermBinder, bound: Term, body: Term)
     case PrimOp(op: PrimitiveOp, args: List[Term])
+    case Apply(fun: Term, args: List[Term])
 
   /** Reference to a variable, either a binder or a symbol */
   type VarRef = Term.BinderRef | Term.SymbolRef
