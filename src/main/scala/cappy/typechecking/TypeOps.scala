@@ -21,11 +21,7 @@ extension (tpe: Type)
   def isPure(using TypeChecker.Context): Boolean =
     TypeComparer.checkSubcapture(tpe.captureSet, CaptureSet.empty)
 
-extension (ref: Term.BinderRef)
-  def asCaptureRef: CaptureRef = CaptureRef.Ref(ref).maybeWithPosFrom(ref)
-  def singletonCaptureSet: CaptureSet = CaptureSet(List(ref.asCaptureRef))
-
-extension (ref: Term.SymbolRef)
+extension (ref: VarRef)
   def asCaptureRef: CaptureRef = CaptureRef.Ref(ref).maybeWithPosFrom(ref)
   def singletonCaptureSet: CaptureSet = CaptureSet(List(ref.asCaptureRef))
 
@@ -45,6 +41,12 @@ class AvoidLocalBinder(approx: CaptureSet) extends TypeMap:
         CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref) :: Nil
       case ref => ref :: Nil
     CaptureSet(elems1).maybeWithPosFrom(captureSet)
+  
+  override def apply(tpe: Type): Type = tpe match
+    case Type.BinderRef(idx) if idx >= localBinders.size =>
+      Type.BinderRef(idx - 1).like(tpe)
+    case _ => mapOver(tpe)
+  
 
 object TypePrinter:
   def show(base: BaseType): String = base match
@@ -57,27 +59,38 @@ object TypePrinter:
     case BaseType.F32 => "f32"
     case BaseType.F64 => "f64"
 
+  def showFunctionType(params: List[Binder], result: Type, cs: Option[CaptureSet] = None, isType: Boolean = false)(using ctx: TypeChecker.Context) =
+    def showParams(params: List[Binder])(using ctx: TypeChecker.Context): List[String] = params match
+      case Nil => Nil
+      case p :: ps => 
+        val s = show(p)
+        s :: showParams(ps)(using ctx.extend(p))
+    val paramsStr = showParams(params).mkString(", ")
+    val leftBracket = if isType then "[" else "("
+    val rightBracket = if isType then "]" else ")"
+    val arrowStr = cs match
+      case Some(cs) => s" ->${show(cs)} "
+      case None => " -> "
+    val resultStr = show(result)(using ctx.extend(params))
+    s"${leftBracket}${paramsStr}${rightBracket}${arrowStr}${resultStr}"
+
   def show(tpe: Type)(using ctx: TypeChecker.Context): String = 
     //println(s"show $tpe")
     tpe match
       case Type.NoType => "<no type>"
       case Type.Base(base) => show(base)
       case Type.BinderRef(idx) => TypeChecker.getBinder(idx).name
-      case Type.Capturing(inner, captureSet) => s"${show(inner)}^${show(captureSet)}"
+      case Type.Capturing(inner, captureSet) => 
+        inner match
+          case Type.TermArrow(params, result) =>
+            showFunctionType(params, result, cs = Some(captureSet), isType = false)
+          case Type.TypeArrow(params, result) =>
+            showFunctionType(params, result, cs = Some(captureSet), isType = true)
+          case _ => s"${show(inner)}^${show(captureSet)}"
       case Type.TermArrow(params, result) => 
-        def showParams(params: List[Binder.TermBinder])(using TypeChecker.Context): List[String] = params match
-          case Nil => Nil
-          case p :: ps => 
-            val s = show(p)
-            s :: showParams(ps)(using ctx.extend(p))
-        s"(${showParams(params).mkString(", ")}) -> ${show(result)(using ctx.extend(params))}"
+        showFunctionType(params, result, cs = None, isType = false)
       case Type.TypeArrow(params, result) =>
-        def showParams(params: List[Binder.TypeBinder | Binder.CaptureBinder])(using TypeChecker.Context): List[String] = params match
-          case Nil => Nil
-          case p :: ps => 
-            val s = show(p)
-            s :: showParams(ps)(using ctx.extend(p))
-        s"[${showParams(params).mkString(", ")}] -> ${show(result)(using ctx.extend(params))}"
+        showFunctionType(params, result, cs = None, isType = true)
 
   def show(binder: Binder)(using TypeChecker.Context): String = binder match
     case Binder.TermBinder(name, tpe) => s"$name: ${show(tpe)}"

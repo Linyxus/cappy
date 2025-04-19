@@ -7,6 +7,8 @@ import Printer.*
 
 @main def hello(path: String): Unit =
   val source = SourceFile.fromPath(path)
+  println(s"--- input file")
+  println(source.content)
   val result = Compiler.parse(source)
   result match
     case Compiler.ParseResult.TokenizationError(err) =>

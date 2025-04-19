@@ -9,11 +9,15 @@ object TypeChecker:
   import Expr.*
   import Binder.*
 
-  case class CaptureEnv(var cv: Set[CaptureRef]):
-    def add(ref: CaptureRef): Unit = cv += ref
+  case class CaptureEnv(var cv: Set[CaptureRef], level: Int):
+    def add(ref: CaptureRef): Unit = 
+      cv += ref
+
+    def add(refs: Set[CaptureRef]): Unit =
+      cv ++= refs
 
   object CaptureEnv:
-    def empty: CaptureEnv = CaptureEnv(Set.empty)
+    def empty(level: Int): CaptureEnv = CaptureEnv(Set.empty, level)
 
   /** Type checking context. */
   case class Context(binders: List[Binder], symbols: List[Symbol], captured: CaptureEnv):
@@ -38,8 +42,11 @@ object TypeChecker:
           newSymbols = sym :: newSymbols
         copy(symbols = newSymbols)
 
+    def withEnv(env: CaptureEnv): Context =
+      copy(captured = env)
+
   object Context:
-    def empty: Context = Context(Nil, Nil, CaptureEnv.empty)
+    def empty: Context = Context(Nil, Nil, CaptureEnv.empty(level = 0))
 
   enum TypeError extends Positioned:
     case UnboundVariable(name: String, addenda: String = "")
@@ -187,16 +194,67 @@ object TypeChecker:
           go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
     go(params, Nil)
 
+  def markFree(ref: VarRef)(using Context): Unit =
+    def widenUntilWf(crefs: List[CaptureRef], delta: Int): List[CaptureRef] =
+      def allWf(crefs: List[CaptureRef]): Boolean = crefs.forall: ref =>
+        ref match
+          case CaptureRef.Ref(Term.BinderRef(idx)) => idx >= delta
+          case _ => true
+      if allWf(crefs) then
+        crefs.map: ref =>
+          ref match
+            case CaptureRef.Ref(Term.BinderRef(idx)) =>
+              //assert(idx >= delta)
+              CaptureRef.Ref(Term.BinderRef(idx - delta))
+            case _ => ref
+      else
+        val crefs1 = crefs.flatMap: ref =>
+          ref match
+            case CaptureRef.Ref(Term.BinderRef(idx)) if idx < delta =>
+              getBinder(idx) match
+                case TermBinder(name, tpe) => tpe.captureSet.elems
+                case CaptureBinder(name, bound) => bound.elems
+                case _ => assert(false)
+            case ref => List(ref)
+        widenUntilWf(crefs1, delta)
+
+    def avoidVarRef(ref: VarRef, delta: Int): List[CaptureRef] = ref match
+      case Term.BinderRef(idx) => 
+        if idx >= delta then
+          List(Term.BinderRef(idx - delta).asCaptureRef)
+        else
+          //println(s"!!! markFree: dropping local binder $ref")
+          widenUntilWf(List(ref.asCaptureRef), delta)
+      case Term.SymbolRef(sym) => List(ref.asCaptureRef)
+    val level = ctx.captured.level
+    val curLevel = ctx.binders.length
+    val delta = curLevel - level
+    assert(delta >= 0, s"absurd levels")
+    val crefs = avoidVarRef(ref, delta)
+    //println(s"markFree $ref ==> $crefs")
+    ctx.captured.add(crefs.toSet)
+
+  private def dropLocalParams(crefs: List[CaptureRef], numParams: Int): List[CaptureRef] = crefs.flatMap: ref =>
+    ref match
+      case CaptureRef.Ref(Term.BinderRef(idx)) =>
+        if idx >= numParams then
+          Some(CaptureRef.Ref(Term.BinderRef(idx - numParams)).maybeWithPosFrom(ref))
+        else None
+      case _ => Some(ref)
+
   def checkTerm(t: Syntax.Term)(using Context): Result[Term] = t match
     case Syntax.Term.Ident(name) => lookupAll(name) match
       case Some(sym: Symbol) => 
         val tpe = sym.tpe
         val ref: Term.SymbolRef = Term.SymbolRef(sym)
+        if !tpe.isPure then markFree(ref)
         val tpe1 = Type.Capturing(tpe.stripCaptures, ref.singletonCaptureSet).withKind(TypeKind.Star)
         Right(ref.withPosFrom(t).withTpe(tpe1))
       case Some((binder: Binder.TermBinder, idx)) => 
         val tpe = binder.tpe
         val ref: Term.BinderRef = Term.BinderRef(idx)
+        if !tpe.isPure then markFree(ref)
+        //println(s"checkTerm $t, binder = $binder, idx = $idx, tpe = $tpe, binders = ${ctx.binders}")
         val tpe1 = Type.Capturing(tpe.stripCaptures, ref.singletonCaptureSet).withKind(TypeKind.Star)
         Right(ref.withPosFrom(t).withTpe(tpe1))
       case Some((binder: Binder, idx)) => Left(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
@@ -209,16 +267,26 @@ object TypeChecker:
       Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
     case Syntax.Term.Lambda(params, body) => 
       checkTermParamList(params).flatMap: params =>
-        checkTerm(body)(using ctx.extend(params)).map: body1 =>
+        val ctx1 = ctx.extend(params)
+        val env1 = CaptureEnv.empty(ctx1.binders.length)
+        checkTerm(body)(using ctx1.withEnv(env1)).map: body1 =>
           val t1 = Term.TermLambda(params, body1).withPosFrom(t)
+          val cv = env1.cv
+          val cv1 = dropLocalParams(cv.toList, params.length)
           val tpe = Type.TermArrow(params, body1.tpe).withKind(TypeKind.Star)
-          t1.withTpe(tpe)
+          val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
+          t1.withTpe(tpe1)
     case Syntax.Term.TypeLambda(params, body) =>
       checkTypeParamList(params).flatMap: params =>
-        checkTerm(body)(using ctx.extend(params)).map: body1 =>
+        val ctx1 = ctx.extend(params)
+        val env1 = CaptureEnv.empty(ctx1.binders.length)
+        checkTerm(body)(using ctx1.withEnv(env1)).map: body1 =>
           val t1 = Term.TypeLambda(params, body1).withPosFrom(t)
+          val cv = env1.cv
+          val cv1 = dropLocalParams(cv.toList, params.length)
           val tpe = Type.TypeArrow(params, body1.tpe)
-          t1.withTpe(tpe)
+          val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
+          t1.withTpe(tpe1)
     case Syntax.Term.Block(stmts) => 
       def go(stmts: List[Syntax.Definition | Syntax.Term])(using Context): Result[Term] = 
         stmts match
@@ -239,6 +307,7 @@ object TypeChecker:
                 val resType = bodyExpr.tpe
                 val tm = AvoidLocalBinder(bd.tpe.captureSet)
                 val resType1 = tm.apply(resType)
+                //println(s"avoid from $resType to $resType1")
                 if tm.ok then
                   Right(Term.Bind(bd, boundExpr, bodyExpr).withPosFrom(d, bodyExpr).withTpe(resType1))
                 else
