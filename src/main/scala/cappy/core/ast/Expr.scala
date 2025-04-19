@@ -5,13 +5,13 @@ package ast
 object Expr:
   /** A trait for expressions that have a type */
   trait Typed:
-    private var myTpe: Type | Null = null
+    private var myTpe: Type = Type.NoType
 
     /** The type of the expression, assuming it is typed */
-    def tpe: Type = myTpe.nn
+    def tpe: Type = myTpe
 
     /** Whether the expression is typed */
-    def typed: Boolean = myTpe != null
+    def typed: Boolean = myTpe.exists
 
     /** Set the type of the expression */
     def setTpe(tpe: Type): Unit = myTpe = tpe
@@ -86,6 +86,7 @@ object Expr:
     case Capturing(inner: Type, captureSet: CaptureSet)
     case TermArrow(params: List[TermBinder], result: Type)
     case TypeArrow(params: List[TypeBinder | CaptureBinder], result: Type)
+    case NoType
 
     def like(other: Type): this.type =
       assert(other.hasKind, s"Type $other (id=${other.id}) does not have a kind when calling like")
@@ -97,6 +98,11 @@ object Expr:
       Type.nextId += 1
       //assert(Type.nextId != 20, "Gotcha!")  // for debugging
       Type.nextId
+
+    def exists: Boolean = this match
+      case NoType => false
+      case _ => true
+    
   
   object Type:
     private var nextId: Int = 0

@@ -12,6 +12,7 @@ extension (tpe: Type)
     case Type.Capturing(inner, captureSet) => inner.captureSet ++ captureSet
     case Type.TermArrow(params, result) => CaptureSet.empty
     case Type.TypeArrow(params, result) => CaptureSet.empty
+    case Type.NoType => assert(false, "retrieving capture set from no type")
 
   def stripCaptures: Type = tpe match
     case Type.Capturing(inner, captureSet) => inner.stripCaptures
@@ -54,6 +55,7 @@ object TypePrinter:
   def show(tpe: Type)(using ctx: TypeChecker.Context): String = 
     //println(s"show $tpe")
     tpe match
+      case Type.NoType => "<no type>"
       case Type.Base(base) => show(base)
       case Type.BinderRef(idx) => TypeChecker.getBinder(idx).name
       case Type.Capturing(inner, captureSet) => s"${show(inner)}^${show(captureSet)}"
