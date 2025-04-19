@@ -12,23 +12,28 @@ extension (tpe: Type)
     case Type.Capturing(inner, captureSet) => inner.captureSet ++ captureSet
     case Type.TermArrow(params, result) => CaptureSet.empty
     case Type.TypeArrow(params, result) => CaptureSet.empty
-    case Type.NoType => assert(false, "retrieving capture set from no type")
+    case Type.NoType => assert(false, "computing capture set from no type")
 
   def stripCaptures: Type = tpe match
     case Type.Capturing(inner, captureSet) => inner.stripCaptures
     case _ => tpe
 
+  def isPure(using TypeChecker.Context): Boolean =
+    TypeComparer.checkSubcapture(tpe.captureSet, CaptureSet.empty)
+
 extension (ref: Term.BinderRef)
-  def singletonCaptureSet: CaptureSet = CaptureSet(List(CaptureRef.BinderRef(ref.idx)))
+  def asCaptureRef: CaptureRef = CaptureRef.Ref(ref).maybeWithPosFrom(ref)
+  def singletonCaptureSet: CaptureSet = CaptureSet(List(ref.asCaptureRef))
 
 extension (ref: Term.SymbolRef)
-  def singletonCaptureSet: CaptureSet = CaptureSet(List(CaptureRef.SymbolRef(ref.sym)))
+  def asCaptureRef: CaptureRef = CaptureRef.Ref(ref).maybeWithPosFrom(ref)
+  def singletonCaptureSet: CaptureSet = CaptureSet(List(ref.asCaptureRef))
 
 class AvoidLocalBinder(approx: CaptureSet) extends TypeMap:
   var ok: Boolean = true
   override def mapCaptureSet(captureSet: CaptureSet): CaptureSet = 
     val elems1 = captureSet.elems.flatMap:
-      case ref @ CaptureRef.BinderRef(idx) if idx == localBinders.size =>
+      case ref @ CaptureRef.Ref(Term.BinderRef(idx)) if idx == localBinders.size =>
         if variance == Variance.Covariant then
           approx.elems
         else if variance == Variance.Contravariant then
@@ -36,8 +41,8 @@ class AvoidLocalBinder(approx: CaptureSet) extends TypeMap:
         else
           ok = false
           ref :: Nil
-      case ref @ CaptureRef.BinderRef(idx) if idx > localBinders.size =>
-        CaptureRef.BinderRef(idx - 1).maybeWithPosFrom(ref) :: Nil
+      case ref @ CaptureRef.Ref(Term.BinderRef(idx)) if idx > localBinders.size =>
+        CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref) :: Nil
       case ref => ref :: Nil
     CaptureSet(elems1).maybeWithPosFrom(captureSet)
 
@@ -84,8 +89,8 @@ object TypePrinter:
     s"{$elems}"
 
   def show(captureRef: CaptureRef)(using TypeChecker.Context): String = captureRef match
-    case CaptureRef.BinderRef(idx) => TypeChecker.getBinder(idx).name
-    case CaptureRef.SymbolRef(sym) => sym.name
+    case CaptureRef.Ref(Term.BinderRef(idx)) => TypeChecker.getBinder(idx).name
+    case CaptureRef.Ref(Term.SymbolRef(sym)) => sym.name
     case CaptureRef.CAP() => "cap"
 
 extension (tpe: Type)

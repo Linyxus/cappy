@@ -33,8 +33,7 @@ object Expr:
     case F64
 
   enum CaptureRef extends Positioned:
-    case BinderRef(idx: Int)
-    case SymbolRef(sym: Symbol)
+    case Ref(ref: VarRef)
     case CAP()
 
   case class CaptureSet(elems: List[CaptureRef]) extends Positioned:
@@ -138,6 +137,9 @@ object Expr:
     case Bind(binder: TermBinder, bound: Term, body: Term)
     case PrimOp(op: PrimitiveOp, args: List[Term])
 
+  /** Reference to a variable, either a binder or a symbol */
+  type VarRef = Term.BinderRef | Term.SymbolRef
+
   case class Symbol(name: String, var tpe: Type, from: Module) extends Positioned
   enum Definition extends Positioned:
     case ValDef(sym: Symbol, tpe: Type, body: Term)
@@ -213,8 +215,8 @@ object Expr:
 
   class ShiftType(amount: Int) extends TypeMap:
     override def mapCaptureRef(ref: CaptureRef): CaptureRef = ref match
-      case CaptureRef.BinderRef(idx) if idx >= localBinders.size =>
-        CaptureRef.BinderRef(idx + amount).maybeWithPosFrom(ref)
+      case CaptureRef.Ref(Term.BinderRef(idx)) if idx >= localBinders.size =>
+        CaptureRef.Ref(Term.BinderRef(idx + amount)).maybeWithPosFrom(ref)
       case ref => ref
 
     override def apply(tp: Type): Type =

@@ -15,11 +15,11 @@ object TypeComparer:
   def checkSubcapture(x1: CaptureRef, cs2: CaptureSet)(using Context): Boolean =
     cs2.elems.contains(x1) || {
       x1 match
-        case CaptureRef.BinderRef(idx) => getBinder(idx) match
+        case CaptureRef.Ref(Term.BinderRef(idx)) => getBinder(idx) match
           case Binder.TermBinder(name, tpe) => checkSubcapture(tpe.captureSet, cs2)
           case Binder.CaptureBinder(name, bound) => checkSubcapture(bound, cs2)
           case _: Binder.TypeBinder => assert(false, "binder kind is absurd")
-        case CaptureRef.SymbolRef(sym) => checkSubcapture(sym.tpe.captureSet, cs2)
+        case CaptureRef.Ref(Term.SymbolRef(sym)) => checkSubcapture(sym.tpe.captureSet, cs2)
         case CaptureRef.CAP() => false
     }
 

@@ -9,8 +9,14 @@ object TypeChecker:
   import Expr.*
   import Binder.*
 
+  case class CaptureEnv(var cv: Set[CaptureRef]):
+    def add(ref: CaptureRef): Unit = cv += ref
+
+  object CaptureEnv:
+    def empty: CaptureEnv = CaptureEnv(Set.empty)
+
   /** Type checking context. */
-  case class Context(binders: List[Binder], symbols: List[Symbol]):
+  case class Context(binders: List[Binder], symbols: List[Symbol], captured: CaptureEnv):
     /** Extend the context with a list of binders. */
     def extend(bds: List[Binder]): Context =
       if bds.isEmpty then this
@@ -33,7 +39,7 @@ object TypeChecker:
         copy(symbols = newSymbols)
 
   object Context:
-    def empty: Context = Context(Nil, Nil)
+    def empty: Context = Context(Nil, Nil, CaptureEnv.empty)
 
   enum TypeError extends Positioned:
     case UnboundVariable(name: String, addenda: String = "")
@@ -106,8 +112,8 @@ object TypeChecker:
     if ref.name == "cap" then
       Right(CaptureRef.CAP().maybeWithPosFrom(ref))
     else lookupAll(ref.name) match
-      case Some(sym: Symbol) => Right(CaptureRef.SymbolRef(sym).maybeWithPosFrom(ref))
-      case Some((binder: (Binder.CaptureBinder | Binder.TermBinder), idx)) => Right(CaptureRef.BinderRef(idx).maybeWithPosFrom(ref))
+      case Some(sym: Symbol) => Right(CaptureRef.Ref(Term.SymbolRef(sym)).maybeWithPosFrom(ref))
+      case Some((binder: (Binder.CaptureBinder | Binder.TermBinder), idx)) => Right(CaptureRef.Ref(Term.BinderRef(idx)).maybeWithPosFrom(ref))
       case Some((binder: Binder.TypeBinder, idx)) => Left(TypeError.UnboundVariable(ref.name, s"I found a type name, but was looking for either a term or capture name").withPos(ref.pos))
       case _ => Left(TypeError.UnboundVariable(ref.name).withPos(ref.pos))
 
