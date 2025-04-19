@@ -12,6 +12,10 @@ class Tokenizer(source: SourceFile):
   /** Get the current indentation level */
   def lastIndent: Int = indentStack.head
 
+  /** Check if the given indentation level is valid */
+  def validIndent(indent: Int): Boolean =
+    indentStack.exists(_ == indent)
+
   /** Get the current indentation level */
   def currentIndent: Int = locateColumn(currentPos)
 
@@ -80,6 +84,8 @@ class Tokenizer(source: SourceFile):
 
   var needNewLine = false
 
+  var needDedent = false
+
   def consumeInt(): Unit =
     while !isAtEnd && peek.isDigit do
       advance()
@@ -91,19 +97,23 @@ class Tokenizer(source: SourceFile):
     else
       val hasNewLine = skipWhitespaces()
       if isAtEnd then Token.EOF().withCurrentPos
-      else if hasNewLine then
-      if currentIndent > lastIndent then
-        indent(currentIndent)
-        Token.INDENT().withCurrentPos
-      else if currentIndent < lastIndent then
-        dedent()
-        if currentIndent == lastIndent then
-          needNewLine = true
-          Token.DEDENT().withCurrentPos
+      else if hasNewLine || needDedent then
+        if currentIndent > lastIndent then
+          indent(currentIndent)
+          Token.INDENT().withCurrentPos
+        else if currentIndent < lastIndent then
+          dedent()
+          if currentIndent == lastIndent then
+            needDedent = false
+            needNewLine = true
+            Token.DEDENT().withCurrentPos
+          else if validIndent(currentIndent) then
+            needDedent = true
+            Token.DEDENT().withCurrentPos
+          else
+            Error(s"Invalid indentation level: $currentIndent, expected $lastIndent")
         else
-          Error(s"Invalid indentation level: $currentIndent, expected $lastIndent")
-      else
-        Token.NEWLINE().withCurrentPos
+          Token.NEWLINE().withCurrentPos
       else withPosition:
         forward() match
           case '"' =>

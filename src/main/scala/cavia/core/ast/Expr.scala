@@ -49,13 +49,14 @@ object Expr:
 
   /** A trait for types that have a kind */
   trait HasKind:
-    private var myKind: TypeKind | Null = null
+    /** By default, all types have the kind `*` */
+    private var myKind: TypeKind = TypeKind.Star
 
     /** The kind of the type */
-    def kind: TypeKind = myKind.nn
+    def kind: TypeKind = myKind
 
     /** Whether the type has a kind */
-    def hasKind: Boolean = myKind != null
+    def hasKind: Boolean = true
 
     /** Set the kind of the type */
     def setKind(kind: TypeKind): Unit = myKind = kind
