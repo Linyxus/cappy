@@ -284,7 +284,7 @@ object TypeChecker:
           val t1 = Term.TypeLambda(params, body1).withPosFrom(t)
           val cv = env1.cv
           val cv1 = dropLocalParams(cv.toList, params.length)
-          val tpe = Type.TypeArrow(params, body1.tpe)
+          val tpe = Type.TypeArrow(params, body1.tpe).withKind(TypeKind.Star)
           val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
           t1.withTpe(tpe1)
     case Syntax.Term.Block(stmts) => 
