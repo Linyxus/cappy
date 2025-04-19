@@ -1,4 +1,4 @@
-package cappy.core
+package cavia.core
 
 object Fresh:
   private var counter = 0

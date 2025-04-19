@@ -1,4 +1,4 @@
-package cappy
+package cavia
 package reporting
 
 import core.*

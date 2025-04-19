@@ -1,4 +1,4 @@
-import cappy.*
+import cavia.*
 import io.*
 import reporting.*
 import typechecking.*

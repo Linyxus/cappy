@@ -1,4 +1,4 @@
-package cappy
+package cavia
 
 import io.*
 import core.ast.*

@@ -1,4 +1,4 @@
-package cappy.reporting
+package cavia.reporting
 
 trait IndentedPrinter:
   val indentStr: String = "  "

@@ -1,4 +1,4 @@
-package cappy
+package cavia
 package parsing
 import core.ast.*
 import tokenizing.*

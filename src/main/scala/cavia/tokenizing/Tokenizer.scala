@@ -1,6 +1,6 @@
-package cappy.tokenizing
-import cappy.io.SourceFile
-import cappy.core.*
+package cavia.tokenizing
+import cavia.io.SourceFile
+import cavia.core.*
 import scala.compiletime.ops.double
 
 class Tokenizer(source: SourceFile):

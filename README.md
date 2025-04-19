@@ -1,2 +1,2 @@
-# cappy
+# cavia
  Experimental compiler for capybara.

@@ -1,5 +1,5 @@
-package cappy.tokenizing
-import cappy.core.Positioned
+package cavia.tokenizing
+import cavia.core.Positioned
 
 enum Token extends Positioned:
   case IDENT(name: String)  // Variable or function name

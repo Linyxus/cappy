@@ -1,4 +1,4 @@
-package cappy
+package cavia
 import io.*
 import java.nio.file.{Files, Path, Paths}
 import scala.jdk.CollectionConverters.*

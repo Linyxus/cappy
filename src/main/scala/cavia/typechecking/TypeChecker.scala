@@ -1,9 +1,9 @@
-package cappy
+package cavia
 package typechecking
 
 import core.*
 import core.ast.*
-import cappy.core.ast.Syntax.Definition
+import cavia.core.ast.Syntax.Definition
 
 object TypeChecker:
   import Expr.*

@@ -1,4 +1,4 @@
-package cappy
+package cavia
 
 class ParsingSuite extends munit.FunSuite:
   for source <- loadAllSourceFiles("tests/parsing/pos") do

@@ -1,6 +1,6 @@
-package cappy.parsing
-import cappy.tokenizing.*
-import cappy.core.*
+package cavia.parsing
+import cavia.tokenizing.*
+import cavia.core.*
 import scala.reflect.ClassTag
 
 object Parser:

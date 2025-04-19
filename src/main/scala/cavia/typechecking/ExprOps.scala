@@ -1,4 +1,4 @@
-package cappy
+package cavia
 package typechecking
 
 import core.ast.*

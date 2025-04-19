@@ -1,5 +1,5 @@
-package cappy.core
-import cappy.io.SourceFile
+package cavia.core
+import cavia.io.SourceFile
 
 case class Span(start: Int, end: Int):
   def merge(other: Span): Span =

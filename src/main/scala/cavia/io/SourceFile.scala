@@ -1,4 +1,4 @@
-package cappy.io
+package cavia.io
 
 import java.nio.file.{Files, Path}
 import scala.io.Source
