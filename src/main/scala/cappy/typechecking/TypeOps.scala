@@ -70,7 +70,7 @@ object TypePrinter:
           case p :: ps => 
             val s = show(p)
             s :: showParams(ps)(using ctx.extend(p))
-        s"(${showParams(params).mkString(", ")}) -> ${show(result)(using ctx.extend(params))}"
+        s"[${showParams(params).mkString(", ")}] -> ${show(result)(using ctx.extend(params))}"
 
   def show(binder: Binder)(using TypeChecker.Context): String = binder match
     case Binder.TermBinder(name, tpe) => s"$name: ${show(tpe)}"

@@ -80,6 +80,7 @@ class ExprPrinter extends IndentedPrinter:
         print(": ")
         showType(tpe)
         print(" = ")
+        newline()
         indented:
           show(expr)
         newline()
