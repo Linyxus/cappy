@@ -12,7 +12,7 @@ This is currently a toy.
 
 ## Roadmap
 
-- [ ] Add tests for type checking
+- [x] Add tests for type checking
 - [ ] Support comments `//`
 - [ ] Handle capture sets for DefDef
 - [ ] A first prototype of code generation
