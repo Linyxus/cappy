@@ -292,6 +292,7 @@ object TypeChecker:
             val cv = env1.cv
             val cv1 = dropLocalParams(cv.toList, params.length)
             // TODO: If it is a type lambda, then local parameter must not be used in the body
+            // Or maybe, have two different kinds of capture lambdas, one charging its arguments, one not
             val tpe = Type.TypeArrow(params, body1.tpe).withKind(TypeKind.Star)
             val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
             t1.withTpe(tpe1)
