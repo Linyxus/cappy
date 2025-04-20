@@ -337,7 +337,7 @@ object TypeChecker:
                     checkTerm(arg, expected = formal).flatMap: arg1 =>
                       def mxs1: Result[List[(Syntax.Term, Type)]] = hopefully:
                         xs.map: (arg, formal) =>
-                          (arg, substitute(formal, arg1).!!)
+                          (arg, substitute(formal, arg1, isParamType = true).!!)
                       mxs1.flatMap: xs1 =>
                         go(xs1, arg1 :: acc)
                 go(args `zip` (formals.map(_.tpe)), Nil)
@@ -348,26 +348,27 @@ object TypeChecker:
         Right(t1)
       else Left(TypeError.TypeMismatch(expected.show, t1.tpe.show).withPos(t.pos))
 
-  def substitute(tpe: Type, arg: Term): Result[Type] =
+  def substitute(tpe: Type, arg: Term, isParamType: Boolean = false): Result[Type] =
+    val startingVariance = if isParamType then Variance.Contravariant else Variance.Covariant
     arg match
       case ref: VarRef =>
-        val tm = OpenTermBinderExact(ref)
+        val tm = OpenTermBinderExact(ref, startingVariance)
         Right(tm.apply(tpe))
       case _ => 
         val argType = arg.tpe
-        val tm = OpenTermBinder(argType)
+        val tm = OpenTermBinder(argType, startingVariance)
         val result = tm.apply(tpe)
         if tm.ok then
           Right(result)
         else
           Left(TypeError.GeneralError(s"Cannot substitute $arg into $tpe because the argument occurs in a invariant position").withPos(arg.pos))
 
-  def substituteAll(tpe: Type, args: List[Term]): Result[Type] =
+  def substituteAll(tpe: Type, args: List[Term], isParamType: Boolean = false): Result[Type] =
     args match
       case Nil => Right(tpe)
       case arg :: args =>
-        substitute(tpe, arg).flatMap: tpe1 =>
-          substituteAll(tpe1, args)
+        substitute(tpe, arg, isParamType).flatMap: tpe1 =>
+          substituteAll(tpe1, args, isParamType)
 
   def checkPrimOpArgs(op: PrimitiveOp, args: List[Syntax.Term], formals: List[BaseType], resType: BaseType, pos: SourcePos)(using Context): Result[Term] = 
     def go(args: List[Syntax.Term], formals: List[BaseType], acc: List[Term]): Result[List[Term]] = (args, formals) match

@@ -3,16 +3,17 @@ package typechecking
 
 import core.*
 import ast.*
+import reporting.trace
 
 object TypeComparer:
   import TypeChecker.*
   import Expr.*
   import Binder.*
 
-  def checkSubcapture(cs1: CaptureSet, cs2: CaptureSet)(using Context): Boolean =
+  def checkSubcapture(cs1: CaptureSet, cs2: CaptureSet)(using Context): Boolean = //trace(s"checkSubcapture(${cs1.show}, ${cs2.show})"):
     cs1.elems.forall(checkSubcapture(_, cs2))
 
-  def checkSubcapture(x1: CaptureRef, cs2: CaptureSet)(using Context): Boolean =
+  def checkSubcapture(x1: CaptureRef, cs2: CaptureSet)(using Context): Boolean = //trace(s"checkSubcapture(${x1.show}, ${cs2.show})"):
     cs2.elems.contains(x1) || {
       x1 match
         case CaptureRef.Ref(Term.BinderRef(idx)) => getBinder(idx) match
@@ -23,13 +24,10 @@ object TypeComparer:
         case CaptureRef.CAP() => false
     }
 
-  def checkSubtype(tp1: Type, tp2: Type)(using Context): Boolean =
+  def checkSubtype(tp1: Type, tp2: Type)(using Context): Boolean = //trace(s"checkSubtype(${tp1.show}, ${tp2.show})"):
     (tp1, tp2) match
-      case _ if tp1 == tp2 => true
       case (_, Type.Base(BaseType.AnyType)) => true
-      case (Type.BinderRef(idx1), tp2) => getBinder(idx1) match
-        case Binder.TypeBinder(name, bound) => checkSubtype(bound, tp2)
-        case bd => assert(false, s"binder kind (idx=$idx1) is absurd, $bd")
+      case _ if tp1 == tp2 => true
       case (Type.Capturing(inner, captureSet), tp2) =>
         checkSubcapture(captureSet, tp2.captureSet) && checkSubtype(inner, tp2)
       case (tp1, Type.Capturing(inner, captureSet)) =>
@@ -50,5 +48,8 @@ object TypeComparer:
             checkSubtype(b2, b1) && go(ps1, ps2)(using ctx.extend(p2))
           case _ => false
         go(params1, params2) && checkSubtype(result1, result2)(using ctx.extend(params2))
+      case (Type.BinderRef(idx1), tp2) => getBinder(idx1) match
+        case Binder.TypeBinder(name, bound) => checkSubtype(bound, tp2)
+        case bd => assert(false, s"binder kind (idx=$idx1) is absurd, $bd")
       case _ => false
 

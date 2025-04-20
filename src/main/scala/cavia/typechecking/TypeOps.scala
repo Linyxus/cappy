@@ -109,8 +109,17 @@ object TypePrinter:
 extension (tpe: Type)
   def show(using TypeChecker.Context): String = TypePrinter.show(tpe)
 
-class OpenTermBinder(tpe: Type) extends TypeMap:
+extension (cs: CaptureSet)
+  def show(using TypeChecker.Context): String = TypePrinter.show(cs)
+
+extension (ref: CaptureRef)
+  def show(using TypeChecker.Context): String = TypePrinter.show(ref)
+
+class OpenTermBinder(tpe: Type, startingVariance: Variance = Variance.Covariant) extends TypeMap:
   var ok: Boolean = true
+
+  variance = startingVariance
+
   override def mapCaptureSet(captureSet: CaptureSet): CaptureSet =
     val elems1 = captureSet.elems.flatMap: ref =>
       ref match
@@ -136,7 +145,9 @@ class OpenTermBinder(tpe: Type) extends TypeMap:
         else assert(false, "openning term binder, but found it as type")
       case _ => mapOver(tp)
 
-class OpenTermBinderExact(argRef: VarRef) extends TypeMap:
+class OpenTermBinderExact(argRef: VarRef, startingVariance: Variance = Variance.Covariant) extends TypeMap:
+  variance = startingVariance
+
   override def mapCaptureRef(ref: CaptureRef): CaptureRef =
     ref match
       case CaptureRef.Ref(Term.BinderRef(idx)) if idx == localBinders.size =>

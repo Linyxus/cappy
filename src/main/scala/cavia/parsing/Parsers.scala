@@ -97,7 +97,7 @@ object Parsers:
   //   val p = (paramsP, arrowP, bodyP).p.map((params, _, body) => Term.CaptureLambda(params, body))
   //   p.positioned.withWhat("a capture lambda")
 
-  enum ApplyClause:
+  enum ApplyClause extends core.Positioned:
     case TermApply(terms: List[Term])
     case TypeApply(types: List[Type | CaptureSet])
     //case CaptureApply(captures: List[CaptureSet])
@@ -118,14 +118,14 @@ object Parsers:
     val clauseP = longestMatch(
       termApplyClauseP.withWhat("a term apply clause"),
       typeApplyClauseP.withWhat("a type apply clause"),
-    )
+    ).positioned
     val clausesP = clauseP.many
     val p = (termAtomP, clausesP).p.map: (fun, clauses) =>
       var result = fun
       for clause <- clauses do
         clause match
-          case ApplyClause.TermApply(terms) => result = Term.Apply(result, terms)
-          case ApplyClause.TypeApply(types) => result = Term.TypeApply(result, types)
+          case ApplyClause.TermApply(terms) => result = Term.Apply(result, terms).withPosFrom(result, clause)
+          case ApplyClause.TypeApply(types) => result = Term.TypeApply(result, types).withPosFrom(result, clause)
           //case ApplyClause.CaptureApply(captures) => result = Term.CaptureApply(result, captures)
       result
     p.positioned
