@@ -13,6 +13,6 @@ This is currently a toy.
 ## Roadmap
 
 - [x] Add tests for type checking
-- [ ] Support comments `//`
+- [x] Support comments `//`
 - [ ] Handle capture sets for DefDef
 - [ ] A first prototype of code generation

@@ -102,17 +102,7 @@ class Tokenizer(source: SourceFile):
       else skippedNewline
     loop()
 
-    // var skippedNewline = false
-    // var isInComment = false
-    // while !isAtEnd && (peek.isWhitespace || isInComment || expectString("//")) do
-    //   if peek == '\n' || peek == '\r' then
-    //     skippedNewline = true
-    //     isInComment = false
-    //   advance()
-    // skippedNewline
-
   var needNewLine = false
-
   var needDedent = false
 
   def consumeInt(): Unit =
