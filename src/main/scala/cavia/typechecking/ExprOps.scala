@@ -69,6 +69,18 @@ class ExprPrinter extends IndentedPrinter:
           if idx < args.size - 1 then
             print(", ")
         print(")")
+      case Term.TypeApply(term, targs) =>
+        show(term)
+        print("[")
+        targs.zipWithIndex.foreach: (targ, idx) =>
+          targ match
+            case targ: CaptureSet =>
+              print(TypePrinter.show(targ))
+            case targ: Type =>
+              print(TypePrinter.show(targ))
+          if idx < targs.size - 1 then
+            print(", ")
+        print("]")
 
   def showType(tpe: Type)(using Context): Unit =
     print(TypePrinter.show(tpe))

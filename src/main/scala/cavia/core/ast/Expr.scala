@@ -146,6 +146,7 @@ object Expr:
     case Bind(binder: TermBinder, bound: Term, body: Term)
     case PrimOp(op: PrimitiveOp, args: List[Term])
     case Apply(fun: Term, args: List[Term])
+    case TypeApply(term: Term, targs: List[Type | CaptureSet])
 
   /** Reference to a variable, either a binder or a symbol */
   type VarRef = Term.BinderRef | Term.SymbolRef
