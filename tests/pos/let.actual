@@ -1,0 +1,8 @@
+module {
+  val test: () -> Unit = 
+    () => {
+      val x: Int = 
+        1
+      ()
+    }
+}

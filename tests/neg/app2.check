@@ -1,0 +1,4 @@
+5 |   f1(c)
+  |      ^
+
+    Type mismatch: expected IO^{a, b}, but got IO^{c}
