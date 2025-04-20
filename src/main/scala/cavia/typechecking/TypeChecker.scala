@@ -4,7 +4,7 @@ package typechecking
 import core.*
 import core.ast.*
 import cavia.core.ast.Syntax.Definition
-
+import scala.collection.mutable.ArrayBuffer
 object TypeChecker:
   import Expr.*
   import Binder.*
@@ -180,13 +180,13 @@ object TypeChecker:
 
   def checkTermParamList(params: List[Syntax.TermParam])(using Context): Result[List[TermBinder]] =
     hopefully:
-      var result: List[TermBinder] = Nil
+      var result: ArrayBuffer[TermBinder] = ArrayBuffer.empty
       var nowCtx: Context = ctx
       for p <- params do
         val bd = checkTermParam(p)(using nowCtx).!!
-        result = bd :: result
+        result += bd
         nowCtx = nowCtx.extend(bd)
-      result.reverse
+      result.toList
 
   def checkTypeParamList(params: List[Syntax.TypeParam | Syntax.CaptureParam])(using Context): Result[List[TypeBinder | CaptureBinder]] =
     def go(ps: List[Syntax.TypeParam | Syntax.CaptureParam], acc: List[TypeBinder | CaptureBinder])(using Context): Result[List[TypeBinder | CaptureBinder]] = ps match
