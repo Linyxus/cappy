@@ -384,17 +384,14 @@ object TypeChecker:
 
   def checkDef(d: Syntax.Definition)(using Context): Result[(TermBinder, Term)] = d match
     case Syntax.Definition.ValDef(name, tpe, expr) =>
-      checkTerm(expr).flatMap: expr1 =>
-        tpe match
-          case None => 
-            val bd = TermBinder(name, expr1.tpe).withPos(d.pos)
-            Right((bd.asInstanceOf[TermBinder], expr1))
-          case Some(expected) =>
-            checkType(expected).flatMap: expected1 =>
-              if TypeComparer.checkSubtype(expr1.tpe, expected1) then
-                val bd = TermBinder(name, expected1).withPos(d.pos)
-                Right((bd.asInstanceOf[TermBinder], expr1))
-              else Left(TypeError.TypeMismatch(expected1.show, expr1.tpe.show).withPos(expected.pos))
+      hopefully:
+        val expected1 = tpe match
+          case None => Type.NoType
+          case Some(expected) => checkType(expected).!!
+        val expr1 = checkTerm(expr, expected = expected1).!!
+        val binderType = if expected1.exists then expected1 else expr1.tpe
+        val bd = TermBinder(name, binderType).withPos(d.pos)
+        (bd.asInstanceOf[TermBinder], expr1)
     case Syntax.Definition.DefDef(name, paramss, resultType, expr) => 
       def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[Term] = pss match
         case Nil => checkTerm(expr).flatMap: expr1 =>
