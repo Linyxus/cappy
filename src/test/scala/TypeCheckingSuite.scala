@@ -8,3 +8,11 @@ class TypeCheckingSuite extends munit.FunSuite:
       val defs = parsed.asInstanceOf[Compiler.ParseResult.Ok].result
       val typedModule = Compiler.typecheck(defs)
       assert(typedModule.isRight)
+
+  for source <- loadAllSourceFiles("tests/neg") do
+    test(s"neg typechecking test: ${source.name}"):
+      val parsed = Compiler.parse(source)
+      assert(parsed.isInstanceOf[Compiler.ParseResult.Ok])
+      val defs = parsed.asInstanceOf[Compiler.ParseResult.Ok].result
+      val typedModule = Compiler.typecheck(defs)
+      assert(typedModule.isLeft)
