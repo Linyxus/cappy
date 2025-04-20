@@ -54,6 +54,15 @@ class Tokenizer(source: SourceFile):
     else
       false
 
+  def expectString(str: String): Boolean =
+    if currentPos + str.length > source.content.length then
+      false
+    else if source.content.substring(currentPos, currentPos + str.length) == str then
+      currentPos += str.length
+      true
+    else
+      false
+
   /** Advance the current position by one character */
   def advance(): Unit = currentPos += 1
 
@@ -76,11 +85,31 @@ class Tokenizer(source: SourceFile):
 
   def skipWhitespaces(): Boolean =
     var skippedNewline = false
-    while !isAtEnd && peek.isWhitespace do
-      if peek == '\n' || peek == '\r' then
-        skippedNewline = true
-      advance()
-    skippedNewline
+    var isInComment = false
+    @annotation.tailrec
+    def loop(): Boolean =
+      if isAtEnd then
+        skippedNewline
+      else if peek.isWhitespace || isInComment then
+        if peek == '\n' || peek == '\r' then
+          skippedNewline = true
+          isInComment = false
+        advance()
+        loop()
+      else if expectString("//") then
+        isInComment = true
+        loop()
+      else skippedNewline
+    loop()
+
+    // var skippedNewline = false
+    // var isInComment = false
+    // while !isAtEnd && (peek.isWhitespace || isInComment || expectString("//")) do
+    //   if peek == '\n' || peek == '\r' then
+    //     skippedNewline = true
+    //     isInComment = false
+    //   advance()
+    // skippedNewline
 
   var needNewLine = false
 
@@ -144,7 +173,6 @@ class Tokenizer(source: SourceFile):
             consumeInt()
             Token.INT(source.content.substring(startPos, currentPos))
           case '<' if expectChar(':') => Token.LESSCOLON()
-          // case '_' => Token.IDENT("_")
           case ch if ch.isDigit =>
             var startPos = currentPos - 1
             consumeInt()
