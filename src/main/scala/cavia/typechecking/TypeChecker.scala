@@ -523,7 +523,7 @@ object TypeChecker:
           val ctx1 = 
             if defn.isInstanceOf[Syntax.Definition.ValDef] then
               // self-recursion is not allowed for val defs
-              println(s"self-recursion is not allowed for val defs, ${defn.name}, $defn")
+              //println(s"self-recursion is not allowed for val defs, ${defn.name}, $defn")
               ctx.addSymbols(syms.filterNot(_.name == defn.name))
             else
               ctx.addSymbols(syms)
