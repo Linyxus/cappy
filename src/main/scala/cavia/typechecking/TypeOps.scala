@@ -164,3 +164,42 @@ class OpenTermBinderExact(argRef: VarRef, startingVariance: Variance = Variance.
         else assert(false, "openning term binder, but found it as type")
       case _ => mapOver(tp)
 
+class OpenCaptureBinder(argSet: CaptureSet) extends TypeMap:
+  override def mapCaptureSet(captureSet: CaptureSet): CaptureSet =
+    val elems1 = captureSet.elems.flatMap: ref =>
+      ref match
+        case CaptureRef.Ref(Term.BinderRef(idx)) if idx >= localBinders.size =>
+          if idx > localBinders.size then
+            CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref) :: Nil
+          else
+            argSet.elems
+        case _ => ref :: Nil
+    CaptureSet(elems1).maybeWithPosFrom(captureSet)
+
+  override def apply(tp: Type): Type =
+    tp match
+      case Type.BinderRef(idx) if idx >= localBinders.size =>
+        if idx > localBinders.size then
+          Type.BinderRef(idx - 1).like(tp)
+        else assert(false, "opening capture binder, but found it as type")
+      case _ => mapOver(tp)
+
+class OpenTypeBinder(argType: Type, startingVariance: Variance = Variance.Covariant) extends TypeMap:
+  variance = startingVariance
+
+  override def apply(tp: Type): Type =
+    tp match
+      case Type.BinderRef(idx) if idx >= localBinders.size =>
+        if idx > localBinders.size then
+          Type.BinderRef(idx - 1).like(tp)
+        else argType
+      case _ => mapOver(tp)
+
+  override def mapCaptureRef(ref: CaptureRef): CaptureRef =
+    ref match
+      case CaptureRef.Ref(Term.BinderRef(idx)) if idx > localBinders.size =>
+        CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref)
+      case CaptureRef.Ref(Term.BinderRef(idx)) if idx == localBinders.size =>
+        assert(false, "opening type binder, but found it as term/capture binder")
+      case _ => ref
+
