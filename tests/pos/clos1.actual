@@ -1,0 +1,28 @@
+module {
+  val test: [IO <: Any] -> (a: IO^{cap}, b: IO^{cap}) -> Unit = 
+    [IO <: Any] => {
+      (a: IO^{cap}, b: IO^{cap}) => {
+        val t1: () ->{a} IO^{a} = 
+          () => {
+            a
+          }
+        val t2: () -> () ->{a} IO^{a} = 
+          () => {
+            () => {
+              a
+            }
+          }
+        val t3: () -> () ->{b} () ->{a} IO^{a} = 
+          () => {
+            () => {
+              val _$0: IO^{b} = 
+                b
+              () => {
+                a
+              }
+            }
+          }
+        ()
+      }
+    }
+}

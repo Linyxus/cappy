@@ -1,0 +1,6 @@
+module {
+  val f: Unit = 
+    g
+  val g: Unit = 
+    f
+}

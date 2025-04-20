@@ -1,0 +1,22 @@
+module {
+  val testSuite: [IO <: Any] -> (a: IO^{cap}, b: IO^{cap}, c: IO^{cap}) -> Unit = 
+    [IO <: Any] => {
+      (a: IO^{cap}, b: IO^{cap}, c: IO^{cap}) => {
+        val f1: (x: () ->{cap} IO^{cap}, y: IO^{x}) ->{} () ->{x} IO^{cap} = 
+          (x: () ->{cap} IO^{cap}, y: IO^{x}) => {
+            x
+          }
+        val f2: (x: IO^{cap}) ->{} () ->{x} IO^{x} = 
+          (x: IO^{cap}) => {
+            () => {
+              x
+            }
+          }
+        val t3: () ->{a} IO^{a} = 
+          f2(a)
+        val t4: () ->{b} IO^{b} = 
+          f2(b)
+        ()
+      }
+    }
+}
