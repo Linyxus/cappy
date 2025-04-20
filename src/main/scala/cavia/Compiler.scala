@@ -6,12 +6,17 @@ import tokenizing.*
 import parsing.*
 import reporting.*
 import Printer.*
+import typechecking.*
 
 object Compiler:
   enum ParseResult:
     case TokenizationError(err: Tokenizer.Error)
     case ParsingError(err: Parser.ParseError)
     case Ok(result: List[Syntax.Definition])
+
+  def typecheck(defs: List[Syntax.Definition]): TypeChecker.Result[Expr.Module] =
+    val ctx = TypeChecker.Context.empty
+    TypeChecker.checkModule(defs)(using ctx)
 
   def parse(source: SourceFile): ParseResult =
     val tokens = Tokenizer.tokenize(source)
