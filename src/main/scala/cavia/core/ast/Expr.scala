@@ -32,6 +32,14 @@ object Expr:
     case F32
     case F64
 
+    def isIntegralType: Boolean = this match
+      case I32 | I64 | IntType => true
+      case _ => false
+
+    def isFloatingType: Boolean = this match
+      case F32 | F64 => true
+      case _ => false
+
   enum CaptureRef extends Positioned:
     case Ref(ref: VarRef)
     case CAP()
@@ -248,3 +256,12 @@ object Expr:
         case TermBinder(name, tpe) => TermBinder(name, tpe.shift(amount)).maybeWithPosFrom(binder)
         case TypeBinder(name, bound) => TypeBinder(name, bound.shift(amount)).maybeWithPosFrom(binder)
         case CaptureBinder(name, bound) => CaptureBinder(name, bound.shift(amount)).maybeWithPosFrom(binder)
+
+  extension (tpe: Type)
+    def isIntegralType: Boolean = tpe match
+      case Type.Base(base) => base.isIntegralType
+      case _ => false
+
+    def isFloatingType: Boolean = tpe match
+      case Type.Base(base) => base.isFloatingType
+      case _ => false

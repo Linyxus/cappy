@@ -265,7 +265,9 @@ object TypeChecker:
       case Syntax.Term.StrLit(value) => 
         Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType))
       case Syntax.Term.IntLit(value) => 
-        Right(Term.IntLit(value).withPosFrom(t).withTpe(Definitions.i64Type))
+        //println(s"checkIntLit, expected = $expected")
+        val tpe = if expected.exists && expected.isIntegralType then expected else Definitions.i64Type
+        Right(Term.IntLit(value).withPosFrom(t).withTpe(tpe))
       case Syntax.Term.UnitLit() => 
         Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
       case Syntax.Term.Lambda(params, body) => 
