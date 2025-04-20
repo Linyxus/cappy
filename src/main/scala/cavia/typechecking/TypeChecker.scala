@@ -363,9 +363,21 @@ object TypeChecker:
                   val resultType1 = substituteAllType(resultType, targs)
                   Term.TypeApply(term1, targs).withPosFrom(t).withTpe(resultType1)
                 case (targ, tformal) :: xs => 
-                  val targ1: Type | CaptureSet = targ match
-                    case targ: Syntax.Type => checkType(targ).!!
-                    case targ: Syntax.CaptureSet => checkCaptureSet(targ).!!
+                  val targ1: Type | CaptureSet = 
+                    (targ, tformal) match
+                      case (targ: Syntax.Type, tformal: Type) => 
+                        val targ1 = checkType(targ).!!
+                        if TypeComparer.checkSubtype(targ1, tformal) then
+                          targ1
+                        else 
+                          sorry(TypeError.TypeMismatch(tformal.show, targ1.show).withPos(targ.pos))
+                      case (targ: Syntax.CaptureSet, tformal: CaptureSet) => 
+                        val targ1 = checkCaptureSet(targ).!!
+                        if TypeComparer.checkSubcapture(targ1, tformal) then
+                          targ1
+                        else
+                          sorry(TypeError.TypeMismatch(tformal.show, targ1.show).withPos(targ.pos))
+                      case _ => sorry(TypeError.GeneralError(s"argument kind mismatch").withPos(targ.pos))
                   val xs1 = xs.zipWithIndex.map: 
                     case ((targ, tformal), idx) =>
                       (targ, substituteType(tformal, targ1, idx, isParamType = true))
