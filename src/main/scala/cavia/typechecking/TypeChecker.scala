@@ -179,12 +179,14 @@ object TypeChecker:
     case Syntax.Type.AppliedType(tycon, args) => ???
 
   def checkTermParamList(params: List[Syntax.TermParam])(using Context): Result[List[TermBinder]] =
-    def go(ps: List[Syntax.TermParam], acc: List[TermBinder])(using Context): Result[List[TermBinder]] = ps match
-      case Nil => Right(acc.reverse)
-      case p :: ps =>
-        checkTermParam(p).flatMap: binder =>
-          go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
-    go(params, Nil)
+    hopefully:
+      var result: List[TermBinder] = Nil
+      var nowCtx: Context = ctx
+      for p <- params do
+        val bd = checkTermParam(p)(using nowCtx).!!
+        result = bd :: result
+        nowCtx = nowCtx.extend(bd)
+      result.reverse
 
   def checkTypeParamList(params: List[Syntax.TypeParam | Syntax.CaptureParam])(using Context): Result[List[TypeBinder | CaptureBinder]] =
     def go(ps: List[Syntax.TypeParam | Syntax.CaptureParam], acc: List[TypeBinder | CaptureBinder])(using Context): Result[List[TypeBinder | CaptureBinder]] = ps match
