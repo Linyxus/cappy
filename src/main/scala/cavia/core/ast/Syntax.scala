@@ -30,7 +30,7 @@ object Syntax:
 
   enum Definition extends Positioned:
     case ValDef(name: String, tpe: Option[Type], expr: Term)
-    case DefDef(name: String, paramss: List[TypeParamList | TermParamList], resultType: Option[Type], expr: Term)
+    case DefDef(name: String, captureSet: Option[CaptureSet], paramss: List[TypeParamList | TermParamList], resultType: Option[Type], expr: Term)
 
     val name: String
   import Definition.*

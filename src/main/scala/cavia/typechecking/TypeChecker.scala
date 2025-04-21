@@ -452,7 +452,7 @@ object TypeChecker:
         val binderType = if expected1.exists then expected1 else expr1.tpe
         val bd = TermBinder(name, binderType).withPos(d.pos)
         (bd.asInstanceOf[TermBinder], expr1)
-    case Syntax.Definition.DefDef(name, paramss, resultType, expr) => 
+    case Syntax.Definition.DefDef(name, _, paramss, resultType, expr) => 
       def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[Term] = pss match
         case Nil => checkTerm(expr).flatMap: expr1 =>
           resultType match

@@ -16,3 +16,9 @@ This is currently a toy.
 - [x] Support comments `//`
 - [ ] Handle capture sets for DefDef
 - [ ] A first prototype of code generation
+
+## Issues
+
+- [ ] No negative tests for parsing
+- [ ] Parser needs to be refactored: soft or hard failure
+- [ ] (!!!) two kinds of capture parameters? (@use vs normal), use spine capture set

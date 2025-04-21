@@ -26,7 +26,7 @@ object Parsers:
   def defDefP: Parser[Definition] =
     val tpeP = (tokenP[Token.COLON], typeP).p.map((_, tpe) => tpe)
     val p = (keywordP("def"), tokenP[Token.IDENT], paramListP.many, tpeP.tryIt, tokenP[Token.EQUAL], termP).p.map: (_, tk, paramss, maybeTpe, _, body) =>
-      Definition.DefDef(tk.name, paramss, maybeTpe, body)
+      Definition.DefDef(tk.name, None, paramss, maybeTpe, body)
     p.positioned.withWhat("a function definition")
 
   def definitionP: Parser[Definition] = 
