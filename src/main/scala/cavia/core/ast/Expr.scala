@@ -143,7 +143,7 @@ object Expr:
     case UnitLit()
     case TermLambda(params: List[TermBinder], body: Term)
     case TypeLambda(params: List[TypeBinder | CaptureBinder], body: Term)
-    case Bind(binder: TermBinder, bound: Term, body: Term)
+    case Bind(binder: TermBinder, recursive: Boolean, bound: Term, body: Term)
     case PrimOp(op: PrimitiveOp, args: List[Term])
     case Apply(fun: Term, args: List[Term])
     case TypeApply(term: Term, targs: List[Type | CaptureSet])

@@ -57,7 +57,7 @@ object CodeGenerator:
     case Term.PrimOp(op, args) =>
       val argInstrs = args.flatMap(genTerm)
       argInstrs ++ translatePrimOp(op)
-    case Term.Bind(binder, bound, body) =>
+    case Term.Bind(binder, _, bound, body) =>
       val localSym = Symbol.fresh(binder.name)
       val localType = translateType(binder.tpe)
       emitLocal(localSym, localType)

@@ -302,30 +302,58 @@ object TypeChecker:
             val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
             t1.withTpe(tpe1)
       case Syntax.Term.Block(stmts) => 
+        def avoidSelfType(tpe: Type, d: Syntax.Definition): Result[Type] =
+          val tm = AvoidLocalBinder(CaptureSet.universal)
+          val result = tm.apply(tpe)
+          hopefully:
+            if tm.ok then result else sorry(TypeError.GeneralError(s"Cannot avoid self type").withPos(d.pos))
         def go(stmts: List[Syntax.Definition | Syntax.Term])(using Context): Result[Term] = 
+          def goDefinition(d: Syntax.Definition)(using Context): Result[(TermBinder, Term, Boolean)] =
+            hopefully:
+              val selfType = d match
+                case _: Syntax.Definition.ValDef => None
+                case d: Syntax.Definition.DefDef => Some(extractDefType(d, requireExplictType = false).!!)
+              val ctx1 = selfType match
+                case None => ctx
+                case Some(selfType) =>
+                  val selfBinder = TermBinder(d.name, selfType).withPos(d.pos)
+                  ctx.extend(selfBinder)
+              val (bd, expr) = checkDef(d)(using ctx1).!!
+              val bd1 = 
+                if selfType.isDefined then
+                  val tpe1 = avoidSelfType(bd.tpe, d).!!
+                  TermBinder(bd.name, tpe1).withPos(bd.pos).asInstanceOf[TermBinder]
+                else bd
+              val expr1 =
+                if selfType.isDefined then
+                  val tpe1 = avoidSelfType(expr.tpe, d).!!
+                  expr.withTpe(tpe1)
+                else expr
+              (bd1, expr1, selfType.isDefined)
           stmts match
             case Nil => 
               Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
             case (t: Syntax.Term) :: Nil => 
               checkTerm(t)
             case (d: Syntax.Definition) :: Nil =>
-              checkDef(d).map: (bd, expr) =>
+              hopefully:
+                val (bd1, expr1, isRecursive) = goDefinition(d).!!
                 val retType = Definitions.unitType
-                Term.Bind(bd, expr, Term.UnitLit().withPosFrom(d).withTpe(retType)).withPosFrom(d).withTpe(retType)
+                Term.Bind(bd1, recursive = isRecursive, expr1, Term.UnitLit().withPosFrom(d).withTpe(retType)).withPosFrom(d).withTpe(retType)
             case d :: ds =>
               val d1 = d match
                 case d: Syntax.Definition => d
                 case t: Syntax.Term => Syntax.Definition.ValDef(Fresh.freshName("_"), None, t).withPosFrom(t)
-              checkDef(d1).flatMap: (bd, boundExpr) =>
-                go(ds)(using ctx.extend(bd :: Nil)).flatMap: bodyExpr =>
-                  val resType = bodyExpr.tpe
-                  val tm = AvoidLocalBinder(bd.tpe.captureSet)
-                  val resType1 = tm.apply(resType)
-                  //println(s"avoid from $resType to $resType1")
-                  if tm.ok then
-                    Right(Term.Bind(bd, boundExpr, bodyExpr).withPosFrom(d, bodyExpr).withTpe(resType1))
-                  else
-                    Left(TypeError.LeakingLocalBinder(resType.show(using ctx.extend(bd))).withPos(d.pos))
+              hopefully:
+                val (bd1, boundExpr1, isRecursive) = goDefinition(d1).!!
+                val bodyExpr = go(ds)(using ctx.extend(bd1 :: Nil)).!!
+                val resType = bodyExpr.tpe
+                val tm = AvoidLocalBinder(bd1.tpe.captureSet)
+                val resType1 = tm.apply(resType)
+                if tm.ok then
+                  Term.Bind(bd1, recursive = isRecursive, boundExpr1, bodyExpr).withPosFrom(d, bodyExpr).withTpe(resType1)
+                else
+                  sorry(TypeError.LeakingLocalBinder(resType.show(using ctx.extend(bd1 :: Nil))).withPos(d.pos))
         go(stmts)
       case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if PrimitiveOp.fromName(name).isDefined => 
         PrimitiveOp.fromName(name).get match
@@ -405,7 +433,8 @@ object TypeChecker:
 
     result.flatMap: t1 =>
       if !expected.exists || TypeComparer.checkSubtype(t1.tpe, expected) then
-        Right(t1)
+        val t2 = if expected.exists then t1.withTpe(expected) else t1
+        Right(t2)
       else 
         Left(TypeError.TypeMismatch(expected.show, t1.tpe.show).withPos(t.pos))
 
@@ -504,11 +533,13 @@ object TypeChecker:
             val bd = TermBinder(name, tpe1).withPos(d.pos)
             Right((bd.asInstanceOf[TermBinder], expr2))
 
-  def extractDefType(d: Syntax.Definition.DefDef)(using Context): Result[Type] = 
+  def extractDefType(d: Syntax.Definition.DefDef, requireExplictType: Boolean = true)(using Context): Result[Type] = 
     def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[Type] = pss match
       case Nil => 
         d.resultType match
-          case None => Left(TypeError.GeneralError("Explicit type annotation is required for top-level definitions").withPos(d.pos))
+          case None => 
+            if requireExplictType then Left(TypeError.GeneralError("Explicit type annotation is required for top-level definitions").withPos(d.pos))
+            else Right(Definitions.anyType)
           case Some(resultType) => checkType(resultType)
       case (ps: Syntax.TermParamList) :: pss =>
         checkTermParamList(ps.params).flatMap: params =>

@@ -42,7 +42,7 @@ class ExprPrinter extends IndentedPrinter:
           show(body)(using ctx.extend(params))
         newline()
         println("}")
-      case Term.Bind(binder, expr, body) =>
+      case Term.Bind(binder, recursive, expr, body) =>
         print("val ")
         print(binder.name)
         print(": ")
@@ -50,7 +50,8 @@ class ExprPrinter extends IndentedPrinter:
         print(" = ")
         newline()
         indented:
-          show(expr)
+          val ctx1 = if recursive then ctx.extend(binder) else ctx
+          show(expr)(using ctx1)
         newline()
         show(body)(using ctx.extend(binder))
       case Term.PrimOp(op, args) =>
