@@ -7,6 +7,7 @@ import cavia.core.ast.Expr.Term
 import Wasm.*
 import typechecking.*
 import scala.collection.mutable.ArrayBuffer
+import cavia.core.ast.Expr.PrimitiveOp
 
 object CodeGenerator:
   case class Context(funcs: ArrayBuffer[Func] = ArrayBuffer.empty, exports: ArrayBuffer[Export] = ArrayBuffer.empty)
@@ -19,8 +20,15 @@ object CodeGenerator:
   def emitExport(e: Export)(using Context): Unit =
     ctx.exports += e
 
+  def translatePrimOp(op: PrimitiveOp)(using Context): List[Instruction] = op match
+    case PrimitiveOp.I64Add => List(Instruction.I64Add)
+    case _ => assert(false, s"Not supported: $op")
+  
   def genTerm(t: Expr.Term)(using Context): List[Instruction] = t match
     case Term.IntLit(value) => List(Instruction.I64Const(value))
+    case Term.PrimOp(op, args) =>
+      val argInstrs = args.flatMap(genTerm)
+      argInstrs ++ translatePrimOp(op)
     case _ => assert(false, s"Not supported: $t")
 
   def genModule(m: Expr.Module)(using Context): Unit = 
