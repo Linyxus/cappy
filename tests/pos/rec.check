@@ -1,6 +1,10 @@
 module {
   val f: Unit = 
-    g
+    [] => {
+      g
+    }
   val g: Unit = 
-    f
+    [] => {
+      f
+    }
 }

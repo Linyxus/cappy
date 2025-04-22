@@ -201,3 +201,9 @@ class OpenTypeBinder(argType: Type, openingIdx: Int = 0) extends TypeMap:
         assert(false, "opening type binder, but found it as term/capture binder")
       case _ => ref
 
+object LazyType:
+  def unapply(tpe: Type): Option[Type] = tpe match
+    case Type.TypeArrow(Nil, result) => Some(result)
+    case _ => None
+
+  def apply(tpe: Type): Type = Type.TypeArrow(Nil, tpe)

@@ -256,8 +256,13 @@ object TypeChecker:
             case Some((binder: Binder, idx)) => sorry(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
             case None => sorry(TypeError.UnboundVariable(name).withPos(t.pos))
           if !tpe.isPure then markFree(ref)
-          val tpe1 = if tpe.isPure then tpe else Type.Capturing(tpe.stripCaptures, ref.singletonCaptureSet).withKind(TypeKind.Star)
-          ref.withPosFrom(t).withTpe(tpe1)
+          tpe.stripCaptures match
+            case LazyType(resultType) => 
+              val t1 = Term.TypeApply(ref, Nil).withPosFrom(t)
+              t1.withTpe(resultType)
+            case _ =>
+              val tpe1 = if tpe.isPure then tpe else Type.Capturing(tpe.stripCaptures, ref.singletonCaptureSet).withKind(TypeKind.Star)
+              ref.withPosFrom(t).withTpe(tpe1)
       case Syntax.Term.StrLit(value) => 
         Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType))
       case Syntax.Term.IntLit(value) => 
@@ -385,7 +390,8 @@ object TypeChecker:
     result.flatMap: t1 =>
       if !expected.exists || TypeComparer.checkSubtype(t1.tpe, expected) then
         Right(t1)
-      else Left(TypeError.TypeMismatch(expected.show, t1.tpe.show).withPos(t.pos))
+      else 
+        Left(TypeError.TypeMismatch(expected.show, t1.tpe.show).withPos(t.pos))
 
   def substitute(tpe: Type, arg: Term, openingIdx: Int = 0, isParamType: Boolean = false): Result[Type] =
     val startingVariance = if isParamType then Variance.Contravariant else Variance.Covariant
@@ -474,9 +480,16 @@ object TypeChecker:
                 case Some(cs) => Type.Capturing(tpe, cs)
               (Term.TypeLambda(params, body1).withPosFrom(d).withTpe(tpe1), None)
       go(paramss).flatMap: (expr1, captureSet) =>
-        val bd = TermBinder(name, expr1.tpe).withPos(d.pos)
         //assert(!captureSet.isDefined, s"expr type not supported yet")
-        Right((bd.asInstanceOf[TermBinder], expr1))
+        captureSet match
+          case None =>
+            val bd = TermBinder(name, expr1.tpe).withPos(d.pos)
+            Right((bd.asInstanceOf[TermBinder], expr1))
+          case Some(cs) =>
+            val tpe1 = Type.Capturing(Type.TypeArrow(Nil, expr1.tpe), cs)
+            val expr2 = Term.TypeLambda(Nil, expr1).withPosFrom(d).withTpe(tpe1)
+            val bd = TermBinder(name, tpe1).withPos(d.pos)
+            Right((bd.asInstanceOf[TermBinder], expr2))
 
   def extractDefType(d: Syntax.Definition.DefDef)(using Context): Result[Type] = 
     def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[Type] = pss match
