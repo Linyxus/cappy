@@ -198,6 +198,13 @@ object TypeChecker:
           go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
     go(params, Nil)
 
+  def markFree(cs: CaptureSet)(using Context): Unit =
+    val crefs = cs.elems.flatMap: ref =>
+      ref match
+        case CaptureRef.Ref(ref) => Some(ref)
+        case CaptureRef.CAP() => None
+    crefs.foreach(markFree)
+
   def markFree(ref: VarRef)(using Context): Unit =
     def widenUntilWf(crefs: List[CaptureRef], delta: Int): List[CaptureRef] =
       def allWf(crefs: List[CaptureRef]): Boolean = crefs.forall: ref =>
@@ -347,7 +354,12 @@ object TypeChecker:
                             (arg, substitute(formal, arg1, idx, isParamType = true).!!)
                       mxs1.flatMap: xs1 =>
                         go(xs1, arg1 :: acc)
-                go(args `zip` (formals.map(_.tpe)), Nil)
+                go(args `zip` (formals.map(_.tpe)), Nil).map: resultTerm =>
+                  fun1 match
+                    case _: VarRef =>
+                    case _ =>
+                      markFree(resultTerm.tpe.captureSet)
+                  resultTerm
             case _ => Left(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(t.pos))
       case Syntax.Term.TypeApply(term, targs) => 
         hopefully:
@@ -382,7 +394,12 @@ object TypeChecker:
                     case ((targ, tformal), idx) =>
                       (targ, substituteType(tformal, targ1, idx, isParamType = true))
                   go(xs1, targ1 :: acc)
-              go(targs `zip` formalTypes, Nil)
+              val resultTerm = go(targs `zip` formalTypes, Nil)
+              term1 match
+                case _: VarRef =>
+                case _ =>
+                  markFree(resultTerm.tpe.captureSet)
+              resultTerm
             case _ => 
               sorry(TypeError.GeneralError(s"Expected a function, but got $term1.tpe.show").withPos(t.pos))
 
