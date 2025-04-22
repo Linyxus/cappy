@@ -6,14 +6,14 @@ object Wasm:
   enum ValType:
     case I32
     case I64
-    case FuncRef
     case TypedRef(sym: Symbol)
+    case AnyRef
 
     def show: String = this match
       case ValType.I32 => "i32"
       case ValType.I64 => "i64"
-      case ValType.FuncRef => "funcref"
       case ValType.TypedRef(sym) => s"(ref ${sym.show})"
+      case ValType.AnyRef => "anyref"
 
   enum Instruction:
     case I32Const(value: Int)
@@ -45,15 +45,19 @@ object Wasm:
       case ExportKind.Table => "table"
       case ExportKind.Memory => "memory"
 
-  case class Symbol(val name: String, val uniqId: Int):
+  sealed trait Symbol:
+    def show: String
+  case class UniqSymbol(val name: String, val uniqId: Int) extends Symbol:
     def show: String = s"$$${name}@${uniqId}"
+  object NoSymbol extends Symbol:
+    def show: String = assert(false, "No symbol")
 
   object Symbol:
     private var nextId = 0
     def fresh(name: String): Symbol =
       val id = nextId
       nextId += 1
-      Symbol(name, id)
+      UniqSymbol(name, id)
 
     val Function = fresh("__func")
 

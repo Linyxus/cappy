@@ -40,5 +40,5 @@ import java.nio.file.*
           val inputPath = Paths.get(path)
           val outputName = inputPath.getFileName.toString.replace(".scala", ".wat")
           val outputPath = inputPath.getParent.resolve(outputName)
-          println(s"--- writing to $outputPath")
           Files.writeString(outputPath, outputCode)
+          println(s"--- wrote to $outputPath")
