@@ -248,22 +248,16 @@ object TypeChecker:
 
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType)(using Context): Result[Term] = 
     val result: Result[Term] = t match
-      case Syntax.Term.Ident(name) => lookupAll(name) match
-        case Some(sym: Symbol) => 
-          val tpe = sym.tpe
-          val ref: Term.SymbolRef = Term.SymbolRef(sym)
+      case Syntax.Term.Ident(name) => 
+        hopefully:
+          val (ref, tpe) = lookupAll(name) match
+            case Some(sym: Symbol) => (Term.SymbolRef(sym): VarRef, sym.tpe)
+            case Some((binder: Binder.TermBinder, idx)) => (Term.BinderRef(idx): VarRef, binder.tpe)
+            case Some((binder: Binder, idx)) => sorry(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
+            case None => sorry(TypeError.UnboundVariable(name).withPos(t.pos))
           if !tpe.isPure then markFree(ref)
-          val tpe1 = Type.Capturing(tpe.stripCaptures, ref.singletonCaptureSet).withKind(TypeKind.Star)
-          Right(ref.withPosFrom(t).withTpe(tpe1))
-        case Some((binder: Binder.TermBinder, idx)) => 
-          val tpe = binder.tpe
-          val ref: Term.BinderRef = Term.BinderRef(idx)
-          if !tpe.isPure then markFree(ref)
-          //println(s"checkTerm $t, binder = $binder, idx = $idx, tpe = $tpe, binders = ${ctx.binders}")
-          val tpe1 = Type.Capturing(tpe.stripCaptures, ref.singletonCaptureSet).withKind(TypeKind.Star)
-          Right(ref.withPosFrom(t).withTpe(tpe1))
-        case Some((binder: Binder, idx)) => Left(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
-        case None => Left(TypeError.UnboundVariable(name).withPos(t.pos))
+          val tpe1 = if tpe.isPure then tpe else Type.Capturing(tpe.stripCaptures, ref.singletonCaptureSet).withKind(TypeKind.Star)
+          ref.withPosFrom(t).withTpe(tpe1)
       case Syntax.Term.StrLit(value) => 
         Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType))
       case Syntax.Term.IntLit(value) => 
@@ -457,15 +451,12 @@ object TypeChecker:
         case Nil => 
           val env1 = CaptureEnv.empty(ctx.binders.length)
           hopefully:
-            val expr1 = checkTerm(expr)(using ctx.withEnv(env1)).!!
+            val expected1 = resultType match
+              case None => Type.NoType
+              case Some(expected) => checkType(expected).!!
+            val expr1 = checkTerm(expr, expected = expected1)(using ctx.withEnv(env1)).!!
             val captureSet = CaptureSet(env1.cv.toList)
-            resultType match
-              case None => (expr1, Some(captureSet))
-              case Some(expected) =>
-                val expected1 = checkType(expected).!!
-                if TypeComparer.checkSubtype(expr1.tpe, expected1) then
-                  (expr1.withTpe(expected1), Some(captureSet))
-                else sorry(TypeError.TypeMismatch(expected1.show, expr1.tpe.show).withPos(expected.pos))
+            (expr1.withTpe(expected1), Some(captureSet))
         case (ps: Syntax.TermParamList) :: pss =>
           checkTermParamList(ps.params).flatMap: params =>
             go(pss)(using ctx.extend(params)).map: (body1, captureSet) =>
