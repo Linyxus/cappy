@@ -16,6 +16,7 @@ This is currently a toy.
 - [x] Support comments `//`
 - [x] Handle capture sets for DefDef
 - [ ] A first prototype of code generation
+- [ ] Handle self-recursion in local bindings
 
 ## Issues
 
