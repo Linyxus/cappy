@@ -4,6 +4,8 @@ import reporting.*
 import typechecking.*
 import core.ast.*
 import Printer.*
+import codegen.*
+import java.nio.file.*
 
 @main def hello(path: String): Unit =
   val source = SourceFile.fromPath(path)
@@ -28,3 +30,15 @@ import Printer.*
         case Right(mod) =>
           println(s"--- tree after typechecker")
           println(ExprPrinter.show(mod)(using TypeChecker.Context.empty))
+          given genCtx: CodeGenerator.Context = CodeGenerator.Context()
+          CodeGenerator.genModule(mod)
+          val wasmMod = CodeGenerator.finalize
+          val outputCode = wasmMod.show
+          println(s"--- wasm module")
+          println(outputCode)
+
+          val inputPath = Paths.get(path)
+          val outputName = inputPath.getFileName.toString.replace(".scala", ".wat")
+          val outputPath = inputPath.getParent.resolve(outputName)
+          println(s"--- writing to $outputPath")
+          Files.writeString(outputPath, outputCode)

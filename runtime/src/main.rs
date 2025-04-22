@@ -28,11 +28,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let module = Module::from_file(&engine, wasm_file_path)?;
 
-    let instance = Instance::new(&mut store, &module, &[print_i32.into(), read_i32.into()])?;
+    //let instance = Instance::new(&mut store, &module, &[print_i32.into(), read_i32.into()])?;
+    let instance = Instance::new(&mut store, &module, &[])?;
 
     let entrypoint = instance.get_func(&mut store, "entrypoint")
         .expect("`entrypoint` was not an exported function");
-    let entrypoint = entrypoint.typed::<(), i32>(&store)?;
+    let entrypoint = entrypoint.typed::<(), i64>(&store)?;
     let result = entrypoint.call(&mut store, ())?;
     println!("Exit Code: {:?}", result);
     Ok(())

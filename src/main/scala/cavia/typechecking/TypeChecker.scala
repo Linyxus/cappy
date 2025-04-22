@@ -548,4 +548,3 @@ object TypeChecker:
       checkDefns(syms `zip` defns).map: defns1 =>
         mod.defns = defns1
         mod
-  
