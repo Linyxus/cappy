@@ -266,7 +266,6 @@ object TypeChecker:
       case Syntax.Term.StrLit(value) => 
         Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType))
       case Syntax.Term.IntLit(value) => 
-        //println(s"checkIntLit, expected = $expected")
         val tpe = if expected.exists && expected.isIntegralType then expected else Definitions.i64Type
         Right(Term.IntLit(value).withPosFrom(t).withTpe(tpe))
       case Syntax.Term.UnitLit() => 
@@ -462,7 +461,7 @@ object TypeChecker:
               case Some(expected) => checkType(expected).!!
             val expr1 = checkTerm(expr, expected = expected1)(using ctx.withEnv(env1)).!!
             val captureSet = CaptureSet(env1.cv.toList)
-            (expr1.withTpe(expected1), Some(captureSet))
+            (expr1, Some(captureSet))
         case (ps: Syntax.TermParamList) :: pss =>
           checkTermParamList(ps.params).flatMap: params =>
             go(pss)(using ctx.extend(params)).map: (body1, captureSet) =>
@@ -480,7 +479,6 @@ object TypeChecker:
                 case Some(cs) => Type.Capturing(tpe, cs)
               (Term.TypeLambda(params, body1).withPosFrom(d).withTpe(tpe1), None)
       go(paramss).flatMap: (expr1, captureSet) =>
-        //assert(!captureSet.isDefined, s"expr type not supported yet")
         captureSet match
           case None =>
             val bd = TermBinder(name, expr1.tpe).withPos(d.pos)
