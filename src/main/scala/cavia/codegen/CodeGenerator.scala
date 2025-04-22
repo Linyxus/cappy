@@ -37,14 +37,22 @@ object CodeGenerator:
 
   def translatePrimOp(op: PrimitiveOp)(using Context): List[Instruction] = op match
     case PrimitiveOp.I64Add => List(Instruction.I64Add)
-    case _ => assert(false, s"Not supported: $op")
+    case PrimitiveOp.I32Add => List(Instruction.I32Add)
+    case PrimitiveOp.I64Mul => List(Instruction.I64Mul)
+    case PrimitiveOp.I32Mul => List(Instruction.I32Mul)
+    // case _ => assert(false, s"Not supported: $op")
 
   def translateType(tpe: Expr.Type)(using Context): ValType = tpe match
     case Expr.Type.Base(Expr.BaseType.I64) => ValType.I64
+    case Expr.Type.Base(Expr.BaseType.I32) => ValType.I32
+    case Expr.Type.Base(Expr.BaseType.UnitType) => ValType.I32
     case _ => assert(false, s"Unsupported type: $tpe")
 
   def genTerm(t: Expr.Term)(using Context): List[Instruction] = t match
-    case Term.IntLit(value) => List(Instruction.I64Const(value))
+    case Term.IntLit(value) => 
+      translateType(t.tpe) match
+        case ValType.I32 => List(Instruction.I32Const(value))
+        case ValType.I64 => List(Instruction.I64Const(value))
     case Term.PrimOp(op, args) =>
       val argInstrs = args.flatMap(genTerm)
       argInstrs ++ translatePrimOp(op)
@@ -63,12 +71,12 @@ object CodeGenerator:
   def genModule(m: Expr.Module)(using Context): Unit = 
     m.defns match
       case (d: Expr.Definition.ValDef) :: Nil =>
-        val mainType = Expr.Type.TermArrow(Nil, Expr.Type.Base(Expr.BaseType.I64))
+        val mainType = Expr.Type.TermArrow(Nil, Expr.Type.Base(Expr.BaseType.I32))
         given TypeChecker.Context = TypeChecker.Context.empty
         if TypeComparer.checkSubtype(d.tpe, mainType) then
           val Term.TermLambda(Nil, body) = d.body: @unchecked
           val insts = genTerm(body)
-          val func = Func(Symbol.fresh(d.sym.name), params = Nil, result = ValType.I64, locals = finalizeLocals, insts)
+          val func = Func(Symbol.fresh(d.sym.name), params = Nil, result = ValType.I32, locals = finalizeLocals, insts)
           emitFunc(func)
           val exp = Export("entrypoint", ExportKind.Func, func.ident)
           emitExport(exp)

@@ -4,20 +4,30 @@ object Wasm:
   case class Module(fields: List[ModuleField])
 
   enum ValType:
+    case I32
     case I64
 
     def show: String = this match
+      case ValType.I32 => "i32"
       case ValType.I64 => "i64"
 
   enum Instruction:
+    case I32Const(value: Int)
+    case I32Add
+    case I32Mul
     case I64Const(value: Int)
     case I64Add
+    case I64Mul
     case LocalSet(sym: Symbol)
     case LocalGet(sym: Symbol)
 
     def show: String = this match
+      case I32Const(value) => s"i32.const $value"
+      case I32Add => "i32.add"
+      case I32Mul => "i32.mul"
       case I64Const(value) => s"i64.const $value"
       case I64Add => "i64.add"
+      case I64Mul => "i64.mul"
       case LocalSet(sym) => s"local.set ${sym.show}"
       case LocalGet(sym) => s"local.get ${sym.show}"
 
