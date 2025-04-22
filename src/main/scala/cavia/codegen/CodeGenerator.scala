@@ -10,7 +10,14 @@ import scala.collection.mutable.ArrayBuffer
 import cavia.core.ast.Expr.PrimitiveOp
 
 object CodeGenerator:
-  case class Context(funcs: ArrayBuffer[Func] = ArrayBuffer.empty, exports: ArrayBuffer[Export] = ArrayBuffer.empty)
+  case class Context(
+    funcs: ArrayBuffer[Func] = ArrayBuffer.empty,
+    exports: ArrayBuffer[Export] = ArrayBuffer.empty,
+    locals: ArrayBuffer[(Symbol, ValType)] = ArrayBuffer.empty,
+    localSyms: List[Symbol] = Nil,
+  ):
+    def withLocalSym(sym: Symbol): Context =
+      copy(localSyms = sym :: localSyms)
 
   def ctx(using ctx: Context): Context = ctx
 
@@ -20,15 +27,32 @@ object CodeGenerator:
   def emitExport(e: Export)(using Context): Unit =
     ctx.exports += e
 
+  def emitLocal(sym: Symbol, tpe: ValType)(using Context): Unit =
+    ctx.locals += (sym -> tpe)
+
   def translatePrimOp(op: PrimitiveOp)(using Context): List[Instruction] = op match
     case PrimitiveOp.I64Add => List(Instruction.I64Add)
     case _ => assert(false, s"Not supported: $op")
-  
+
+  def translateType(tpe: Expr.Type)(using Context): ValType = tpe match
+    case Expr.Type.Base(Expr.BaseType.I64) => ValType.I64
+    case _ => assert(false, s"Unsupported type: $tpe")
+
   def genTerm(t: Expr.Term)(using Context): List[Instruction] = t match
     case Term.IntLit(value) => List(Instruction.I64Const(value))
     case Term.PrimOp(op, args) =>
       val argInstrs = args.flatMap(genTerm)
       argInstrs ++ translatePrimOp(op)
+    case Term.Bind(binder, bound, body) =>
+      val localSym = Symbol.fresh(binder.name)
+      val localType = translateType(binder.tpe)
+      emitLocal(localSym, localType)
+      val boundInstrs = genTerm(bound)
+      val bodyInstrs = genTerm(body)(using ctx.withLocalSym(localSym))
+      boundInstrs ++ List(Instruction.LocalSet(localSym)) ++ bodyInstrs
+    case Term.BinderRef(idx) =>
+      val localSym = ctx.localSyms(idx)
+      List(Instruction.LocalGet(localSym))
     case _ => assert(false, s"Not supported: $t")
 
   def genModule(m: Expr.Module)(using Context): Unit = 

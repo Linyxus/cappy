@@ -12,10 +12,14 @@ object Wasm:
   enum Instruction:
     case I64Const(value: Int)
     case I64Add
+    case LocalSet(sym: Symbol)
+    case LocalGet(sym: Symbol)
 
     def show: String = this match
       case I64Const(value) => s"i64.const $value"
       case I64Add => "i64.add"
+      case LocalSet(sym) => s"local.set ${sym.show}"
+      case LocalGet(sym) => s"local.get ${sym.show}"
 
   enum ExportKind:
     case Func
