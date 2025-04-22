@@ -453,26 +453,38 @@ object TypeChecker:
         val bd = TermBinder(name, binderType).withPos(d.pos)
         (bd.asInstanceOf[TermBinder], expr1)
     case Syntax.Definition.DefDef(name, _, paramss, resultType, expr) => 
-      def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[Term] = pss match
-        case Nil => checkTerm(expr).flatMap: expr1 =>
-          resultType match
-            case None => Right(expr1)
-            case Some(expected) =>
-              checkType(expected).flatMap: expected1 =>
-                //println(s"check subtype ${expr1.tpe} and $expected1")
+      def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[(Term, Option[CaptureSet])] = pss match
+        case Nil => 
+          val env1 = CaptureEnv.empty(ctx.binders.length)
+          hopefully:
+            val expr1 = checkTerm(expr)(using ctx.withEnv(env1)).!!
+            val captureSet = CaptureSet(env1.cv.toList)
+            resultType match
+              case None => (expr1, Some(captureSet))
+              case Some(expected) =>
+                val expected1 = checkType(expected).!!
                 if TypeComparer.checkSubtype(expr1.tpe, expected1) then
-                  Right(expr1.withTpe(expected1))
-                else Left(TypeError.TypeMismatch(expected1.show, expr1.tpe.show).withPos(expected.pos))
+                  (expr1.withTpe(expected1), Some(captureSet))
+                else sorry(TypeError.TypeMismatch(expected1.show, expr1.tpe.show).withPos(expected.pos))
         case (ps: Syntax.TermParamList) :: pss =>
           checkTermParamList(ps.params).flatMap: params =>
-            go(pss)(using ctx.extend(params)).map: body1 =>
-              Term.TermLambda(params, body1).withPosFrom(d).withTpe(Type.TermArrow(params, body1.tpe).withKind(TypeKind.Star))
+            go(pss)(using ctx.extend(params)).map: (body1, captureSet) =>
+              val tpe = Type.TermArrow(params, body1.tpe).withKind(TypeKind.Star)
+              val tpe1 = captureSet match
+                case None => tpe
+                case Some(cs) => Type.Capturing(tpe, cs)
+              (Term.TermLambda(params, body1).withPosFrom(d).withTpe(tpe1), None)
         case (ps: Syntax.TypeParamList) :: pss =>
           checkTypeParamList(ps.params).flatMap: params =>
-            go(pss)(using ctx.extend(params)).map: body1 =>
-              Term.TypeLambda(params, body1).withPosFrom(d).withTpe(Type.TypeArrow(params, body1.tpe).withKind(TypeKind.Star))
-      go(paramss).flatMap: expr1 =>
+            go(pss)(using ctx.extend(params)).map: (body1, captureSet) =>
+              val tpe = Type.TypeArrow(params, body1.tpe).withKind(TypeKind.Star)
+              val tpe1 = captureSet match
+                case None => tpe
+                case Some(cs) => Type.Capturing(tpe, cs)
+              (Term.TypeLambda(params, body1).withPosFrom(d).withTpe(tpe1), None)
+      go(paramss).flatMap: (expr1, captureSet) =>
         val bd = TermBinder(name, expr1.tpe).withPos(d.pos)
+        //assert(!captureSet.isDefined, s"expr type not supported yet")
         Right((bd.asInstanceOf[TermBinder], expr1))
 
   def extractDefType(d: Syntax.Definition.DefDef)(using Context): Result[Type] = 
