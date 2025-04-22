@@ -7,13 +7,18 @@ import cavia.core.ast.Expr.Term
 import Wasm.*
 import typechecking.*
 import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable.Map
 import cavia.core.ast.Expr.PrimitiveOp
 
 object CodeGenerator:
+  case class ClosureTypeInfo(funcTypeSym: Symbol, closTypeSym: Symbol)
+
   case class Context(
     funcs: ArrayBuffer[Func] = ArrayBuffer.empty,
     exports: ArrayBuffer[Export] = ArrayBuffer.empty,
     locals: ArrayBuffer[(Symbol, ValType)] = ArrayBuffer.empty,
+    types: ArrayBuffer[TypeDef] = ArrayBuffer.empty,
+    closureTypes: Map[FuncType, ClosureTypeInfo] = Map.empty,
     localSyms: List[Symbol] = Nil,
   ):
     def withLocalSym(sym: Symbol): Context =
@@ -30,6 +35,9 @@ object CodeGenerator:
   def emitLocal(sym: Symbol, tpe: ValType)(using Context): Unit =
     ctx.locals += (sym -> tpe)
 
+  def emitType(t: TypeDef)(using Context): Unit =
+    ctx.types += t
+
   def finalizeLocals(using Context): List[(Symbol, ValType)] =
     val result = ctx.locals.toList
     ctx.locals.clear()
@@ -42,10 +50,37 @@ object CodeGenerator:
     case PrimitiveOp.I32Mul => List(Instruction.I32Mul)
     // case _ => assert(false, s"Not supported: $op")
 
+  def computeFuncType(tpe: Expr.Type)(using Context): FuncType = tpe match
+    case Expr.Type.TermArrow(params, result) =>
+      FuncType(params.map(binder => translateType(binder.tpe)), translateType(result))
+    case Expr.Type.Capturing(inner, _) => computeFuncType(inner)
+    case _ => assert(false, s"Unsupported type for computing func type: $tpe")
+
+  def createClosureTypes(funcType: FuncType)(using Context): ClosureTypeInfo =
+    ctx.closureTypes.get(funcType) match
+      case None => 
+        val typeName = s"${funcType.paramTypes.map(_.show).mkString("_")}_to_${funcType.resultType.show}"
+        val closName = s"clos_$typeName"
+        val funcSymm = Symbol.fresh(typeName)
+        val closSymm = Symbol.fresh(closName)
+        val closType = StructType(
+          List(
+            (Symbol.Function, ValType.TypedRef(funcSymm)),
+          ),
+          subClassOf = None
+        )
+        emitType(TypeDef(funcSymm, funcType))
+        emitType(TypeDef(closSymm, closType))
+        val result = ClosureTypeInfo(funcSymm, closSymm)
+        ctx.closureTypes += (funcType -> result)
+        result
+      case Some(info) => info
+
   def translateType(tpe: Expr.Type)(using Context): ValType = tpe match
     case Expr.Type.Base(Expr.BaseType.I64) => ValType.I64
     case Expr.Type.Base(Expr.BaseType.I32) => ValType.I32
     case Expr.Type.Base(Expr.BaseType.UnitType) => ValType.I32
+    case Expr.Type.Capturing(inner, _) => translateType(inner)
     case _ => assert(false, s"Unsupported type: $tpe")
 
   def genTerm(t: Expr.Term)(using Context): List[Instruction] = t match
@@ -57,7 +92,14 @@ object CodeGenerator:
     case Term.PrimOp(op, args) =>
       val argInstrs = args.flatMap(genTerm)
       argInstrs ++ translatePrimOp(op)
-    case Term.Bind(binder, _, bound, body) =>
+    case Term.Bind(binder, isDef, Term.TermLambda(params, body), expr) =>
+      println(s"translating a closure")
+      val funcType = computeFuncType(binder.tpe)
+      println(s"funcType: $funcType")
+      val closureInfo = createClosureTypes(funcType)
+      println(s"closureInfo: $closureInfo")
+      List()
+    case Term.Bind(binder, isDef, bound, body) =>
       val localSym = Symbol.fresh(binder.name)
       val localType = translateType(binder.tpe)
       emitLocal(localSym, localType)
@@ -85,4 +127,4 @@ object CodeGenerator:
       case _ => assert(false, s"Not supported: $m")
 
   def finalize(using Context): Module =
-    Module(ctx.funcs.toList ++ ctx.exports.toList)
+    Module(ctx.types.toList ++ ctx.funcs.toList ++ ctx.exports.toList)

@@ -7,13 +7,13 @@ object Wasm:
     case I32
     case I64
     case FuncRef
-    case StructRef(sym: Symbol)
+    case TypedRef(sym: Symbol)
 
     def show: String = this match
       case ValType.I32 => "i32"
       case ValType.I64 => "i64"
       case ValType.FuncRef => "funcref"
-      case ValType.StructRef(sym) => s"(ref ${sym.show})"
+      case ValType.TypedRef(sym) => s"(ref ${sym.show})"
 
   enum Instruction:
     case I32Const(value: Int)
@@ -55,9 +55,26 @@ object Wasm:
       nextId += 1
       Symbol(name, id)
 
-  case class FuncType(paramTypes: List[ValType], resultType: ValType)
+    val Function = fresh("__func")
+
+  sealed trait CompositeType:
+    def show: String
+  case class FuncType(paramTypes: List[ValType], resultType: ValType) extends CompositeType:
+    def show: String =
+      val paramStrs = paramTypes.map(p => s"(param ${p.show})")
+      val resultStr = s"(result ${resultType.show})"
+      s"(func ${paramStrs.mkString(" ")} ${resultStr})"
+  case class StructType(fields: List[(Symbol, ValType)], subClassOf: Option[Symbol]) extends CompositeType:
+    def show: String = 
+      val fieldStrs = fields.map: (sym, tpe) =>
+        s"(field ${sym.show} ${tpe.show})"
+      val subclassStr = subClassOf match
+        case None => ""
+        case Some(sym) => s"${sym} "
+      s"(sub ${subclassStr}(struct ${fieldStrs.mkString(" ")}))"
 
   sealed trait ModuleField
   case class Func(ident: Symbol, params: List[(Symbol, ValType)], result: ValType, locals: List[(Symbol, ValType)], body: List[Instruction]) extends ModuleField:
     def tpe: FuncType = FuncType(params.map(_._2), result)
   case class Export(externalName: String, kind: ExportKind, ident: Symbol) extends ModuleField
+  case class TypeDef(ident: Symbol, tpe: CompositeType) extends ModuleField
