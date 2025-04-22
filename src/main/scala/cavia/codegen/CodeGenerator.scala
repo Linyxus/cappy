@@ -53,6 +53,7 @@ object CodeGenerator:
       translateType(t.tpe) match
         case ValType.I32 => List(Instruction.I32Const(value))
         case ValType.I64 => List(Instruction.I64Const(value))
+        case _ => assert(false, s"Unsupported type for int literal: ${t.tpe}")
     case Term.PrimOp(op, args) =>
       val argInstrs = args.flatMap(genTerm)
       argInstrs ++ translatePrimOp(op)
