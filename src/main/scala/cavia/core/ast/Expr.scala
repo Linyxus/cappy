@@ -161,6 +161,7 @@ object Expr:
     def strType: Type = Type.Base(BaseType.StrType).withKind(TypeKind.Star)
     def intType: Type = Type.Base(BaseType.IntType).withKind(TypeKind.Star)
     def i64Type: Type = Type.Base(BaseType.I64).withKind(TypeKind.Star)
+    def i32Type: Type = Type.Base(BaseType.I32).withKind(TypeKind.Star)
     def unitType: Type = Type.Base(BaseType.UnitType).withKind(TypeKind.Star)
     def capCaptureSet: CaptureSet = CaptureSet(List(CaptureRef.CAP()))
 

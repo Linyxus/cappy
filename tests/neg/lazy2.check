@@ -1,4 +1,4 @@
 6 |   val f: () -> i64 = () => y
   |                      ^^^^^^^
 
-    Type mismatch: expected () -> i64, but got () ->{y} i64
+    Type mismatch: expected () -> i64, but got () ->{y} i32

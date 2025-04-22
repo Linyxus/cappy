@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let entrypoint = instance.get_func(&mut store, "entrypoint")
         .expect("`entrypoint` was not an exported function");
-    let entrypoint = entrypoint.typed::<(), i64>(&store)?;
+    let entrypoint = entrypoint.typed::<(), i32>(&store)?;
     let result = entrypoint.call(&mut store, ())?;
     println!("Exit Code: {:?}", result);
     Ok(())

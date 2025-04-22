@@ -266,7 +266,7 @@ object TypeChecker:
       case Syntax.Term.StrLit(value) => 
         Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType))
       case Syntax.Term.IntLit(value) => 
-        val tpe = if expected.exists && expected.isIntegralType then expected else Definitions.i64Type
+        val tpe = if expected.exists && expected.isIntegralType then expected else Definitions.i32Type
         Right(Term.IntLit(value).withPosFrom(t).withTpe(tpe))
       case Syntax.Term.UnitLit() => 
         Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
@@ -433,10 +433,8 @@ object TypeChecker:
     def go(args: List[Syntax.Term], formals: List[BaseType], acc: List[Term]): Result[List[Term]] = (args, formals) match
       case (Nil, Nil) => Right(acc.reverse)
       case (arg :: args, formal :: formals) =>
-        checkTerm(arg).flatMap: arg1 =>
-          if TypeComparer.checkSubtype(arg1.tpe, Type.Base(formal).withKind(TypeKind.Star)) then
-            go(args, formals, arg1 :: acc)
-          else Left(TypeError.TypeMismatch(TypePrinter.show(formal), arg1.tpe.show).withPos(arg.pos))
+        checkTerm(arg, expected = Type.Base(formal).withKind(TypeKind.Star)).flatMap: arg1 =>
+          go(args, formals, arg1 :: acc)
       case _ => Left(TypeError.GeneralError(s"Argument number mismatch for primitive operation, expected ${formals.length}, but got ${args.length}").withPos(pos))
     go(args, formals, Nil).map: args1 =>
       Term.PrimOp(op, args1).withPos(pos).withTpe(Type.Base(resType).withKind(TypeKind.Star))
