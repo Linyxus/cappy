@@ -6,10 +6,14 @@ object Wasm:
   enum ValType:
     case I32
     case I64
+    case FuncRef
+    case StructRef(sym: Symbol)
 
     def show: String = this match
       case ValType.I32 => "i32"
       case ValType.I64 => "i64"
+      case ValType.FuncRef => "funcref"
+      case ValType.StructRef(sym) => s"(ref ${sym.show})"
 
   enum Instruction:
     case I32Const(value: Int)
