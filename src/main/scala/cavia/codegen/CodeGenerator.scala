@@ -30,6 +30,11 @@ object CodeGenerator:
   def emitLocal(sym: Symbol, tpe: ValType)(using Context): Unit =
     ctx.locals += (sym -> tpe)
 
+  def finalizeLocals(using Context): List[(Symbol, ValType)] =
+    val result = ctx.locals.toList
+    ctx.locals.clear()
+    result
+
   def translatePrimOp(op: PrimitiveOp)(using Context): List[Instruction] = op match
     case PrimitiveOp.I64Add => List(Instruction.I64Add)
     case _ => assert(false, s"Not supported: $op")
@@ -59,11 +64,11 @@ object CodeGenerator:
     m.defns match
       case (d: Expr.Definition.ValDef) :: Nil =>
         val mainType = Expr.Type.TermArrow(Nil, Expr.Type.Base(Expr.BaseType.I64))
-        given ctx: TypeChecker.Context = TypeChecker.Context.empty
+        given TypeChecker.Context = TypeChecker.Context.empty
         if TypeComparer.checkSubtype(d.tpe, mainType) then
           val Term.TermLambda(Nil, body) = d.body: @unchecked
           val insts = genTerm(body)
-          val func = Func(Symbol.fresh(d.sym.name), params = Nil, result = ValType.I64, locals = Nil, insts)
+          val func = Func(Symbol.fresh(d.sym.name), params = Nil, result = ValType.I64, locals = finalizeLocals, insts)
           emitFunc(func)
           val exp = Export("entrypoint", ExportKind.Func, func.ident)
           emitExport(exp)
