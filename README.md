@@ -14,7 +14,7 @@ This is currently a toy.
 
 - [x] Add tests for type checking
 - [x] Support comments `//`
-- [ ] Handle capture sets for DefDef
+- [x] Handle capture sets for DefDef
 - [ ] A first prototype of code generation
 
 ## Issues
