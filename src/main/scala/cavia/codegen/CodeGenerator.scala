@@ -300,7 +300,8 @@ object CodeGenerator:
         val mainType = Expr.Type.TermArrow(Nil, Expr.Type.Base(Expr.BaseType.I32))
         val mainFuncType = computeFuncType(mainType)
         given TypeChecker.Context = TypeChecker.Context.empty
-        if computeFuncType(d.tpe) == mainFuncType then
+        val defType = d.sym.tpe
+        if computeFuncType(defType) == mainFuncType then
           emitImportFunc(ImportFunc("", "", Symbol.I32Println, I32PrintlnType))
           emitImportFunc(ImportFunc("", "", Symbol.I32Read, I32ReadType))
           val Term.TermLambda(Nil, body) = d.body: @unchecked
@@ -309,7 +310,7 @@ object CodeGenerator:
           emitFunc(func)
           val exp = Export("entrypoint", ExportKind.Func, func.ident)
           emitExport(exp)
-        else assert(false, s"Incompatible type: ${d.tpe}")
+        else assert(false, s"Incompatible type: ${defType}")
       case _ => assert(false, s"Not supported: $m")
 
   def finalize(using Context): Module =

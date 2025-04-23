@@ -119,7 +119,7 @@ object TypeChecker:
     if ref.name == "cap" then
       Right(CaptureRef.CAP().maybeWithPosFrom(ref))
     else lookupAll(ref.name) match
-      case Some(sym: Symbol) => Right(CaptureRef.Ref(Term.SymbolRef(sym)).maybeWithPosFrom(ref))
+      case Some(sym: DefSymbol) => Right(CaptureRef.Ref(Term.SymbolRef(sym)).maybeWithPosFrom(ref))
       case Some((binder: (Binder.CaptureBinder | Binder.TermBinder), idx)) => Right(CaptureRef.Ref(Term.BinderRef(idx)).maybeWithPosFrom(ref))
       case Some((binder: Binder.TypeBinder, idx)) => Left(TypeError.UnboundVariable(ref.name, s"I found a type name, but was looking for either a term or capture name").withPos(ref.pos))
       case _ => Left(TypeError.UnboundVariable(ref.name).withPos(ref.pos))
@@ -256,10 +256,10 @@ object TypeChecker:
       case Syntax.Term.Ident(name) => 
         hopefully:
           val (ref, tpe) = lookupAll(name) match
-            case Some(sym: Symbol) => (Term.SymbolRef(sym): VarRef, sym.tpe)
+            case Some(sym: DefSymbol) => (Term.SymbolRef(sym): VarRef, sym.tpe)
             case Some((binder: Binder.TermBinder, idx)) => (Term.BinderRef(idx): VarRef, binder.tpe)
             case Some((binder: Binder, idx)) => sorry(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
-            case None => sorry(TypeError.UnboundVariable(name).withPos(t.pos))
+            case _ => sorry(TypeError.UnboundVariable(name).withPos(t.pos))
           if !tpe.isPure then markFree(ref)
           tpe.stripCaptures match
             case LazyType(resultType) => 
@@ -316,7 +316,7 @@ object TypeChecker:
                 case Some(selfType) =>
                   val selfBinder = TermBinder(d.name, selfType).withPos(d.pos)
                   ctx.extend(selfBinder)
-              val (bd, expr) = checkDef(d)(using ctx1).!!
+              val (bd, expr) = checkDef(d.asInstanceOf[Syntax.ValueDef])(using ctx1).!!
               val bd1 = 
                 if selfType.isDefined then
                   val tpe1 = avoidSelfType(bd.tpe, d).!!
@@ -490,7 +490,7 @@ object TypeChecker:
     go(args, formals, Nil).map: args1 =>
       Term.PrimOp(op, args1).withPos(pos).withTpe(Type.Base(resType).withKind(TypeKind.Star))
 
-  def checkDef(d: Syntax.Definition)(using Context): Result[(TermBinder, Term)] = d match
+  def checkDef(d: Syntax.ValueDef)(using Context): Result[(TermBinder, Term)] = d match
     case Syntax.Definition.ValDef(name, tpe, expr) =>
       hopefully:
         val expected1 = tpe match
@@ -577,29 +577,28 @@ object TypeChecker:
     if hasDuplicatedName then
       Left(TypeError.GeneralError("Duplicated definition name").withPos(defns.head.pos))
     else
-      def extractSymTypes(xs: List[(Symbol, Syntax.Definition)]): Result[Unit] = xs match
-        case Nil => Right(())
-        case (sym, defn) :: xs =>
-          extractDefnType(defn).flatMap: tpe =>
-            sym.tpe = tpe
-            extractSymTypes(xs)
       val syms = defns.map: defn =>
-        Symbol(defn.name, Definitions.anyType, mod).withPosFrom(defn)
-      extractSymTypes(syms `zip` defns)
-      def checkDefns(defns: List[(Symbol, Syntax.Definition)]): Result[List[Expr.Definition]] = defns match
+        DefSymbol(defn.name, Definitions.anyType, mod).withPosFrom(defn)
+      def checkDefns(defns: List[(DefSymbol, Syntax.ValueDef)]): Result[List[Expr.Definition]] = defns match
         case Nil => Right(Nil)
         case (sym, defn) :: defns =>
           val ctx1 = 
             if defn.isInstanceOf[Syntax.Definition.ValDef] then
-              // self-recursion is not allowed for val defs
-              //println(s"self-recursion is not allowed for val defs, ${defn.name}, $defn")
-              ctx.addSymbols(syms.filterNot(_.name == defn.name))
+              // val defs may only depend on previous definitions
+              ctx.addSymbols(syms.takeWhile(_.name != defn.name))
             else
               ctx.addSymbols(syms)
           checkDef(defn)(using ctx1).flatMap: (bd, expr) =>
             checkDefns(defns).map: defns1 =>
-              val d = Expr.Definition.ValDef(sym, sym.tpe, expr)
+              val d = Expr.Definition.ValDef(sym, expr)
               d :: defns1
-      checkDefns(syms `zip` defns).map: defns1 =>
+      hopefully:
+        for (sym, defn) <- syms `zip` defns do
+          val defnType = extractDefnType(defn).!!
+          sym.tpe = defnType
+        val valueDefTodos: List[(DefSymbol, Syntax.ValueDef)] = (syms `zip` defns).flatMap:
+          case (sym, defn: (Syntax.ValueDef)) => Some((sym, defn))
+          case _ => None
+        val defns1 = checkDefns(valueDefTodos).!!
         mod.defns = defns1
         mod

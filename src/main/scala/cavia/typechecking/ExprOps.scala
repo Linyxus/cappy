@@ -95,11 +95,11 @@ class ExprPrinter extends IndentedPrinter:
 
   def showDefinition(defn: Definition)(using Context): Unit =
     defn match
-      case Definition.ValDef(name, tpe, expr) =>
+      case Definition.ValDef(sym, expr) =>
         print("val ")
-        print(name.name)
+        print(sym.name)
         print(": ")
-        showType(tpe)
+        showType(sym.tpe)
         print(" = ")
         newline()
         indented:

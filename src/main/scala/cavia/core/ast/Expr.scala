@@ -146,7 +146,7 @@ object Expr:
 
   enum Term extends Positioned, Typed:
     case BinderRef(idx: Int)
-    case SymbolRef(sym: Symbol)
+    case SymbolRef(sym: DefSymbol)
     case StrLit(value: String)
     case IntLit(value: Int)
     case UnitLit()
@@ -160,10 +160,21 @@ object Expr:
   /** Reference to a variable, either a binder or a symbol */
   type VarRef = Term.BinderRef | Term.SymbolRef
 
-  case class Symbol(name: String, var tpe: Type, from: Module) extends Positioned
+  sealed trait Symbol extends Positioned:
+    val name: String
+    val from: Module
+
+  case class DefSymbol(name: String, var tpe: Type, from: Module) extends Symbol
+  case class StructSymbol(name: String, var info: StructInfo, from: Module) extends Symbol
+
   enum Definition extends Positioned:
-    case ValDef(sym: Symbol, tpe: Type, body: Term)
-  class Module(var defns: List[Definition])
+    case ValDef(sym: DefSymbol, body: Term)
+    case StructDef(sym: StructDef)
+
+  case class Module(var defns: List[Definition])
+
+  case class FieldInfo(name: String, tpe: Type, mutable: Boolean)
+  case class StructInfo(fields: List[FieldInfo])
 
   object Definitions:
     def anyType: Type = Type.Base(BaseType.AnyType).withKind(TypeKind.Star)

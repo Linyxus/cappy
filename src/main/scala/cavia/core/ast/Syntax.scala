@@ -38,6 +38,8 @@ object Syntax:
     val name: String
   import Definition.*
 
+  type ValueDef = ValDef | DefDef
+
   enum Type extends Positioned:
     case Ident(name: String)
     case Arrow(params: List[TermParam], result: Type)
