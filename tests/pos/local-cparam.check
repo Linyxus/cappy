@@ -1,0 +1,12 @@
+module {
+  val test: () -> Unit = 
+    () => {
+      val unbox: [C <: {cap}] -> (boxed: () -> () ->{C} Unit) ->{C} Unit = 
+        [C <: {cap}] => {
+          (boxed: () -> () ->{C} Unit) => {
+            boxed()()
+          }
+        }
+      ()
+    }
+}

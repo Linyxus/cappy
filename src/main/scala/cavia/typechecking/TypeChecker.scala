@@ -207,6 +207,7 @@ object TypeChecker:
     go(params, Nil)
 
   def markFree(cs: CaptureSet)(using Context): Unit =
+    //println(s"markFree $cs")
     val crefs = cs.elems.flatMap: ref =>
       ref match
         case CaptureRef.Ref(ref) => Some(ref)
@@ -214,6 +215,7 @@ object TypeChecker:
     crefs.foreach(markFree)
 
   def markFree(ref: VarRef)(using Context): Unit =
+    //println(s"markFree $ref")
     def widenUntilWf(crefs: List[CaptureRef], delta: Int): List[CaptureRef] =
       def allWf(crefs: List[CaptureRef]): Boolean = crefs.forall: ref =>
         ref match
@@ -248,18 +250,24 @@ object TypeChecker:
     val level = ctx.captured.level
     val curLevel = ctx.binders.length
     val delta = curLevel - level
+    //println(s"level = $level, curLevel = $curLevel, delta = $delta")
     assert(delta >= 0, s"absurd levels")
     val crefs = avoidVarRef(ref, delta)
     //println(s"markFree $ref ==> $crefs")
     ctx.captured.add(crefs.toSet)
 
-  private def dropLocalParams(crefs: List[CaptureRef], numParams: Int): List[CaptureRef] = crefs.flatMap: ref =>
-    ref match
-      case CaptureRef.Ref(Term.BinderRef(idx)) =>
-        if idx >= numParams then
-          Some(CaptureRef.Ref(Term.BinderRef(idx - numParams)).maybeWithPosFrom(ref))
-        else None
-      case _ => Some(ref)
+  private def dropLocalParams(crefs: List[CaptureRef], numParams: Int): (Boolean, List[CaptureRef]) = 
+    var existsLocalParams = false
+    val newCrefs = crefs.flatMap: ref =>
+      ref match
+        case CaptureRef.Ref(Term.BinderRef(idx)) =>
+          if idx >= numParams then
+            Some(CaptureRef.Ref(Term.BinderRef(idx - numParams)).maybeWithPosFrom(ref))
+          else 
+            existsLocalParams = true
+            None
+        case _ => Some(ref)
+    (existsLocalParams, newCrefs)
 
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType)(using Context): Result[Term] = 
     val result: Result[Term] = t match
@@ -314,27 +322,29 @@ object TypeChecker:
           checkTerm(body)(using ctx1.withEnv(env1)).map: body1 =>
             val t1 = Term.TermLambda(params, body1).withPosFrom(t)
             val cv = env1.cv
-            val cv1 = dropLocalParams(cv.toList, params.length)
+            val (_, cv1) = dropLocalParams(cv.toList, params.length)
             val tpe = Type.TermArrow(params, body1.tpe).withKind(TypeKind.Star)
             val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
             t1.withTpe(tpe1)
       case Syntax.Term.TypeLambda(params, body) =>
-        checkTypeParamList(params).flatMap: params =>
-          val ctx1 = ctx.extend(params)
+        hopefully:
+          val params1 = checkTypeParamList(params).!!
+          val ctx1 = ctx.extend(params1)
           val env1 = CaptureEnv.empty(ctx1.binders.length)
-          checkTerm(body)(using ctx1.withEnv(env1)).map: body1 =>
-            val t1 = Term.TypeLambda(params, body1).withPosFrom(t)
-            val cv = env1.cv
-            val cv1 = dropLocalParams(cv.toList, params.length)
-            // TODO: If it is a type lambda, then local parameter must not be used in the body
-            // Or maybe, have two different kinds of capture lambdas, one charging its arguments, one not
-            val tpe = Type.TypeArrow(params, body1.tpe).withKind(TypeKind.Star)
-            val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
-            t1.withTpe(tpe1)
+          val body1 = checkTerm(body)(using ctx1.withEnv(env1)).!!
+          val t1 = Term.TypeLambda(params1, body1).withPosFrom(t)
+          val cv = env1.cv
+          val (existsLocalParams, cv1) = dropLocalParams(cv.toList, params.length)
+          if existsLocalParams then
+            sorry(TypeError.GeneralError("local capture parameters captured by the body of a the lambda"))
+          val tpe = Type.TypeArrow(params1, body1.tpe).withKind(TypeKind.Star)
+          val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
+          t1.withTpe(tpe1)
       case Syntax.Term.Block(stmts) => 
         def avoidSelfType(tpe: Type, d: Syntax.Definition): Result[Type] =
           val tm = AvoidLocalBinder(CaptureSet.universal)
           val result = tm.apply(tpe)
+          //println(s"avoidSelfType $tpe => $result")
           hopefully:
             if tm.ok then result else sorry(TypeError.GeneralError(s"Cannot avoid self type").withPos(d.pos))
         def go(stmts: List[Syntax.Definition | Syntax.Term])(using Context): Result[Term] = 
@@ -435,7 +445,8 @@ object TypeChecker:
                   fun1 match
                     case _: VarRef =>
                     case _ =>
-                      markFree(resultTerm.tpe.captureSet)
+                      //println(s"markFree ${fun1.tpe.captureSet}")
+                      markFree(fun1.tpe.captureSet)
                   resultTerm
             case _ => Left(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(t.pos))
       case Syntax.Term.TypeApply(term, targs) => 
@@ -562,6 +573,7 @@ object TypeChecker:
             val expected1 = resultType match
               case None => Type.NoType
               case Some(expected) => checkType(expected).!!
+            //println(s"checkTerm $expr with new env")
             val expr1 = checkTerm(expr, expected = expected1)(using ctx.withEnv(env1)).!!
             val captureSet = CaptureSet(env1.cv.toList)
             (expr1, Some(captureSet))
@@ -571,20 +583,29 @@ object TypeChecker:
               val tpe = Type.TermArrow(params, body1.tpe).withKind(TypeKind.Star)
               val tpe1 = captureSet match
                 case None => tpe
-                case Some(cs) => Type.Capturing(tpe, cs)
+                case Some(cs) => 
+                  val (_, cs1) = dropLocalParams(cs.elems, params.length)
+                  Type.Capturing(tpe, CaptureSet(cs1))
               (Term.TermLambda(params, body1).withPosFrom(d).withTpe(tpe1), None)
         case (ps: Syntax.TypeParamList) :: pss =>
           checkTypeParamList(ps.params).flatMap: params =>
-            go(pss)(using ctx.extend(params)).map: (body1, captureSet) =>
+            go(pss)(using ctx.extend(params)).flatMap: (body1, captureSet) =>
               val tpe = Type.TypeArrow(params, body1.tpe).withKind(TypeKind.Star)
-              val tpe1 = captureSet match
-                case None => tpe
-                case Some(cs) => Type.Capturing(tpe, cs)
-              (Term.TypeLambda(params, body1).withPosFrom(d).withTpe(tpe1), None)
+              val computeTpe1: Result[Type] = captureSet match
+                case None => Right(tpe)
+                case Some(cs) => 
+                  val (existsLocalParams, cs1) = dropLocalParams(cs.elems, params.length)
+                  if existsLocalParams then
+                    Left(TypeError.GeneralError("local capture parameters captured by the body of a the lambda"))
+                  else
+                    Right(Type.Capturing(tpe, CaptureSet(cs1)))
+              computeTpe1.map: tpe1 =>
+                (Term.TypeLambda(params, body1).withPosFrom(d).withTpe(tpe1), None)
       go(paramss).flatMap: (expr1, captureSet) =>
         captureSet match
           case None =>
             val bd = TermBinder(name, expr1.tpe).withPos(d.pos)
+            //println(s"final type = ${expr1.tpe}")
             Right((bd.asInstanceOf[TermBinder], expr1))
           case Some(cs) =>
             val tpe1 = Type.Capturing(Type.TypeArrow(Nil, expr1.tpe), cs)
