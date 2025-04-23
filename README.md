@@ -17,9 +17,9 @@ This is currently a toy.
 - [x] Handle capture sets for DefDef
 - [x] A first prototype of code generation
 - [x] Handle self-recursion in local bindings
-- [ ] Parsing improvement: T -> U, and (T1, T2) -> U
-- [ ] Parsing improvement: IO^ should be IO^{cap}
-- [ ] Parsing improvement: `A => B` should be `A ->{cap} B`
+- [x] Parsing improvement: T -> U, and (T1, T2) -> U
+- [x] Parsing improvement: IO^ should be IO^{cap}
+- [x] Parsing improvement: `A => B` should be `A ->{cap} B`
 - [ ] Support `struct` definitions
 
 ## Issues
