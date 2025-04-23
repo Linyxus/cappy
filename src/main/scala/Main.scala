@@ -23,12 +23,12 @@ import java.nio.file.*
     case Compiler.ParseResult.Ok(result) =>
       println(s"--- tree after parser")
       result.foreach(println)
+      println(s"--- tree after typechecker")
       val mod = TypeChecker.checkModule(result)(using TypeChecker.Context.empty)
       mod match
         case Left(err) => 
           println(Printer.showSourcePos(err.pos, List(err.toString)))
         case Right(mod) =>
-          println(s"--- tree after typechecker")
           println(ExprPrinter.show(mod)(using TypeChecker.Context.empty))
           // given genCtx: CodeGenerator.Context = CodeGenerator.Context()
           // CodeGenerator.genModule(mod)
