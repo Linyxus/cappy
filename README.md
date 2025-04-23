@@ -15,8 +15,8 @@ This is currently a toy.
 - [x] Add tests for type checking
 - [x] Support comments `//`
 - [x] Handle capture sets for DefDef
-- [ ] A first prototype of code generation
-- [ ] Handle self-recursion in local bindings
+- [x] A first prototype of code generation
+- [x] Handle self-recursion in local bindings
 
 ## Issues
 
