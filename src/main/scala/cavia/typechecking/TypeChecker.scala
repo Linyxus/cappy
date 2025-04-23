@@ -463,7 +463,7 @@ object TypeChecker:
                 def go(xs: List[(Syntax.Term, Type)], acc: List[Term]): Result[Term] = xs match
                   case Nil =>
                     val args = acc.reverse
-                    substituteAll(resultType, args).map: resultType1 =>
+                    substituteAll(resultType, acc).map: resultType1 =>
                       Term.Apply(fun1, args).withPosFrom(t).withTpe(resultType1)
                   case (arg, formal) :: xs => 
                     checkTerm(arg, expected = formal).flatMap: arg1 =>
@@ -492,7 +492,7 @@ object TypeChecker:
               def go(xs: List[((Syntax.Type | Syntax.CaptureSet), (Type | CaptureSet))], acc: List[(Type | CaptureSet)]): (Term, List[CaptureSet]) = xs match
                 case Nil =>
                   val targs = acc.reverse
-                  val resultType1 = substituteAllType(resultType, targs)
+                  val resultType1 = substituteAllType(resultType, acc)
                   val captureSets = targs.flatMap:
                     case targ: CaptureSet => Some(targ)
                     case _ => None
@@ -566,14 +566,17 @@ object TypeChecker:
     args match
       case Nil => Right(tpe)
       case arg :: args =>
-        substitute(tpe, arg, openingIdx, isParamType).flatMap: tpe1 =>
-          substituteAll(tpe1, args, openingIdx, isParamType)
+        hopefully:
+          val tpe1 = substitute(tpe, arg, openingIdx, isParamType).!!
+          val tpe2 = substituteAll(tpe1, args, openingIdx, isParamType).!!
+          tpe2
 
   def substituteAllType(tpe: Type, args: List[(Type | CaptureSet)], openingIdx: Int = 0, isParamType: Boolean = false): Type =
     args match
       case Nil => tpe
       case arg :: args =>
         val tpe1 = substituteType(tpe, arg, openingIdx, isParamType)
+        //println(s"open $arg in $tpe = $tpe1")
         substituteAllType(tpe1, args, openingIdx, isParamType)
 
   def checkPrimOpArgs(op: PrimitiveOp, args: List[Syntax.Term], formals: List[BaseType], resType: BaseType, pos: SourcePos)(using Context): Result[Term] = 
