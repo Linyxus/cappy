@@ -4,6 +4,7 @@ package typechecking
 import core.*
 import ast.*
 import Expr.*
+import scala.collection.mutable.ArrayBuffer
 
 extension (tpe: Type)
   def captureSet: CaptureSet = tpe match
@@ -209,3 +210,37 @@ object LazyType:
     case _ => None
 
   def apply(tpe: Type): Type = Type.TypeArrow(Nil, tpe)
+
+class CollectSignature extends TypeMap:
+  val collected: ArrayBuffer[CaptureRef] = ArrayBuffer.empty
+
+  override def mapCaptureRef(ref: CaptureRef): CaptureRef = 
+    ref match
+      case CaptureRef.Ref(Term.BinderRef(idx)) if idx < localBinders.size =>
+      case CaptureRef.Ref(Term.BinderRef(idx)) if idx >= localBinders.size =>
+        collected += CaptureRef.Ref(Term.BinderRef(idx - localBinders.size))
+      case _ => collected += ref
+    ref
+
+  override def apply(tpe: Type): Type = tpe match
+    case Type.TypeArrow(ps, result) =>
+      withBinders(ps):
+        apply(result)
+    case Type.TermArrow(ps, result) =>
+      def go(ps: List[Binder.TermBinder]): Unit = ps match
+        case Nil => ()
+        case p :: ps =>
+          mapCaptureSet(p.tpe.captureSet)
+          withBinder(p):
+            go(ps)
+      go(ps)
+      withBinders(ps):
+        apply(result)
+    case _ => mapOver(tpe)
+
+extension (tpe: Type)
+  def signatureCaptureSet: CaptureSet =
+    val collector = CollectSignature()
+    collector(tpe)
+    CaptureSet(collector.collected.toList)
+

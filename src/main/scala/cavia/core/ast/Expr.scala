@@ -207,6 +207,11 @@ object Expr:
       localBinders = bd :: localBinders
       try op finally localBinders = localBinders.tail
 
+    def withBinders[T](bds: List[Binder])(op: => T): T =
+      val old = localBinders
+      localBinders = bds.reverse ++ localBinders
+      try op finally localBinders = old
+
     def withVariance[T](v: Variance)(op: => T): T =
       val old = variance
       variance = v

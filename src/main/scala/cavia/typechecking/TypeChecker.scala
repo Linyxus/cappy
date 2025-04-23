@@ -52,12 +52,14 @@ object TypeChecker:
     case UnboundVariable(name: String, addenda: String = "")
     case TypeMismatch(expected: String, actual: String)
     case LeakingLocalBinder(tp: String)
+    case SeparationError(cs1: String, cs2: String)
     case GeneralError(msg: String)
 
     override def toString(): String = this match
       case UnboundVariable(name, addenda) => s"Unbound variable: $name$addenda"
       case TypeMismatch(expected, actual) => s"Type mismatch: expected $expected, but got $actual"
       case LeakingLocalBinder(tp) => s"Leaking local binder: $tp"
+      case SeparationError(cs1, cs2) => s"Separation error: $cs1 and $cs2 are not separated"
       case GeneralError(msg) => msg
 
   def ctx(using myCtx: Context): Context = myCtx
@@ -148,6 +150,35 @@ object TypeChecker:
     case "f32" => Some(BaseType.F32)
     case "f64" => Some(BaseType.F64)
     case _ => None
+
+  def computePeak(set: CaptureSet)(using Context): CaptureSet =
+    def goRef(ref: CaptureRef): Set[CaptureRef] = ref match
+      case CaptureRef.Ref(Term.BinderRef(idx)) =>
+        getBinder(idx) match
+          case Binder.TermBinder(_, tpe) =>
+            val elems = tpe.captureSet.elems
+            if elems.contains(CaptureRef.CAP()) then
+              Set(ref)
+            else
+              goRefs(elems)
+          case _: Binder.CaptureBinder => Set(ref)
+          case _ => assert(false, "malformed capture set")
+      case CaptureRef.Ref(Term.SymbolRef(sym)) =>
+        val refs = sym.tpe.captureSet.elems
+        if refs.contains(CaptureRef.CAP()) then
+          Set(ref)
+        else goRefs(refs)
+      case CaptureRef.CAP() => Set(ref)
+    def goRefs(refs: List[CaptureRef]): Set[CaptureRef] =
+      refs.flatMap(goRef).toSet
+    val elems = goRefs(set.elems)
+    CaptureSet(elems.toList)
+
+  def checkSeparation(cs1: CaptureSet, cs2: CaptureSet)(using Context): Boolean =
+    val pk1 = computePeak(cs1)
+    val pk2 = computePeak(cs2)
+    val intersection = pk1.elems.intersect(pk2.elems)
+    intersection.isEmpty
     
   def checkType(tpe: Syntax.Type)(using Context): Result[Type] = tpe match
     case Syntax.Type.Ident(name) => 
@@ -454,15 +485,18 @@ object TypeChecker:
         hopefully:
           val term1 = checkTerm(term).!!
           term1.tpe.stripCaptures match
-            case Type.TypeArrow(formals, resultType) => 
+            case funTpe @ Type.TypeArrow(formals, resultType) => 
               val formalTypes: List[(Type | CaptureSet)] = formals.map:
                 case bd: TypeBinder => bd.bound
                 case bd: CaptureBinder => bd.bound
-              def go(xs: List[((Syntax.Type | Syntax.CaptureSet), (Type | CaptureSet))], acc: List[(Type | CaptureSet)]): Term = xs match
+              def go(xs: List[((Syntax.Type | Syntax.CaptureSet), (Type | CaptureSet))], acc: List[(Type | CaptureSet)]): (Term, List[CaptureSet]) = xs match
                 case Nil =>
                   val targs = acc.reverse
                   val resultType1 = substituteAllType(resultType, targs)
-                  Term.TypeApply(term1, targs).withPosFrom(t).withTpe(resultType1)
+                  val captureSets = targs.flatMap:
+                    case targ: CaptureSet => Some(targ)
+                    case _ => None
+                  (Term.TypeApply(term1, targs).withPosFrom(t).withTpe(resultType1), captureSets)
                 case (targ, tformal) :: xs => 
                   val targ1: Type | CaptureSet = 
                     (targ, tformal) match
@@ -483,11 +517,17 @@ object TypeChecker:
                     case ((targ, tformal), idx) =>
                       (targ, substituteType(tformal, targ1, idx, isParamType = true))
                   go(xs1, targ1 :: acc)
-              val resultTerm = go(targs `zip` formalTypes, Nil)
+              val (resultTerm, captureArgs) = go(targs `zip` formalTypes, Nil)
               term1 match
                 case _: VarRef =>
                 case _ =>
-                  markFree(resultTerm.tpe.captureSet)
+                  markFree(funTpe.captureSet)
+              val signature = funTpe.signatureCaptureSet
+              val todoCaptureSets = signature :: captureArgs
+              for i <- 0 until todoCaptureSets.length do
+                for j <- i + 1 until todoCaptureSets.length do
+                  if !checkSeparation(todoCaptureSets(i), todoCaptureSets(j)) then
+                    sorry(TypeError.SeparationError(todoCaptureSets(i).show, todoCaptureSets(j).show).withPos(t.pos))
               resultTerm
             case _ => 
               sorry(TypeError.GeneralError(s"Expected a function, but got $term1.tpe.show").withPos(t.pos))
