@@ -24,6 +24,11 @@ object Wasm:
     case I64Mul
     case LocalSet(sym: Symbol)
     case LocalGet(sym: Symbol)
+    case RefCast(typeSym: Symbol)
+    case RefFunc(funcSym: Symbol)
+    case StructGet(sym: Symbol, fieldSym: Symbol)
+    case StructNew(typeSym: Symbol)
+    case CallRef(typeSym: Symbol)
 
     def show: String = this match
       case I32Const(value) => s"i32.const $value"
@@ -34,6 +39,11 @@ object Wasm:
       case I64Mul => "i64.mul"
       case LocalSet(sym) => s"local.set ${sym.show}"
       case LocalGet(sym) => s"local.get ${sym.show}"
+      case RefCast(typeSym) => s"ref.cast (ref ${typeSym.show})"
+      case RefFunc(funcSym) => s"ref.func ${funcSym.show}"
+      case StructGet(sym, fieldSym) => s"struct.get ${sym.show} ${fieldSym.show}"
+      case StructNew(typeSym) => s"struct.new ${typeSym.show}"
+      case CallRef(typeSym) => s"call_ref ${typeSym.show}"
 
   enum ExportKind:
     case Func
@@ -74,7 +84,7 @@ object Wasm:
         s"(field ${sym.show} ${tpe.show})"
       val subclassStr = subClassOf match
         case None => ""
-        case Some(sym) => s"${sym} "
+        case Some(sym) => s"${sym.show} "
       s"(sub ${subclassStr}(struct ${fieldStrs.mkString(" ")}))"
 
   sealed trait ModuleField
@@ -82,3 +92,4 @@ object Wasm:
     def tpe: FuncType = FuncType(params.map(_._2), result)
   case class Export(externalName: String, kind: ExportKind, ident: Symbol) extends ModuleField
   case class TypeDef(ident: Symbol, tpe: CompositeType) extends ModuleField
+  case class ElemDeclare(kind: ExportKind, sym: Symbol) extends ModuleField

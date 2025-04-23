@@ -12,6 +12,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut config = Config::new();
     config.wasm_gc(true);
+    config.wasm_reference_types(true);
+    config.wasm_function_references(true);
     let engine = Engine::new(&config)?;
     let mut store = Store::new(&engine, ());
 
