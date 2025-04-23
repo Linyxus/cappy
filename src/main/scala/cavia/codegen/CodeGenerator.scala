@@ -74,6 +74,7 @@ object CodeGenerator:
       Instruction.I32Const(0)
     )
     case PrimitiveOp.I32Read => List(Instruction.Call(Symbol.I32Read))
+    case PrimitiveOp.Sorry => assert(false, "program contains `sorry`")
     // case _ => assert(false, s"Not supported: $op")
 
   def nameEncode(name: String): String =
