@@ -17,7 +17,7 @@ This is currently a toy.
 - [x] Handle capture sets for DefDef
 - [x] A first prototype of code generation
 - [x] Handle self-recursion in local bindings
-- [ ] Support `class` definitions
+- [ ] Support `struct` definitions
 
 ## Issues
 
