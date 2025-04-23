@@ -7,5 +7,12 @@ def main(): Unit =
     a.x = #i32add(a.x, 1)
   val incB = () =>
     b.x = #i32add(b.x, 1)
+  val printA = () =>
+    #i32println(a.x)
   par[{incA}, {incB}](incA, incB)
+  par[{a}, {incB}](incA, incB)
+  val op = () =>
+    incA()
+    incB()
+  par[{a}, {op}](printA, op)
   ()
