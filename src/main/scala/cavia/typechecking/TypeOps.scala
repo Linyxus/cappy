@@ -131,7 +131,7 @@ class OpenTermBinder(tpe: Type, openingIdx: Int = 0, startingVariance: Variance 
             CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref) :: Nil
           else
             if variance == Variance.Covariant then
-              tpe.captureSet.elems
+              tpe.captureSet.shift(localBinders.size).elems
             else if variance == Variance.Contravariant then
               Nil
             else
@@ -154,7 +154,7 @@ class OpenTermBinderExact(argRef: VarRef, openingIdx: Int = 0, startingVariance:
   override def mapCaptureRef(ref: CaptureRef): CaptureRef =
     ref match
       case CaptureRef.Ref(Term.BinderRef(idx)) if idx == localBinders.size + openingIdx =>
-        argRef.asCaptureRef
+        argRef.asCaptureRef.shift(localBinders.size)
       case CaptureRef.Ref(Term.BinderRef(idx)) if idx > localBinders.size + openingIdx =>
         CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref)
       case _ => ref
@@ -175,7 +175,10 @@ class OpenCaptureBinder(argSet: CaptureSet, openingIdx: Int = 0) extends TypeMap
           if idx > localBinders.size + openingIdx then
             CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref) :: Nil
           else
-            argSet.elems
+            // println(s"Num local binders = ${localBinders.size}")
+            // println(s"openingIdx = $openingIdx")
+            // println(s"argSet = $argSet")
+            argSet.shift(localBinders.size).elems
         case _ => ref :: Nil
     CaptureSet(elems1).maybeWithPosFrom(captureSet)
 
@@ -193,7 +196,7 @@ class OpenTypeBinder(argType: Type, openingIdx: Int = 0) extends TypeMap:
       case Type.BinderRef(idx) if idx >= localBinders.size + openingIdx =>
         if idx > localBinders.size + openingIdx then
           Type.BinderRef(idx - 1).like(tp)
-        else argType
+        else argType.shift(localBinders.size)
       case _ => mapOver(tp)
 
   override def mapCaptureRef(ref: CaptureRef): CaptureRef =

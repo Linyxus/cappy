@@ -266,7 +266,6 @@ object Expr:
           Type.BinderRef(idx + amount).like(tp)
         case _ => mapOver(tp)
       
-
   extension (tpe: Type)
     def shift(amount: Int): Type =
       val shift = ShiftType(amount)
@@ -279,6 +278,13 @@ object Expr:
       val shifter = ShiftType(amount)
       val result = shifter.mapCaptureSet(captureSet)
       assert(result.hasPos == captureSet.hasPos)
+      result
+
+  extension (captureRef: CaptureRef)
+    def shift(amount: Int): CaptureRef =
+      val shifter = ShiftType(amount)
+      val result = shifter.mapCaptureRef(captureRef)
+      assert(result.hasPos == captureRef.hasPos)
       result
 
   extension (binder: Binder)

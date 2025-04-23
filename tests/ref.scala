@@ -7,5 +7,5 @@ def main(): Unit =
     a.x = #i32add(a.x, 1)
   val incB = () =>
     b.x = #i32add(b.x, 1)
-  par[{a}, {b}](incA, incB)
+  par[{incA}, {incB}](incA, incB)
   ()

@@ -463,7 +463,7 @@ object TypeChecker:
                 def go(xs: List[(Syntax.Term, Type)], acc: List[Term]): Result[Term] = xs match
                   case Nil =>
                     val args = acc.reverse
-                    substituteAll(resultType, acc).map: resultType1 =>
+                    substituteAll(resultType, args).map: resultType1 =>
                       Term.Apply(fun1, args).withPosFrom(t).withTpe(resultType1)
                   case (arg, formal) :: xs => 
                     checkTerm(arg, expected = formal).flatMap: arg1 =>
@@ -492,7 +492,7 @@ object TypeChecker:
               def go(xs: List[((Syntax.Type | Syntax.CaptureSet), (Type | CaptureSet))], acc: List[(Type | CaptureSet)]): (Term, List[CaptureSet]) = xs match
                 case Nil =>
                   val targs = acc.reverse
-                  val resultType1 = substituteAllType(resultType, acc)
+                  val resultType1 = substituteAllType(resultType, targs)
                   val captureSets = targs.flatMap:
                     case targ: CaptureSet => Some(targ)
                     case _ => None
@@ -543,10 +543,13 @@ object TypeChecker:
     val startingVariance = if isParamType then Variance.Contravariant else Variance.Covariant
     arg match
       case ref: VarRef =>
-        val tm = OpenTermBinderExact(ref, openingIdx, startingVariance)
+        val ref1: VarRef = ref match
+          case Term.BinderRef(idx) => Term.BinderRef(idx + openingIdx).maybeWithPosFrom(ref).asInstanceOf[VarRef]
+          case Term.SymbolRef(sym) => Term.SymbolRef(sym).maybeWithPosFrom(ref).asInstanceOf[VarRef]
+        val tm = OpenTermBinderExact(ref1, openingIdx, startingVariance)
         Right(tm.apply(tpe))
       case _ => 
-        val argType = arg.tpe
+        val argType = arg.tpe.shift(openingIdx)
         val tm = OpenTermBinder(argType, openingIdx, startingVariance)
         val result = tm.apply(tpe)
         if tm.ok then
@@ -556,28 +559,28 @@ object TypeChecker:
 
   def substituteType[X <: Type | CaptureSet](tpe: X, arg: (Type | CaptureSet), openingIdx: Int = 0, isParamType: Boolean = false): X = 
     val tm = arg match
-      case tpe: Type => OpenTypeBinder(tpe, openingIdx)
-      case captureSet: CaptureSet => OpenCaptureBinder(captureSet, openingIdx)
+      case tpe: Type => OpenTypeBinder(tpe.shift(openingIdx), openingIdx)
+      case captureSet: CaptureSet => OpenCaptureBinder(captureSet.shift(openingIdx), openingIdx)
     tpe match
       case tpe: Type => tm.apply(tpe).asInstanceOf[X]
       case captureSet: CaptureSet => tm.mapCaptureSet(captureSet).asInstanceOf[X]
 
-  def substituteAll(tpe: Type, args: List[Term], openingIdx: Int = 0, isParamType: Boolean = false): Result[Type] =
+  def substituteAll(tpe: Type, args: List[Term], isParamType: Boolean = false): Result[Type] =
     args match
       case Nil => Right(tpe)
       case arg :: args =>
         hopefully:
-          val tpe1 = substitute(tpe, arg, openingIdx, isParamType).!!
-          val tpe2 = substituteAll(tpe1, args, openingIdx, isParamType).!!
+          val tpe1 = substitute(tpe, arg, openingIdx = args.length, isParamType).!!
+          val tpe2 = substituteAll(tpe1, args, isParamType).!!
           tpe2
 
-  def substituteAllType(tpe: Type, args: List[(Type | CaptureSet)], openingIdx: Int = 0, isParamType: Boolean = false): Type =
+  def substituteAllType(tpe: Type, args: List[(Type | CaptureSet)], isParamType: Boolean = false): Type =
     args match
       case Nil => tpe
       case arg :: args =>
-        val tpe1 = substituteType(tpe, arg, openingIdx, isParamType)
-        //println(s"open $arg in $tpe = $tpe1")
-        substituteAllType(tpe1, args, openingIdx, isParamType)
+        val tpe1 = substituteType(tpe, arg, openingIdx = args.length, isParamType)
+        //println(s"open $arg in $tpe (idx=${args.length}) = $tpe1")
+        substituteAllType(tpe1, args, isParamType)
 
   def checkPrimOpArgs(op: PrimitiveOp, args: List[Syntax.Term], formals: List[BaseType], resType: BaseType, pos: SourcePos)(using Context): Result[Term] = 
     def go(args: List[Syntax.Term], formals: List[BaseType], acc: List[Term]): Result[List[Term]] = (args, formals) match
