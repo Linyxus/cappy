@@ -725,19 +725,21 @@ object TypeChecker:
         val structDefTodos: List[(StructSymbol, Syntax.Definition.StructDef)] = (syms `zip` defns).flatMap:
           case (sym: StructSymbol, defn: Syntax.Definition.StructDef) => Some((sym, defn))
           case _ => None
-        val structDefns = structDefTodos.map: (sym, defn) =>
+        val structDefns: List[Definition.StructDef] = structDefTodos.map: (sym, defn) =>
           val ctx1 = ctx  //.addSymbols(syms) // disable for now recursive types
           val info = checkStructDef(defn)(using ctx1).!!
           sym.info = info
           Definition.StructDef(sym)
+        val allClassSyms = structDefns.map(_.sym)
+        val ctxWithClasses = ctx.addSymbols(allClassSyms)
         // Assign declared types to value definitions
         for ((sym, defn) <- syms `zip` defns) do
           (sym, defn) match
             case (sym: DefSymbol, defn: Syntax.Definition.ValDef) =>
-              val defnType = extractDefnType(defn).!!
+              val defnType = extractDefnType(defn)(using ctxWithClasses).!!
               sym.tpe = defnType
             case (sym: DefSymbol, defn: Syntax.Definition.DefDef) =>
-              val defnType = extractDefnType(defn).!!
+              val defnType = extractDefnType(defn)(using ctxWithClasses).!!
               sym.tpe = defnType
             case _ =>
         // Typecheck value definitions
