@@ -156,6 +156,9 @@ object CodeGenerator:
     case Term.PrimOp(op, args) => args.flatMap(freeLocalBinders).toSet
     case Term.Apply(fun, args) => freeLocalBinders(fun) ++ args.flatMap(freeLocalBinders)
     case Term.TypeApply(term, targs) => freeLocalBinders(term)
+    case Term.Select(base, fieldInfo) => freeLocalBinders(base)
+    case Term.Assign(lhs, rhs) => freeLocalBinders(lhs) ++ freeLocalBinders(rhs)
+    case Term.StructInit(sym, args) => args.flatMap(freeLocalBinders).toSet
 
   def translateClosure(
     funType: Expr.Type,   // the type of the source function

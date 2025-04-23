@@ -658,7 +658,7 @@ object TypeChecker:
           case (sym: StructSymbol, defn: Syntax.Definition.StructDef) => Some((sym, defn))
           case _ => None
         val structDefns = structDefTodos.map: (sym, defn) =>
-          val ctx1 = ctx.addSymbols(syms)
+          val ctx1 = ctx  //.addSymbols(syms) // disable for now recursive types
           val info = checkStructDef(defn)(using ctx1).!!
           sym.info = info
           Definition.StructDef(sym)
