@@ -28,9 +28,12 @@ object Syntax:
   case class TypeParamList(params: List[TypeParam | CaptureParam]) extends Positioned
   case class TermParamList(params: List[TermParam]) extends Positioned
 
+  case class FieldDef(name: String, isVar: Boolean, tpe: Type) extends Positioned
+
   enum Definition extends Positioned:
     case ValDef(name: String, tpe: Option[Type], expr: Term)
     case DefDef(name: String, captureSet: Option[CaptureSet], paramss: List[TypeParamList | TermParamList], resultType: Option[Type], expr: Term)
+    case StructDef(name: String, fields: List[FieldDef])
 
     val name: String
   import Definition.*

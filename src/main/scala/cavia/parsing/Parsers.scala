@@ -29,8 +29,21 @@ object Parsers:
       Definition.DefDef(tk.name, None, paramss, maybeTpe, body)
     p.positioned.withWhat("a function definition")
 
+  def fieldDefP: Parser[FieldDef] =
+    val varP = keywordP("var")
+    val p = (varP.tryIt, tokenP[Token.IDENT], tokenP[Token.COLON], typeP).p.map: (varTk, nameTk, _, tpe) =>
+      val isVar = varTk.isDefined
+      FieldDef(nameTk.name, isVar, tpe)
+    p.positioned.withWhat("a struct field definition")
+
+  def structP: Parser[Definition] =
+    val fieldsP = fieldDefP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
+    val p = (keywordP("struct"), tokenP[Token.IDENT], fieldsP).p.map: (_, nameTk, fields) =>
+      Definition.StructDef(nameTk.name, fields)
+    p.positioned.withWhat("a struct definition")
+
   def definitionP: Parser[Definition] = 
-    valDefP `or` defDefP
+    valDefP `or` defDefP `or` structP
 
   def programP: Parser[List[Definition]] =
     (tokenP[Token.NEWLINE].optional, definitionP.sepBy(tokenP[Token.NEWLINE]), wsUntilEndP).p.map((_, defs, _) => defs)
