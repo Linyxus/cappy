@@ -296,7 +296,7 @@ object TypeChecker:
       case Syntax.Term.Select(base, field) =>
         hopefully:
           val base1 = checkTerm(base).!!
-          val classSym = base1.tpe match
+          val classSym = base1.tpe.stripCaptures match
             case Type.SymbolRef(sym) => sym
             case _ => sorry(TypeError.TypeMismatch("a type that can be selected from", base1.tpe.show).withPosFrom(base))
           val fieldInfo = classSym.info.fields.find(_.name == field) match
@@ -419,7 +419,8 @@ object TypeChecker:
             sorry(TypeError.GeneralError(s"Constructor argument number mismatch, expected ${fields.length}, but got ${args.length}").withPos(t.pos))
           val args1 = (args `zip` fields).map: (arg, field) =>
             checkTerm(arg, expected = field.tpe).!!
-          Term.StructInit(classSym, args1).withPosFrom(t).withTpe(classType)
+          val tpe = Type.Capturing(classType, CaptureSet.universal)
+          Term.StructInit(classSym, args1).withPosFrom(t).withTpe(tpe)
       case Syntax.Term.Apply(fun, args) => 
         checkTerm(fun).flatMap: fun1 =>
           val funType = fun1.tpe
