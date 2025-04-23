@@ -9,6 +9,7 @@ extension (tpe: Type)
   def captureSet: CaptureSet = tpe match
     case Type.Base(base) => CaptureSet.empty
     case Type.BinderRef(idx) => CaptureSet.empty
+    case Type.SymbolRef(sym) => CaptureSet.empty
     case Type.Capturing(inner, captureSet) => inner.captureSet ++ captureSet
     case Type.TermArrow(params, result) => CaptureSet.empty
     case Type.TypeArrow(params, result) => CaptureSet.empty
@@ -80,6 +81,7 @@ object TypePrinter:
       case Type.NoType => "<no type>"
       case Type.Base(base) => show(base)
       case Type.BinderRef(idx) => TypeChecker.getBinder(idx).name
+      case Type.SymbolRef(sym) => sym.name
       case Type.Capturing(inner, captureSet) => 
         inner match
           case Type.TermArrow(params, result) =>

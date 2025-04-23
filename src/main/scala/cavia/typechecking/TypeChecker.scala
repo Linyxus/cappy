@@ -133,6 +133,11 @@ object TypeChecker:
       case Right(elem) :: rest => go(rest, elem :: acc)
     go(checkElems, Nil)
 
+  def lookupStructSymbol(name: String)(using ctx: Context): Option[StructSymbol] =
+    lookupSymbol(name) match
+      case Some(sym: StructSymbol) => Some(sym)
+      case _ => None
+
   def findBaseType(name: String): Option[BaseType] = name match
     case "Unit" => Some(BaseType.UnitType)
     case "Int" => Some(BaseType.IntType)
@@ -146,12 +151,18 @@ object TypeChecker:
     
   def checkType(tpe: Syntax.Type)(using Context): Result[Type] = tpe match
     case Syntax.Type.Ident(name) => 
-      findBaseType(name) match
+      def tryBaseType: Result[Type] = findBaseType(name) match
         case Some(baseType) => Right(Type.Base(baseType).withKind(TypeKind.Star).withPos(tpe.pos))
-        case None => lookupBinder(name) match
-          case Some((binder: Binder.TypeBinder, idx)) => Right(Type.BinderRef(idx).withKind(TypeKind.Star).maybeWithPosFrom(tpe))
-          case Some((binder: Binder, idx)) => Left(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a type").maybeWithPosFrom(tpe))
-          case _ => Left(TypeError.UnboundVariable(name).withPos(tpe.pos))
+        case None => Left(TypeError.UnboundVariable(name).withPos(tpe.pos))
+      def tryBinder: Result[Type] = lookupBinder(name) match
+        case Some((binder: Binder.TypeBinder, idx)) => Right(Type.BinderRef(idx).withKind(TypeKind.Star).maybeWithPosFrom(tpe))
+        case Some((binder: Binder, idx)) => 
+          Left(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a type").maybeWithPosFrom(tpe))
+        case None => Left(TypeError.UnboundVariable(name).maybeWithPosFrom(tpe))
+      def trySymbol: Result[Type] = lookupSymbol(name) match
+        case Some(sym: StructSymbol) => Right(Type.SymbolRef(sym).withKind(TypeKind.Star).maybeWithPosFrom(tpe))
+        case _ => Left(TypeError.UnboundVariable(name).maybeWithPosFrom(tpe))
+      tryBaseType || tryBinder || trySymbol
     case Syntax.Type.Arrow(params, result) =>
       def go(ps: List[Syntax.TermParam], acc: List[TermBinder])(using Context): Result[List[TermBinder]] = ps match
         case Nil => Right(acc.reverse)
@@ -311,6 +322,8 @@ object TypeChecker:
               val selfType = d match
                 case _: Syntax.Definition.ValDef => None
                 case d: Syntax.Definition.DefDef => Some(extractDefType(d, requireExplictType = false).!!)
+                case _: Syntax.Definition.StructDef =>
+                  sorry(TypeError.GeneralError("structs are not allowed in a block").withPos(d.pos))
               val ctx1 = selfType match
                 case None => ctx
                 case Some(selfType) =>
@@ -366,6 +379,16 @@ object TypeChecker:
               if expected.exists then
                 Term.PrimOp(PrimitiveOp.Sorry, Nil).withPosFrom(t).withTpe(expected)
               else sorry(TypeError.GeneralError("no expected type for sorry").withPos(t.pos))
+      case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if lookupStructSymbol(name).isDefined =>
+        val classSym = lookupStructSymbol(name).get
+        val classType = Type.SymbolRef(classSym)
+        val fields = classSym.info.fields
+        hopefully:
+          if fields.length != args.length then
+            sorry(TypeError.GeneralError(s"Constructor argument number mismatch, expected ${fields.length}, but got ${args.length}").withPos(t.pos))
+          val args1 = (args `zip` fields).map: (arg, field) =>
+            checkTerm(arg, expected = field.tpe).!!
+          Term.StructInit(classSym, args1).withPosFrom(t).withTpe(classType)
       case Syntax.Term.Apply(fun, args) => 
         checkTerm(fun).flatMap: fun1 =>
           val funType = fun1.tpe
@@ -490,6 +513,16 @@ object TypeChecker:
     go(args, formals, Nil).map: args1 =>
       Term.PrimOp(op, args1).withPos(pos).withTpe(Type.Base(resType).withKind(TypeKind.Star))
 
+  def checkStructDef(d: Syntax.Definition.StructDef)(using Context): Result[StructInfo] =
+    hopefully:
+      val fieldNames = d.fields.map(_.name)
+      if fieldNames.distinct.length != fieldNames.length then
+        sorry(TypeError.GeneralError("Duplicated field name").withPos(d.pos))
+      val fields = d.fields.map: fieldDef =>
+        val fieldType = checkType(fieldDef.tpe).!!
+        FieldInfo(fieldDef.name, fieldType, fieldDef.isVar)
+      StructInfo(fields)
+
   def checkDef(d: Syntax.ValueDef)(using Context): Result[(TermBinder, Term)] = d match
     case Syntax.Definition.ValDef(name, tpe, expr) =>
       hopefully:
@@ -565,7 +598,7 @@ object TypeChecker:
       case None => Left(TypeError.GeneralError("Explicit type annotation is required for top-level definitions").withPos(d.pos))
       case Some(expected) => checkType(expected)
 
-  def extractDefnType(d: Syntax.Definition)(using Context): Result[Type] = d match
+  def extractDefnType(d: Syntax.ValueDef)(using Context): Result[Type] = d match
     case d: Syntax.Definition.ValDef => extractValType(d)
     case d: Syntax.Definition.DefDef => extractDefType(d)
 
@@ -577,8 +610,13 @@ object TypeChecker:
     if hasDuplicatedName then
       Left(TypeError.GeneralError("Duplicated definition name").withPos(defns.head.pos))
     else
+      // Create symbols for all definitions
       val syms = defns.map: defn =>
-        DefSymbol(defn.name, Definitions.anyType, mod).withPosFrom(defn)
+        defn match
+          case _: (Syntax.Definition.ValDef | Syntax.Definition.DefDef) => 
+            DefSymbol(defn.name, Definitions.anyType, mod).withPosFrom(defn)
+          case _: Syntax.Definition.StructDef =>
+            StructSymbol(defn.name, StructInfo(Nil), mod).withPosFrom(defn)
       def checkDefns(defns: List[(DefSymbol, Syntax.ValueDef)]): Result[List[Expr.Definition]] = defns match
         case Nil => Right(Nil)
         case (sym, defn) :: defns =>
@@ -590,15 +628,33 @@ object TypeChecker:
               ctx.addSymbols(syms)
           checkDef(defn)(using ctx1).flatMap: (bd, expr) =>
             checkDefns(defns).map: defns1 =>
-              val d = Expr.Definition.ValDef(sym, expr)
+              val d = Definition.ValDef(sym, expr)
               d :: defns1
       hopefully:
-        for (sym, defn) <- syms `zip` defns do
-          val defnType = extractDefnType(defn).!!
-          sym.tpe = defnType
-        val valueDefTodos: List[(DefSymbol, Syntax.ValueDef)] = (syms `zip` defns).flatMap:
-          case (sym, defn: (Syntax.ValueDef)) => Some((sym, defn))
+        // Typecheck struct definitions
+        val structDefTodos: List[(StructSymbol, Syntax.Definition.StructDef)] = (syms `zip` defns).flatMap:
+          case (sym: StructSymbol, defn: Syntax.Definition.StructDef) => Some((sym, defn))
           case _ => None
-        val defns1 = checkDefns(valueDefTodos).!!
-        mod.defns = defns1
+        val structDefns = structDefTodos.map: (sym, defn) =>
+          val ctx1 = ctx.addSymbols(syms)
+          val info = checkStructDef(defn)(using ctx1).!!
+          sym.info = info
+          Definition.StructDef(sym)
+        // Assign declared types to value definitions
+        for ((sym, defn) <- syms `zip` defns) do
+          (sym, defn) match
+            case (sym: DefSymbol, defn: Syntax.Definition.ValDef) =>
+              val defnType = extractDefnType(defn).!!
+              sym.tpe = defnType
+            case (sym: DefSymbol, defn: Syntax.Definition.DefDef) =>
+              val defnType = extractDefnType(defn).!!
+              sym.tpe = defnType
+            case _ =>
+        // Typecheck value definitions
+        val valueDefTodos: List[(DefSymbol, Syntax.ValueDef)] = (syms `zip` defns).flatMap:
+          case (sym: DefSymbol, defn: Syntax.ValueDef) => Some((sym, defn))
+          case _ => None
+        val valueDefns = checkDefns(valueDefTodos).!!
+        // Done
+        mod.defns = structDefns ++ valueDefns
         mod

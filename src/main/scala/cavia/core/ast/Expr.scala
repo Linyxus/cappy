@@ -91,6 +91,7 @@ object Expr:
   enum Type extends Positioned, HasKind:
     case Base(base: BaseType)
     case BinderRef(idx: Int)
+    case SymbolRef(sym: StructSymbol)
     case Capturing(inner: Type, captureSet: CaptureSet)
     case TermArrow(params: List[TermBinder], result: Type)
     case TypeArrow(params: List[TypeBinder | CaptureBinder], result: Type)
@@ -154,6 +155,7 @@ object Expr:
     case TypeLambda(params: List[TypeBinder | CaptureBinder], body: Term)
     case Bind(binder: TermBinder, recursive: Boolean, bound: Term, body: Term)
     case PrimOp(op: PrimitiveOp, args: List[Term])
+    case StructInit(sym: StructSymbol, args: List[Term])
     case Apply(fun: Term, args: List[Term])
     case TypeApply(term: Term, targs: List[Type | CaptureSet])
 
@@ -169,7 +171,7 @@ object Expr:
 
   enum Definition extends Positioned:
     case ValDef(sym: DefSymbol, body: Term)
-    case StructDef(sym: StructDef)
+    case StructDef(sym: StructSymbol)
 
   case class Module(var defns: List[Definition])
 

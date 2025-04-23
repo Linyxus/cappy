@@ -62,6 +62,14 @@ class ExprPrinter extends IndentedPrinter:
           if idx < args.size - 1 then
             print(", ")
         print(")")
+      case Term.StructInit(sym, args) =>
+        print(sym.name)
+        print("(")
+        args.zipWithIndex.foreach: (arg, idx) =>
+          show(arg)
+          if idx < args.size - 1 then
+            print(", ")
+        print(")")
       case Term.Apply(fun, args) =>
         show(fun)
         print("(")
@@ -104,6 +112,20 @@ class ExprPrinter extends IndentedPrinter:
         newline()
         indented:
           show(expr)
+        newline()
+      case Definition.StructDef(sym) =>
+        print("struct ")
+        print(sym.name)
+        print("(")
+        sym.info.fields.zipWithIndex.foreach: (field, idx) =>
+          if field.mutable then
+            print("var ")
+          print(field.name)
+          print(": ")
+          showType(field.tpe)
+          if idx < sym.info.fields.size - 1 then
+            print(", ")
+        print(")")
         newline()
 
 object ExprPrinter:

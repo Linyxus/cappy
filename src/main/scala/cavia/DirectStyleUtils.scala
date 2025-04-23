@@ -10,5 +10,9 @@ extension [E, X](mx: Either[E, X])
     case Left(err) => break(Left(err))
     case Right(value) => value
 
+  def || (other: => Either[E, X]): Either[E, X] = mx match
+    case Left(_) => other
+    case Right(value) => Right(value)
+
 def sorry[E, X](err: E)(using l: Label[Either[E, X]]): X = Left(err).!!
   
