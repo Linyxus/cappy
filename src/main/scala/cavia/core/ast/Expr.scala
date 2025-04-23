@@ -120,12 +120,16 @@ object Expr:
     case I32Mul
     case I64Add
     case I64Mul
+    case I32Println
+    case I32Read
 
     override def toString: String = this match
       case I32Add => "#i32add"
       case I32Mul => "#i32mul"
       case I64Add => "#i64add"
       case I64Mul => "#i64mul"
+      case I32Println => "#i32println"
+      case I32Read => "#i32read"
 
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match
@@ -133,6 +137,8 @@ object Expr:
       case "#i32mul" => Some(PrimitiveOp.I32Mul)
       case "#i64add" => Some(PrimitiveOp.I64Add)
       case "#i64mul" => Some(PrimitiveOp.I64Mul)
+      case "#i32println" => Some(PrimitiveOp.I32Println)
+      case "#i32read" => Some(PrimitiveOp.I32Read)
       case _ => None
 
   enum Term extends Positioned, Typed:

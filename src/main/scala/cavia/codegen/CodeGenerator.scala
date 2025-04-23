@@ -22,6 +22,7 @@ object CodeGenerator:
   case class Context(
     funcs: ArrayBuffer[Func] = ArrayBuffer.empty,
     exports: ArrayBuffer[Export] = ArrayBuffer.empty,
+    imports: ArrayBuffer[ImportFunc] = ArrayBuffer.empty,
     locals: ArrayBuffer[(Symbol, ValType)] = ArrayBuffer.empty,
     types: ArrayBuffer[TypeDef] = ArrayBuffer.empty,
     closureTypes: Map[FuncType, ClosureTypeInfo] = Map.empty,
@@ -41,6 +42,9 @@ object CodeGenerator:
 
   def emitExport(e: Export)(using Context): Unit =
     ctx.exports += e
+
+  def emitImportFunc(i: ImportFunc)(using Context): Unit =
+    ctx.imports += i
 
   def emitLocal(sym: Symbol, tpe: ValType)(using Context): Unit =
     ctx.locals += (sym -> tpe)
@@ -65,6 +69,11 @@ object CodeGenerator:
     case PrimitiveOp.I32Add => List(Instruction.I32Add)
     case PrimitiveOp.I64Mul => List(Instruction.I64Mul)
     case PrimitiveOp.I32Mul => List(Instruction.I32Mul)
+    case PrimitiveOp.I32Println => List(
+      Instruction.Call(Symbol.I32Println),
+      Instruction.I32Const(0)
+    )
+    case PrimitiveOp.I32Read => List(Instruction.Call(Symbol.I32Read))
     // case _ => assert(false, s"Not supported: $op")
 
   def nameEncode(name: String): String =
@@ -72,7 +81,7 @@ object CodeGenerator:
 
   def computeFuncType(tpe: Expr.Type)(using Context): FuncType = tpe match
     case Expr.Type.TermArrow(params, result) =>
-      FuncType(ValType.AnyRef :: params.map(binder => translateType(binder.tpe)), translateType(result))
+      FuncType(ValType.AnyRef :: params.map(binder => translateType(binder.tpe)), Some(translateType(result)))
         // the first param is the closure pointer
     case Expr.Type.Capturing(inner, _) => computeFuncType(inner)
     case _ => assert(false, s"Unsupported type for computing func type: $tpe")
@@ -92,7 +101,7 @@ object CodeGenerator:
     ctx.closureTypes.get(funcType) match
       case None => 
         val typeName = 
-          nameEncode(funcType.paramTypes.map(_.show).mkString("_") + " to " + funcType.resultType.show)
+          nameEncode(funcType.paramTypes.map(_.show).mkString("_") + " to " + funcType.resultType.get.show)
         val closName = s"clos_$typeName"
         val funcSymm = Symbol.fresh(typeName)
         val closSymm = Symbol.fresh(closName)
@@ -290,9 +299,11 @@ object CodeGenerator:
         val mainType = Expr.Type.TermArrow(Nil, Expr.Type.Base(Expr.BaseType.I32))
         given TypeChecker.Context = TypeChecker.Context.empty
         if TypeComparer.checkSubtype(d.tpe, mainType) then
+          emitImportFunc(ImportFunc("", "", Symbol.I32Println, I32PrintlnType))
+          emitImportFunc(ImportFunc("", "", Symbol.I32Read, I32ReadType))
           val Term.TermLambda(Nil, body) = d.body: @unchecked
           val insts = genTerm(body)
-          val func = Func(Symbol.fresh(d.sym.name), params = Nil, result = ValType.I32, locals = finalizeLocals, insts)
+          val func = Func(Symbol.fresh(d.sym.name), params = Nil, result = Some(ValType.I32), locals = finalizeLocals, insts)
           emitFunc(func)
           val exp = Export("entrypoint", ExportKind.Func, func.ident)
           emitExport(exp)
@@ -300,4 +311,10 @@ object CodeGenerator:
       case _ => assert(false, s"Not supported: $m")
 
   def finalize(using Context): Module =
-    Module(ctx.declares.toList ++ ctx.types.toList ++ ctx.funcs.toList ++ ctx.exports.toList)
+    Module(
+      ctx.declares.toList ++ 
+        ctx.imports.toList ++ 
+        ctx.types.toList ++ 
+        ctx.funcs.toList ++ 
+        ctx.exports.toList
+    )

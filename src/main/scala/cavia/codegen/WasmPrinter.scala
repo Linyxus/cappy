@@ -19,12 +19,16 @@ class WasmPrinter extends IndentedPrinter:
     case exp: Export => printExport(exp)
     case t: TypeDef => printTypeDef(t)
     case elem: ElemDeclare => printElemDeclare(elem)
+    case i: ImportFunc => printImportFunc(i)
 
   def printFunc(func: Func): Unit =
     print(s"(func ${func.ident.show} ")
     func.params.foreach: (paramId, paramType) =>
       print(s"(param ${paramId.show} ${paramType.show}) ")
-    print(s"(result ${func.result.show})")
+    func.result match
+      case None =>
+      case Some(resTpe) =>
+        print(s"(result ${resTpe.show})")
     newline()
     indented:
       func.locals.foreach: (localId, localType) =>
@@ -43,6 +47,13 @@ class WasmPrinter extends IndentedPrinter:
 
   def printElemDeclare(e: ElemDeclare): Unit =
     print(s"(elem declare ${e.kind.show} ${e.sym.show})")
+
+  def printImportFunc(i: ImportFunc): Unit =
+    val paramStr = i.funcType.paramTypes.map(p => s"(param ${p.show})").mkString(" ")
+    val resultStr = i.funcType.resultType match
+      case None => ""
+      case Some(resultType) => s" (result ${resultType.show})"
+    print(s"(import \"${i.moduleName}\" \"${i.funcName}\" (func ${i.ident.show} ${paramStr}${resultStr}))")
 
 extension (mod: Module)
   def show: String =

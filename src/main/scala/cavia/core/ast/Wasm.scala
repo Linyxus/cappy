@@ -29,6 +29,7 @@ object Wasm:
     case StructGet(sym: Symbol, fieldSym: Symbol)
     case StructNew(typeSym: Symbol)
     case CallRef(typeSym: Symbol)
+    case Call(funcSym: Symbol)
 
     def show: String = this match
       case I32Const(value) => s"i32.const $value"
@@ -44,6 +45,7 @@ object Wasm:
       case StructGet(sym, fieldSym) => s"struct.get ${sym.show} ${fieldSym.show}"
       case StructNew(typeSym) => s"struct.new ${typeSym.show}"
       case CallRef(typeSym) => s"call_ref ${typeSym.show}"
+      case Call(funcSym) => s"call ${funcSym.show}"
 
   enum ExportKind:
     case Func
@@ -70,13 +72,21 @@ object Wasm:
       UniqSymbol(name, id)
 
     val Function = fresh("__func")
+    val I32Println = fresh("__i32println")
+    val I32Read = fresh("__i32read")
+
+  val I32PrintlnType = FuncType(List(ValType.I32), None)
+  val I32ReadType = FuncType(List(), Some(ValType.I32))
 
   sealed trait CompositeType:
     def show: String
-  case class FuncType(paramTypes: List[ValType], resultType: ValType) extends CompositeType:
+  case class FuncType(paramTypes: List[ValType], resultType: Option[ValType]) extends CompositeType:
     def show: String =
       val paramStrs = paramTypes.map(p => s"(param ${p.show})")
-      val resultStr = s"(result ${resultType.show})"
+      val resultStr = 
+        resultType match
+          case None => ""
+          case Some(resultType) => s"(result ${resultType.show})"
       s"(func ${paramStrs.mkString(" ")} ${resultStr})"
   case class StructType(fields: List[(Symbol, ValType)], subClassOf: Option[Symbol]) extends CompositeType:
     def show: String = 
@@ -88,8 +98,9 @@ object Wasm:
       s"(sub ${subclassStr}(struct ${fieldStrs.mkString(" ")}))"
 
   sealed trait ModuleField
-  case class Func(ident: Symbol, params: List[(Symbol, ValType)], result: ValType, locals: List[(Symbol, ValType)], body: List[Instruction]) extends ModuleField:
+  case class Func(ident: Symbol, params: List[(Symbol, ValType)], result: Option[ValType], locals: List[(Symbol, ValType)], body: List[Instruction]) extends ModuleField:
     def tpe: FuncType = FuncType(params.map(_._2), result)
   case class Export(externalName: String, kind: ExportKind, ident: Symbol) extends ModuleField
   case class TypeDef(ident: Symbol, tpe: CompositeType) extends ModuleField
   case class ElemDeclare(kind: ExportKind, sym: Symbol) extends ModuleField
+  case class ImportFunc(moduleName: String, funcName: String, ident: Symbol, funcType: FuncType) extends ModuleField

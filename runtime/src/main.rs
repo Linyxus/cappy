@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let engine = Engine::new(&config)?;
     let mut store = Store::new(&engine, ());
 
-    let print_i32 = Func::wrap(&mut store, |i: i32| {
+    let println_i32 = Func::wrap(&mut store, |i: i32| {
         println!("{}", i);
     });
 
@@ -30,8 +30,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let module = Module::from_file(&engine, wasm_file_path)?;
 
-    //let instance = Instance::new(&mut store, &module, &[print_i32.into(), read_i32.into()])?;
-    let instance = Instance::new(&mut store, &module, &[])?;
+    let instance = Instance::new(&mut store, &module, &[println_i32.into(), read_i32.into()])?;
+    //let instance = Instance::new(&mut store, &module, &[])?;
 
     let entrypoint = instance.get_func(&mut store, "entrypoint")
         .expect("`entrypoint` was not an exported function");
