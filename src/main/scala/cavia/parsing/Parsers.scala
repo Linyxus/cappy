@@ -134,8 +134,10 @@ object Parsers:
     longestMatch(
       termArrowP,
       typeArrowP,
+      nonDependentTermArrowP,
       //captureArrowP,
-      capturingTypeP,
+      //capturingTypeP,
+      simpleFunctionTypeP,
     )
 
   def typeAtomP: Parser[Type] = longestMatch(
@@ -162,14 +164,25 @@ object Parsers:
   def termArrowP: Parser[Type] = 
     val paramsP = 
       termParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
-    val arrowP = tokenP[Token.ARROW]
-    val capsP = captureSetP.withWhat("a capture set after an arrow")
-    val p = (paramsP, arrowP, capsP.tryIt, typeP).p.map: (params, _, maybeCaps, resultType) =>
+    val p = (paramsP, capturingArrowP, typeP).p.map: (params, maybeCaps, resultType) =>
       val arrowType = Type.Arrow(params, resultType)
       maybeCaps match
         case Some(cs) => Type.Capturing(arrowType, cs)
         case None => arrowType
     p.positioned.withWhat("a term function type")
+
+  def nonDependentTermArrowP: Parser[Type] =
+    val paramTypesP: Parser[List[Type]] = 
+      typeP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
+    val arrowP = tokenP[Token.ARROW]
+    val capsP = captureSetP.withWhat("a capture set after an arrow")
+    val p = (paramTypesP, capturingArrowP, typeP).p.map: (paramTypes, maybeCaps, resultType) =>
+      val params = paramTypes.map(tp => TermParam("_", tp))
+      val arrowType = Type.Arrow(params, resultType)
+      maybeCaps match
+        case Some(cs) => Type.Capturing(arrowType, cs)
+        case None => arrowType
+    p.positioned.withWhat("a non-dependent term function type")
 
   def typeArrowP: Parser[Type] =
     val paramP: Parser[TypeParam | CaptureParam] = captureParamP `or` typeParamP
@@ -205,11 +218,39 @@ object Parsers:
     p.positioned.withWhat("an applied type")
 
   def capturingTypeP: Parser[Type] =
-    val capsP = (tokenP[Token.HAT], captureSetP).p.map((_, set) => set)
+    val capsP = (tokenP[Token.HAT], captureSetP.tryIt).p.map: (hatToken, maybeCaps) =>
+      maybeCaps match
+        case Some(cs) => cs
+        case None => CaptureSet(CaptureRef("cap").withPosFrom(hatToken) :: Nil).withPosFrom(hatToken)
     val p = (appliedTypeP, capsP.tryIt).p.map:
       case (ty, Some(caps)) => Type.Capturing(ty, caps)
       case (ty, None) => ty
     p.positioned.withWhat("a capturing type")
+
+  def capturingArrowP: Parser[Option[CaptureSet]] =
+    val arrowP = tokenP[Token.ARROW]
+    val capsP = captureSetP.withWhat("a capture set after an arrow")
+    val fatArrowP = tokenP[Token.FAT_ARROW]
+    val p1 = (arrowP, capsP.tryIt).p.map((_, maybeCaps) => maybeCaps)
+    val p2 = fatArrowP.map(tk => Some(CaptureSet(CaptureRef("cap").withPosFrom(tk) :: Nil).withPosFrom(tk)))
+    p1 `or` p2
+
+  def simpleFunctionTypeP: Parser[Type] =
+    def buildType(head: Type, more: List[(Option[CaptureSet], Type)]): Type =
+      val t :: ts = (head :: more.map(_._2)).reverse: @unchecked
+      val todos = more.map(_._1).reverse `zip` ts
+      var result = t
+      for (maybeCaps, ty) <- todos do
+        val param = TermParam("_", ty).withPosFrom(ty)
+        result = Type.Arrow(List(param), result).withPosFrom(param, result)
+        maybeCaps match
+          case Some(cs) => result = Type.Capturing(result, cs).withPosFrom(result, cs)
+          case None =>
+      result
+    val moreP: Parser[(Option[CaptureSet], Type)] = (capturingArrowP, typeP).p
+    val p = (capturingTypeP, moreP.many).p.map: (head, more) =>
+      buildType(head, more)
+    p.positioned.withWhat("a simple function type")
 
   def captureRefP: Parser[CaptureRef] = tokenP[Token.IDENT].map(t => CaptureRef(t.name)).positioned.withWhat("a capture reference")
 
