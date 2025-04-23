@@ -1,10 +1,8 @@
 package cavia
 package typechecking
 
-import scala.util.boundary.break
 import core.*
-import core.ast.*
-import cavia.core.ast.Syntax.Definition
+import ast.*
 import scala.collection.mutable.ArrayBuffer
 
 object TypeChecker:
