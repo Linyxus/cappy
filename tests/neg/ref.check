@@ -1,0 +1,4 @@
+17 |   par[{a}, {op}](printA, op)
+   |   ^^^^^^^^^^^^^^
+
+     Separation error: {a} and {op} are not separated
