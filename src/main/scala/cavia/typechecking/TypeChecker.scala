@@ -549,7 +549,11 @@ object TypeChecker:
         checkTypeParamList(ps.params).flatMap: params =>
           go(pss)(using ctx.extend(params)).flatMap: resultType1 =>
             Right(Type.TypeArrow(params, resultType1).withKind(TypeKind.Star))
-    go(d.paramss)
+    hopefully:
+      val res = go(d.paramss).!!
+      if d.paramss.isEmpty then
+        Type.TypeArrow(Nil, res)
+      else res
 
   def extractValType(d: Syntax.Definition.ValDef)(using Context): Result[Type] = 
     d.tpe match

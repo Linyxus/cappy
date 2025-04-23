@@ -1,10 +1,10 @@
 module {
-  val f: Unit = 
+  val f: [] -> Unit = 
     [] => {
-      g
+      g[]
     }
-  val g: Unit = 
+  val g: [] -> Unit = 
     [] => {
-      f
+      f[]
     }
 }
