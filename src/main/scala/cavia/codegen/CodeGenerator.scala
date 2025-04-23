@@ -297,8 +297,9 @@ object CodeGenerator:
     m.defns match
       case (d: Expr.Definition.ValDef) :: Nil =>
         val mainType = Expr.Type.TermArrow(Nil, Expr.Type.Base(Expr.BaseType.I32))
+        val mainFuncType = computeFuncType(mainType)
         given TypeChecker.Context = TypeChecker.Context.empty
-        if TypeComparer.checkSubtype(d.tpe, mainType) then
+        if computeFuncType(d.tpe) == mainFuncType then
           emitImportFunc(ImportFunc("", "", Symbol.I32Println, I32PrintlnType))
           emitImportFunc(ImportFunc("", "", Symbol.I32Read, I32ReadType))
           val Term.TermLambda(Nil, body) = d.body: @unchecked
