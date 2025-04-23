@@ -20,7 +20,9 @@ This is currently a toy.
 - [x] Parsing improvement: T -> U, and (T1, T2) -> U
 - [x] Parsing improvement: IO^ should be IO^{cap}
 - [x] Parsing improvement: `A => B` should be `A ->{cap} B`
-- [ ] Support `struct` definitions
+- [x] Support `struct` definitions
+- [ ] Support path expressions, reading and writing fields
+- [ ] Support `if` expressions
 
 ## Issues
 

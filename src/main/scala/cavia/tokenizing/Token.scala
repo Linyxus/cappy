@@ -15,6 +15,7 @@ enum Token extends Positioned:
   case COMMA()  // ,
   case LBRACE() // {
   case RBRACE() // }
+  case DOT()  // .
   case ARROW()  // ->
   case FAT_ARROW()  // =>
   case HAT()  // ^

@@ -28,6 +28,14 @@ class ExprPrinter extends IndentedPrinter:
           show(body)(using ctx.extend(params))
         newline()
         println("}")
+      case Term.Select(base, fieldInfo) =>
+        show(base)
+        print(".")
+        print(fieldInfo.name)
+      case Term.Assign(lhs, rhs) =>
+        show(lhs)
+        print(" = ")
+        show(rhs)
       case Term.TypeLambda(params, body) =>
         print("[")
         def showBinders(bds: List[Binder])(using Context): List[String] = bds match

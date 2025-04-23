@@ -55,7 +55,6 @@ object Parsers:
     longestMatch(
       termLambdaP,
       typeLambdaP,
-      //captureLambdaP,
       applyP,
       blockP,
     )
@@ -113,7 +112,7 @@ object Parsers:
   enum ApplyClause extends core.Positioned:
     case TermApply(terms: List[Term])
     case TypeApply(types: List[Type | CaptureSet])
-    //case CaptureApply(captures: List[CaptureSet])
+    case Select(field: Token.IDENT)
 
   def termApplyClauseP: Parser[ApplyClause] =
     termP
@@ -126,21 +125,30 @@ object Parsers:
       .sepBy1(tokenP[Token.COMMA])
       .surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
       .map(types => ApplyClause.TypeApply(types))
+
+  def selectClauseP: Parser[ApplyClause] =
+    (tokenP[Token.DOT], tokenP[Token.IDENT]).p.map((_, field) => ApplyClause.Select(field))
   
   def applyP: Parser[Term] =
     val clauseP = longestMatch(
       termApplyClauseP.withWhat("a term apply clause"),
       typeApplyClauseP.withWhat("a type apply clause"),
+      selectClauseP.withWhat("a select clause"),
     ).positioned
     val clausesP = clauseP.many
-    val p = (termAtomP, clausesP).p.map: (fun, clauses) =>
+    val appP = (termAtomP, clausesP).p.map: (fun, clauses) =>
       var result = fun
       for clause <- clauses do
         clause match
           case ApplyClause.TermApply(terms) => result = Term.Apply(result, terms).withPosFrom(result, clause)
           case ApplyClause.TypeApply(types) => result = Term.TypeApply(result, types).withPosFrom(result, clause)
-          //case ApplyClause.CaptureApply(captures) => result = Term.CaptureApply(result, captures)
+          case ApplyClause.Select(field) => result = Term.Select(result, field.name).withPosFrom(result, field)
       result
+    val assignP = (tokenP[Token.EQUAL], termP).p.map((_, rhs) => rhs)
+    val p = (appP, assignP.tryIt).p.map: (app, maybeRhs) =>
+      maybeRhs match
+        case Some(rhs) => Term.Assign(app, rhs).withPosFrom(app, rhs)
+        case None => app
     p.positioned
 
   def typeP: Parser[Type] = lazyP:

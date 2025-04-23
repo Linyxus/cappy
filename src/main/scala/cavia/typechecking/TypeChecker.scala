@@ -182,10 +182,9 @@ object TypeChecker:
         checkType(result)(using ctx.extend(params)).map: result1 =>
           Type.TypeArrow(params, result1).maybeWithPosFrom(tpe).withKind(TypeKind.Star)
     case Syntax.Type.Capturing(inner, captureSet) =>
-      for
-        inner1 <- checkType(inner)
-        captureSet1 <- checkCaptureSet(captureSet)
-      yield
+      hopefully:
+        val inner1 = checkType(inner).!!
+        val captureSet1 = checkCaptureSet(captureSet).!!
         Type.Capturing(inner1, captureSet1).maybeWithPosFrom(tpe).withKind(TypeKind.Star)
     case Syntax.Type.AppliedType(tycon, args) => ???
 
@@ -286,6 +285,28 @@ object TypeChecker:
         Right(Term.IntLit(value).withPosFrom(t).withTpe(tpe))
       case Syntax.Term.UnitLit() => 
         Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
+      case Syntax.Term.Select(base, field) =>
+        hopefully:
+          val base1 = checkTerm(base).!!
+          val classSym = base1.tpe match
+            case Type.SymbolRef(sym) => sym
+            case _ => sorry(TypeError.TypeMismatch("a type that can be selected from", base1.tpe.show).withPosFrom(base))
+          val fieldInfo = classSym.info.fields.find(_.name == field) match
+            case Some(fieldInfo) => fieldInfo
+            case None => sorry(TypeError.GeneralError(s"Field $field not found in ${classSym.name}").withPosFrom(t))
+          val fieldType = fieldInfo.tpe
+          Term.Select(base1, fieldInfo).withPosFrom(t).withTpe(fieldType)
+      case Syntax.Term.Assign(lhs, rhs) =>
+        hopefully:
+          val lhs1 = checkTerm(lhs).!!
+          lhs1 match
+            case lhs1 @ Term.Select(_, fieldInfo) =>
+              if fieldInfo.mutable then
+                val rhs1 = checkTerm(rhs, expected = fieldInfo.tpe).!!
+                Term.Assign(lhs1, rhs1).withPosFrom(t).withTpe(Definitions.unitType)
+              else
+                sorry(TypeError.GeneralError(s"Field is not mutable").withPosFrom(lhs))
+            case _ => sorry(TypeError.GeneralError(s"Cannot assign to this target").withPosFrom(lhs))
       case Syntax.Term.Lambda(params, body) => 
         checkTermParamList(params).flatMap: params =>
           val ctx1 = ctx.extend(params)
@@ -630,6 +651,7 @@ object TypeChecker:
             checkDefns(defns).map: defns1 =>
               val d = Definition.ValDef(sym, expr)
               d :: defns1
+
       hopefully:
         // Typecheck struct definitions
         val structDefTodos: List[(StructSymbol, Syntax.Definition.StructDef)] = (syms `zip` defns).flatMap:

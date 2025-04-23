@@ -13,6 +13,7 @@ object Syntax:
 
   enum Term extends Positioned:
     case Ident(name: String)
+    case Select(base: Term, field: String)
     case StrLit(value: String)
     case IntLit(value: Int)
     case UnitLit()
@@ -23,6 +24,7 @@ object Syntax:
     case TypeApply(term: Term, targs: List[Type | CaptureSet])
     //case CaptureApply(term: Term, captures: List[CaptureSet])
     case Block(stmts: List[Definition | Term])
+    case Assign(lhs: Term, rhs: Term)
   import Term.*
 
   case class TypeParamList(params: List[TypeParam | CaptureParam]) extends Positioned

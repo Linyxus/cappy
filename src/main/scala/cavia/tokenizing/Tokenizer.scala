@@ -154,6 +154,7 @@ class Tokenizer(source: SourceFile):
           case ']' => Token.RBRACK()
           case ':' => Token.COLON()
           case ',' => Token.COMMA()
+          case '.' => Token.DOT()
           case '{' => Token.LBRACE()
           case '}' => Token.RBRACE()
           case '^' => Token.HAT()

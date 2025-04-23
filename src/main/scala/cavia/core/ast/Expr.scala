@@ -158,6 +158,8 @@ object Expr:
     case StructInit(sym: StructSymbol, args: List[Term])
     case Apply(fun: Term, args: List[Term])
     case TypeApply(term: Term, targs: List[Type | CaptureSet])
+    case Select(base: Term, fieldInfo: FieldInfo)
+    case Assign(lhs: Select, rhs: Term)
 
   /** Reference to a variable, either a binder or a symbol */
   type VarRef = Term.BinderRef | Term.SymbolRef
