@@ -1,0 +1,4 @@
+10 |   swap(a, a) // error
+   |   ^^^^^^^^^^
+
+     Separation error: {a} and {a} are not separated
