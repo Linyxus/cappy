@@ -22,8 +22,8 @@ This is currently a toy.
 - [x] Parsing improvement: `A => B` should be `A ->{cap} B`
 - [x] Support `struct` definitions
 - [x] Support path expressions, reading and writing fields
-- [ ] Support translating module-level definitions
-- [ ] Support translating `struct` definitions
+- [x] Support translating module-level definitions
+- [x] Support translating `struct` definitions
 - [ ] Support `if` expressions
 
 ## Issues
