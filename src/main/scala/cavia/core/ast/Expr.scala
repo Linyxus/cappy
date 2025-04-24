@@ -277,6 +277,7 @@ object Expr:
     case TypeApply(term: Term, targs: List[Type | CaptureSet])
     case Select(base: Term, fieldInfo: FieldInfo)
     case Assign(lhs: Select, rhs: Term)
+    case If(cond: Term, thenBranch: Term, elseBranch: Term)
 
   /** Reference to a variable, either a binder or a symbol */
   type VarRef = Term.BinderRef | Term.SymbolRef

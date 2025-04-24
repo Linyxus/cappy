@@ -99,7 +99,18 @@ class ExprPrinter extends IndentedPrinter:
           if idx < targs.size - 1 then
             print(", ")
         print("]")
-
+      case Term.If(cond, thenBranch, elseBranch) =>
+        print("if ")
+        show(cond)
+        print(" then")
+        newline()
+        indented:
+          show(thenBranch)
+        newline()
+        print("else")
+        newline()
+        indented:
+          show(elseBranch)
   def showType(tpe: Type)(using Context): Unit =
     print(TypePrinter.show(tpe))
 

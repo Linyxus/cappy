@@ -355,6 +355,8 @@ object TypeChecker:
         checkInfix(op, lhs, rhs, expected, t.pos)
       case Syntax.Term.Prefix(op, term) =>
         checkPrefix(op, term, expected, t.pos)
+      case Syntax.Term.If(cond, thenBranch, maybeElseBranch) =>
+        checkIf(cond, thenBranch, maybeElseBranch, expected, t.pos)
       case Syntax.Term.Lambda(params, body) => 
         checkTermParamList(params).flatMap: params =>
           val ctx1 = ctx.extend(params)
@@ -509,6 +511,22 @@ object TypeChecker:
         Right(t2)
       else 
         Left(TypeError.TypeMismatch(expected.show, t1.tpe.show).withPos(t.pos))
+
+  def checkIf(
+    cond: Syntax.Term, 
+    thenBranch: Syntax.Term, 
+    maybeElseBranch: Option[Syntax.Term], 
+    expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
+    hopefully:
+      val elseBranch = maybeElseBranch match
+        case Some(elseBranch) => elseBranch
+        case None =>
+          Syntax.Term.UnitLit().withPos(srcPos)
+      val cond1 = checkTerm(cond, expected = Definitions.boolType).!!
+      val thenBranch1 = checkTerm(thenBranch, expected = expected).!!
+      val elseBranch1 = checkTerm(elseBranch, expected = thenBranch1.tpe).!!
+      val finalTpe = thenBranch1.tpe
+      Term.If(cond1, thenBranch1, elseBranch1).withPos(srcPos).withTpe(finalTpe)
 
   def checkInfix(op: Syntax.InfixOp, lhs: Syntax.Term, rhs: Syntax.Term, expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     op match
