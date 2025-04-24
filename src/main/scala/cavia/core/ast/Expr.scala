@@ -160,10 +160,33 @@ object Expr:
   enum PrimitiveOp extends Positioned:
     case I32Add
     case I32Mul
+    case I32Sub
+    case I32Div
+    case I32Rem
+    case I32Eq
+    case I32Neq
+    case I32Lt
+    case I32Gt
+    case I32Lte
+    case I32Gte
     case I64Add
     case I64Mul
+    case I64Sub
+    case I64Div
+    case I64Rem
+    case I64Eq
+    case I64Neq
+    case I64Lt
+    case I64Gt
+    case I64Lte
+    case I64Gte
     case I32Println
     case I32Read
+    case BoolEq
+    case BoolNeq
+    case BoolNot
+    case BoolAnd
+    case BoolOr
     case Sorry
 
     override def toString: String = this match
@@ -174,6 +197,29 @@ object Expr:
       case I32Println => "#i32println"
       case I32Read => "#i32read"
       case Sorry => "sorry"
+      case I32Sub => "#i32sub"
+      case I32Div => "#i32div"
+      case I32Rem => "#i32rem"
+      case I64Sub => "#i64sub"
+      case I64Div => "#i64div"
+      case I64Rem => "#i64rem"
+      case I32Eq => "#i32eq"
+      case I32Neq => "#i32neq"
+      case I32Lt => "#i32lt"
+      case I32Gt => "#i32gt"
+      case I32Lte => "#i32lte"
+      case I32Gte => "#i32gte"
+      case I64Eq => "#i64eq"
+      case I64Neq => "#i64neq"
+      case I64Lt => "#i64lt"
+      case I64Gt => "#i64gt"
+      case I64Lte => "#i64lte"
+      case I64Gte => "#i64gte"
+      case BoolEq => "#booleq"
+      case BoolNeq => "#boolneq"
+      case BoolNot => "#boolnot"
+      case BoolAnd => "#booland"
+      case BoolOr => "#boolor"
 
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match
@@ -183,6 +229,29 @@ object Expr:
       case "#i64mul" => Some(PrimitiveOp.I64Mul)
       case "#i32println" => Some(PrimitiveOp.I32Println)
       case "#i32read" => Some(PrimitiveOp.I32Read)
+      case "#i32sub" => Some(PrimitiveOp.I32Sub)
+      case "#i32div" => Some(PrimitiveOp.I32Div)
+      case "#i32rem" => Some(PrimitiveOp.I32Rem)
+      case "#i64sub" => Some(PrimitiveOp.I64Sub)
+      case "#i64div" => Some(PrimitiveOp.I64Div)
+      case "#i64rem" => Some(PrimitiveOp.I64Rem)
+      case "#i32eq" => Some(PrimitiveOp.I32Eq)
+      case "#i32neq" => Some(PrimitiveOp.I32Neq)
+      case "#i32lt" => Some(PrimitiveOp.I32Lt)
+      case "#i32gt" => Some(PrimitiveOp.I32Gt)
+      case "#i32lte" => Some(PrimitiveOp.I32Lte)
+      case "#i32gte" => Some(PrimitiveOp.I32Gte)
+      case "#i64eq" => Some(PrimitiveOp.I64Eq)
+      case "#i64neq" => Some(PrimitiveOp.I64Neq)
+      case "#i64lt" => Some(PrimitiveOp.I64Lt)
+      case "#i64gt" => Some(PrimitiveOp.I64Gt)
+      case "#i64lte" => Some(PrimitiveOp.I64Lte)
+      case "#i64gte" => Some(PrimitiveOp.I64Gte)
+      case "#booleq" => Some(PrimitiveOp.BoolEq)
+      case "#boolneq" => Some(PrimitiveOp.BoolNeq)
+      case "#boolnot" => Some(PrimitiveOp.BoolNot)
+      case "#booland" => Some(PrimitiveOp.BoolAnd)
+      case "#boolor" => Some(PrimitiveOp.BoolOr)
       case "sorry" => Some(PrimitiveOp.Sorry)
       case _ => None
 

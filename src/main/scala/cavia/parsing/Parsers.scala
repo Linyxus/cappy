@@ -180,6 +180,7 @@ object Parsers:
     p.positioned.withWhat("a block expression")
 
   def termAtomP: Parser[Term] = longestMatch(
+    boolLitP,
     identP,
     stringLitP,
     intLitP,
