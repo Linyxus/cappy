@@ -14,6 +14,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     config.wasm_gc(true);
     config.wasm_reference_types(true);
     config.wasm_function_references(true);
+    config.max_wasm_stack(2 * 1024 * 1024);
     let engine = Engine::new(&config)?;
     let mut store = Store::new(&engine, ());
 

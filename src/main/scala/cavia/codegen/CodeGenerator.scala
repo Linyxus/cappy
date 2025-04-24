@@ -108,11 +108,13 @@ object CodeGenerator:
       case PrimitiveOp.I32Lte => argInstrs ++ List(Instruction.I32Lte)
       case PrimitiveOp.I32Gte => argInstrs ++ List(Instruction.I32Gte)
       case PrimitiveOp.I32Eq => argInstrs ++ List(Instruction.I32Eq)
+      case PrimitiveOp.I32Neq => argInstrs ++ List(Instruction.I32Ne)
       case PrimitiveOp.I64Lt => argInstrs ++ List(Instruction.I64Lt)
       case PrimitiveOp.I64Gt => argInstrs ++ List(Instruction.I64Gt)
       case PrimitiveOp.I64Lte => argInstrs ++ List(Instruction.I64Lte)
       case PrimitiveOp.I64Gte => argInstrs ++ List(Instruction.I64Gte)
       case PrimitiveOp.I64Eq => argInstrs ++ List(Instruction.I64Eq)
+      case PrimitiveOp.I64Neq => argInstrs ++ List(Instruction.I64Ne)
       // bool ops: &&, ||
       case PrimitiveOp.BoolAnd =>
         val arg1 :: arg2 :: Nil = args: @unchecked
