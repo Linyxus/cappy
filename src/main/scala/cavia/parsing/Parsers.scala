@@ -171,9 +171,9 @@ object Parsers:
     (tokenP[Token.LPAREN], tokenP[Token.RPAREN]).p.map(_ => Term.UnitLit()).positioned
 
   def ifP: Parser[Term] =
-    val elseBranchP = (tokenP[Token.NEWLINE].tryIt, keywordP("else"), termP).p.map: (_, _, elseBranch) =>
+    val elseBranchP = (tokenP[Token.NEWLINE].optional, keywordP("else"), termP).p.map: (_, _, elseBranch) =>
       elseBranch
-    val p = (keywordP("if"), termP, keywordP("then"), termP, elseBranchP.tryIt).p.map: (_, cond, _, thenBranch, maybeElseBranch) =>
+    val p = (keywordP("if"), termP, keywordP("then"), termP, elseBranchP.optional).p.map: (_, cond, _, thenBranch, maybeElseBranch) =>
       Term.If(cond, thenBranch, maybeElseBranch)
     p.positioned.withWhat("an if expression")
 

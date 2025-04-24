@@ -33,6 +33,9 @@ object Compiler:
       Parsers.programP.runParser(state)(using ctx) match
         case Parser.ParseResult(nextState, Left(err)) =>
           val errs = ctx.errors.sortBy(_.pos.span.end)
+          // println("Errors:")
+          // errs.foreach: err =>
+          //   println(Printer.showSourcePos(err.pos, List(err.toString)))
           val farestErr = if errs.nonEmpty then errs.last else err
           ParseResult.ParsingError(farestErr)
         case Parser.ParseResult(nextState, Right(result)) =>

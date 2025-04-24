@@ -522,8 +522,11 @@ object TypeChecker:
         case Some(elseBranch) => elseBranch
         case None =>
           Syntax.Term.UnitLit().withPos(srcPos)
+      val expected1 = maybeElseBranch match
+        case Some(_) => expected
+        case None => Definitions.unitType
       val cond1 = checkTerm(cond, expected = Definitions.boolType).!!
-      val thenBranch1 = checkTerm(thenBranch, expected = expected).!!
+      val thenBranch1 = checkTerm(thenBranch, expected = expected1).!!
       val elseBranch1 = checkTerm(elseBranch, expected = thenBranch1.tpe).!!
       val finalTpe = thenBranch1.tpe
       Term.If(cond1, thenBranch1, elseBranch1).withPos(srcPos).withTpe(finalTpe)

@@ -41,36 +41,55 @@ object Parser:
     /** Whether this parser is anonymous */
     def anonymous: Boolean = what == null
 
+    def traced: Boolean = false
+
     def clearWhat: ParseInfo = 
       val oldInfo = this
       new ParseInfo:
         def what = null
         def canMatch(state: ParserState) = oldInfo.canMatch(state)
+        override def traced: Boolean = oldInfo.traced
+
+    def toTraced: ParseInfo =
+      val oldInfo = this
+      new ParseInfo:
+        def what = oldInfo.what
+        def canMatch(state: ParserState) = oldInfo.canMatch(state)
+        override def traced: Boolean = true
 
   trait Parser[+A]:
     def parse: ParseFn[A]
     def info: ParseInfo
 
     def runParser(state: ParserState)(using ctx: ParserContext): ParseResult[A] = 
-      if info.anonymous then
-        parse(state)
-      else
-        val start = state.current
-        val res = parse(state)
-        val end = res.nextState.current
-        val res1 = res.push(info.what)
-        res1 match
-          case ParseResult(nextState, Left(err)) =>
-            // log error to the context
-            ctx.errors = err :: ctx.errors
-          case _ =>
-        res1
+      if info.traced then
+        println(s"start state: $state")
+      val output = 
+        if info.anonymous then
+          parse(state)
+        else
+          val start = state.current
+          val res = parse(state)
+          val end = res.nextState.current
+          val res1 = res.push(info.what)
+          res1 match
+            case ParseResult(nextState, Left(err)) =>
+              // log error to the context
+              ctx.errors = err :: ctx.errors
+            case _ =>
+          res1
+      if info.traced then
+        println(s"end state: ${output.nextState.tokens.toList.drop(output.nextState.current).mkString(" ")}")
+        println(s"result: ${output.result}")
+      output
 
     def withInfo(newInfo: ParseInfo): Parser[A] = 
       val fn: ParseFn[A] = parse
       new Parser[A]:
         def parse: ParseFn[A] = fn
         def info: ParseInfo = newInfo
+
+    def traced: Parser[A] = withInfo(info.toTraced)
 
     def withWhat(newWhat: String | Null): Parser[A] = 
       val info = this.info
@@ -186,7 +205,7 @@ object Parser:
     def parse: ParseFn[Option[A]] = state =>
       p.runParser(state) match
         case ParseResult(nextState, Right(result)) => ParseResult(nextState, Right(Some(result)))
-        case ParseResult(nextState, Left(error)) => ParseResult(nextState, Right(None))
+        case ParseResult(nextState, Left(error)) => ParseResult(state, Right(None))
     def info: ParseInfo = new ParseInfo:
       def what = null
       def canMatch(state: ParserState): Boolean = true  // it always succeeds
