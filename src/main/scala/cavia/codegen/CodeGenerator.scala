@@ -6,9 +6,12 @@ import ast.{Expr, Wasm}
 import cavia.core.ast.Expr.Term
 import Wasm.*
 import typechecking.*
-import scala.collection.mutable.ArrayBuffer
-import scala.collection.mutable.Map
+import scala.collection.mutable
+import mutable.ArrayBuffer
 import cavia.core.ast.Expr.PrimitiveOp
+import cavia.core.ast.Expr.Definition
+import java.util.IdentityHashMap
+import scala.jdk.CollectionConverters._
 
 object CodeGenerator:
   case class ClosureTypeInfo(funcTypeSym: Symbol, closTypeSym: Symbol)
@@ -19,15 +22,22 @@ object CodeGenerator:
 
     val binder: Expr.Binder
 
+  enum DefInfo:
+    case FuncDef(funcSym: Symbol, workerSym: Symbol)
+    case GlobalDef(globalSym: Symbol)
+
   case class Context(
     funcs: ArrayBuffer[Func] = ArrayBuffer.empty,
+    globals: ArrayBuffer[Global] = ArrayBuffer.empty,
     exports: ArrayBuffer[Export] = ArrayBuffer.empty,
     imports: ArrayBuffer[ImportFunc] = ArrayBuffer.empty,
     locals: ArrayBuffer[(Symbol, ValType)] = ArrayBuffer.empty,
     types: ArrayBuffer[TypeDef] = ArrayBuffer.empty,
-    closureTypes: Map[FuncType, ClosureTypeInfo] = Map.empty,
+    closureTypes: mutable.Map[FuncType, ClosureTypeInfo] = mutable.Map.empty,
     declares: ArrayBuffer[ElemDeclare] = ArrayBuffer.empty,
-    binderInfos: List[BinderInfo] = Nil
+    binderInfos: List[BinderInfo] = Nil,
+    defInfos: mutable.Map[Expr.Symbol, DefInfo] = new IdentityHashMap[Expr.Symbol, DefInfo]().asScala,
+    var startFunc: Option[Symbol] = None,
   ):
     def withLocalSym(binder: Expr.Binder, sym: Symbol): Context =
       copy(binderInfos = BinderInfo.Sym(binder, sym) :: binderInfos)
@@ -42,6 +52,9 @@ object CodeGenerator:
 
   def emitExport(e: Export)(using Context): Unit =
     ctx.exports += e
+
+  def emitGlobal(g: Global)(using Context): Unit =
+    ctx.globals += g
 
   def emitImportFunc(i: ImportFunc)(using Context): Unit =
     ctx.imports += i
@@ -80,10 +93,13 @@ object CodeGenerator:
   def nameEncode(name: String): String =
     name.replaceAll(" ", "_").filter(ch => ch != '(' && ch != ')')
 
-  def computeFuncType(tpe: Expr.Type)(using Context): FuncType = tpe match
+  def computeFuncType(tpe: Expr.Type, isClosure: Boolean = true)(using Context): FuncType = tpe match
     case Expr.Type.TermArrow(params, result) =>
-      FuncType(ValType.AnyRef :: params.map(binder => translateType(binder.tpe)), Some(translateType(result)))
+      var paramTypes = params.map(binder => translateType(binder.tpe))
+      if isClosure then
         // the first param is the closure pointer
+        paramTypes = ValType.AnyRef :: paramTypes
+      FuncType(paramTypes, Some(translateType(result)))
     case Expr.Type.Capturing(inner, _) => computeFuncType(inner)
     case _ => assert(false, s"Unsupported type for computing func type: $tpe")
 
@@ -281,6 +297,26 @@ object CodeGenerator:
       val bodyInstrs = genTerm(body)(using ctx.withLocalSym(binder, localSym))
       boundInstrs ++ List(Instruction.LocalSet(localSym)) ++ bodyInstrs
     case Term.BinderRef(idx) => genBinderRef(idx)
+    case Term.SymbolRef(sym) =>
+      val info = ctx.defInfos(sym)
+      info match
+        case DefInfo.FuncDef(_, workerSym) =>
+          val funcType = computeFuncType(t.tpe, isClosure = true)
+          val closureInfo = createClosureTypes(funcType)
+          val getSelfInstrs = List(
+            Instruction.RefFunc(workerSym),
+          )
+          val createClosureInstrs = List(
+            Instruction.StructNew(closureInfo.closTypeSym),
+          )
+          getSelfInstrs ++ createClosureInstrs
+        case DefInfo.GlobalDef(globalSym) =>
+          List(Instruction.GlobalGet(globalSym))
+    case Term.Apply(Term.SymbolRef(sym), args) =>
+      val DefInfo.FuncDef(funcSym, _) = ctx.defInfos(sym): @unchecked
+      val argInstrs = args.flatMap(genTerm)
+      val callInstrs = List(Instruction.Call(funcSym))
+      argInstrs ++ callInstrs
     case Term.Apply(fun, args) =>
       val localSym = Symbol.fresh("fun")
       val funcType = computeFuncType(fun.tpe)
@@ -295,32 +331,153 @@ object CodeGenerator:
       val argInstrs = args.flatMap(genTerm)
       val callRefInstrs = List(Instruction.CallRef(info.funcTypeSym))
       funInstrs ++ getSelfArgInstrs ++ argInstrs ++ getWorkerInstrs ++ callRefInstrs
-    case _ => assert(false, s"Not supported: $t")
+    case _ => assert(false, s"Don't know how to translate this term: $t")
 
-  def genModule(m: Expr.Module)(using Context): Unit = 
-    m.defns match
-      case (d: Expr.Definition.ValDef) :: Nil =>
-        val mainType = Expr.Type.TermArrow(Nil, Expr.Type.Base(Expr.BaseType.I32))
-        val mainFuncType = computeFuncType(mainType)
-        given TypeChecker.Context = TypeChecker.Context.empty
-        val defType = d.sym.tpe
-        if computeFuncType(defType) == mainFuncType then
-          emitImportFunc(ImportFunc("", "", Symbol.I32Println, I32PrintlnType))
-          emitImportFunc(ImportFunc("", "", Symbol.I32Read, I32ReadType))
-          val Term.TermLambda(Nil, body) = d.body: @unchecked
-          val insts = genTerm(body)
-          val func = Func(Symbol.fresh(d.sym.name), params = Nil, result = Some(ValType.I32), locals = finalizeLocals, insts)
-          emitFunc(func)
-          val exp = Export("entrypoint", ExportKind.Func, func.ident)
-          emitExport(exp)
-        else assert(false, s"Incompatible type: ${defType}")
-      case _ => assert(false, s"Not supported: $m")
+  def genModuleFunction(funType: Expr.Type, funSymbol: Symbol, workerSymbol: Symbol, expr: Expr.Term)(using Context): Unit =
+    val Term.TermLambda(ps, body) = expr: @unchecked
+    val funcType = computeFuncType(funType, isClosure = false)
+    val workerType = computeFuncType(funType, isClosure = true)
+    val paramSymbols = ps.map(p => Symbol.fresh(p.name))
+    val funcParams = paramSymbols `zip` funcType.paramTypes
+    val workerSelfSymbol = Symbol.fresh("self")
+    val workerParams = (workerSelfSymbol -> ValType.AnyRef) :: funcParams
+    val func =
+      newLocalsScope:
+        val binderInfos = (ps `zip` paramSymbols).map: (bd, sym) =>
+          BinderInfo.Sym(bd, sym)
+        val ctx1 = ctx.usingBinderInfos(binderInfos.reverse)
+        val bodyInstrs = genTerm(body)(using ctx1)
+        Func(
+          funSymbol,
+          funcParams,
+          funcType.resultType,
+          locals = finalizeLocals,
+          body = bodyInstrs,
+        )
+    val workerFunc =
+      val getParamsInstrs =
+        workerParams.tail.map: (sym, _) =>
+          Instruction.LocalGet(sym)
+      val callFuncInstrs = List(Instruction.Call(funSymbol))
+      Func(
+        workerSymbol,
+        workerParams,
+        funcType.resultType,
+        locals = List(),
+        body = getParamsInstrs ++ callFuncInstrs
+      )
+    emitFunc(func)
+    emitFunc(workerFunc)
+
+  def isValidMain(d: Expr.Definition)(using Context): Boolean = d match
+    case Definition.ValDef(sym, body) if sym.name == "main" =>
+      val mainType = Expr.Type.TermArrow(Nil, Expr.Type.Base(Expr.BaseType.I32))
+      val mainFuncType = computeFuncType(mainType)
+      val defType = sym.tpe
+      computeFuncType(defType) == mainFuncType
+    case _ => false
+
+  def toNullable(tp: ValType): ValType = tp match
+    case ValType.TypedRef(sym, _) => ValType.TypedRef(sym, nullable = true)
+    case _ => tp
+
+  def makeDefaultValue(tp: ValType): Instruction = tp match
+    case ValType.I32 => Instruction.I32Const(0)
+    case ValType.I64 => Instruction.I64Const(0)
+    case ValType.AnyRef => Instruction.RefNullAny
+    case ValType.TypedRef(sym, nullable) if nullable => Instruction.RefNull(sym)
+    case _ => assert(false, s"Unsupported type for making default value: $tp")
+
+  def emitDefaultImports()(using Context): Unit =
+    emitImportFunc(ImportFunc("", "", Symbol.I32Println, I32PrintlnType))
+    emitImportFunc(ImportFunc("", "", Symbol.I32Read, I32ReadType))
+
+  def genModule(m: Expr.Module)(using Context): Unit =
+    val mainSym = m.defns.find(isValidMain) match
+      case Some(Definition.ValDef(sym, _)) => sym
+      case Some(_) => assert(false, "Invalid definition")
+      case None => assert(false, s"No valid main function in module")
+    // First of all, emit imports
+    emitDefaultImports()
+    // (1) create symbols for all the definitions
+    m.defns.foreach: defn =>
+      defn match
+        case Definition.ValDef(sym, body) =>
+          body match
+            case body: Term.TermLambda =>
+              val funType = computeFuncType(sym.tpe)
+              val funcSym = Symbol.fresh(sym.name)
+              val workerSym = Symbol.fresh(s"worker_${sym.name}")
+              emitElemDeclare(ExportKind.Func, workerSym)
+              ctx.defInfos += (sym -> DefInfo.FuncDef(funcSym, workerSym))
+            case _ =>
+              val globalSym = Symbol.fresh(sym.name)
+              ctx.defInfos += (sym -> DefInfo.GlobalDef(globalSym))
+        case Definition.StructDef(sym) =>
+          assert(false, s"Not supported yet: ${sym}")
+    // (2) emit func definitions
+    m.defns.foreach: defn =>
+      defn match
+        case Definition.ValDef(sym, body) =>
+          body match
+            case body: Term.TermLambda =>
+              val DefInfo.FuncDef(funcSym, workerSym) = ctx.defInfos(sym): @unchecked
+              genModuleFunction(sym.tpe, funcSym, workerSym, body)
+            case _ =>
+        case _ =>
+    // (3) emit global definitions
+    m.defns.foreach: defn =>
+      defn match
+        case Definition.ValDef(sym, body) =>
+          body match
+            case body: Term.TermLambda =>
+            case body =>
+              val valType = toNullable(translateType(sym.tpe))
+              val defaultVal = makeDefaultValue(valType)
+              val DefInfo.GlobalDef(globalSym) = ctx.defInfos(sym): @unchecked
+              val g = Global(globalSym, valType, mutable = true, defaultVal)
+              emitGlobal(g)
+        case _ =>
+    // (4) emit the start function
+    val startFuncSymbol = Symbol.fresh("init")
+    val startFunc =
+      newLocalsScope:
+        val instrs =
+          m.defns.flatMap: defn =>
+            defn match
+              case Definition.ValDef(sym, body) =>
+                body match
+                  case body: Term.TermLambda => Nil
+                  case body =>
+                    val valType = toNullable(translateType(sym.tpe))
+                    val DefInfo.GlobalDef(globalSym) = ctx.defInfos(sym): @unchecked
+                    val bodyInstrs = genTerm(body)
+                    val setGlobalInstrs = List(
+                      Instruction.GlobalSet(globalSym)
+                    )
+                    bodyInstrs ++ setGlobalInstrs
+              case _ => Nil
+        Func(
+          startFuncSymbol,
+          List(),
+          None,
+          finalizeLocals,
+          instrs
+        )
+    ctx.startFunc = Some(startFuncSymbol)
+    emitFunc(startFunc)
+    // Lastly, emit the main function
+    val DefInfo.FuncDef(mainFunc, _) = ctx.defInfos(mainSym): @unchecked
+    val exp = Export("entrypoint", ExportKind.Func, mainFunc)
+    emitExport(exp)
 
   def finalize(using Context): Module =
     Module(
       ctx.declares.toList ++ 
         ctx.imports.toList ++ 
         ctx.types.toList ++ 
+        ctx.globals.toList ++
         ctx.funcs.toList ++ 
-        ctx.exports.toList
+        ctx.exports.toList ++
+        ctx.startFunc.map(Start(_)).toList
     )

@@ -6,13 +6,15 @@ object Wasm:
   enum ValType:
     case I32
     case I64
-    case TypedRef(sym: Symbol)
+    case TypedRef(sym: Symbol, nullable: Boolean = false)
     case AnyRef
 
     def show: String = this match
       case ValType.I32 => "i32"
       case ValType.I64 => "i64"
-      case ValType.TypedRef(sym) => s"(ref ${sym.show})"
+      case ValType.TypedRef(sym, nullable) => 
+        val nullText = if nullable then " null " else ""
+        s"(ref ${nullText} ${sym.show})"
       case ValType.AnyRef => "anyref"
 
   enum Instruction:
@@ -24,8 +26,12 @@ object Wasm:
     case I64Mul
     case LocalSet(sym: Symbol)
     case LocalGet(sym: Symbol)
+    case GlobalSet(sym: Symbol)
+    case GlobalGet(sym: Symbol)
     case RefCast(typeSym: Symbol)
     case RefFunc(funcSym: Symbol)
+    case RefNull(typeSym: Symbol)
+    case RefNullAny
     case StructGet(sym: Symbol, fieldSym: Symbol)
     case StructNew(typeSym: Symbol)
     case CallRef(typeSym: Symbol)
@@ -40,12 +46,16 @@ object Wasm:
       case I64Mul => "i64.mul"
       case LocalSet(sym) => s"local.set ${sym.show}"
       case LocalGet(sym) => s"local.get ${sym.show}"
+      case GlobalSet(sym) => s"global.set ${sym.show}"
+      case GlobalGet(sym) => s"global.get ${sym.show}"
       case RefCast(typeSym) => s"ref.cast (ref ${typeSym.show})"
       case RefFunc(funcSym) => s"ref.func ${funcSym.show}"
       case StructGet(sym, fieldSym) => s"struct.get ${sym.show} ${fieldSym.show}"
       case StructNew(typeSym) => s"struct.new ${typeSym.show}"
       case CallRef(typeSym) => s"call_ref ${typeSym.show}"
       case Call(funcSym) => s"call ${funcSym.show}"
+      case RefNull(typeSym) => s"ref.null ${typeSym.show}"
+      case RefNullAny => s"ref.null any"
 
   enum ExportKind:
     case Func
@@ -61,8 +71,12 @@ object Wasm:
     def show: String
   case class UniqSymbol(val name: String, val uniqId: Int) extends Symbol:
     def show: String = s"$$${name}@${uniqId}"
+
+    override def hashCode(): Int = name.hashCode() + uniqId + 1
+
   object NoSymbol extends Symbol:
     def show: String = assert(false, "No symbol")
+    override def hashCode(): Int = 0
 
   object Symbol:
     private var nextId = 0
@@ -104,3 +118,5 @@ object Wasm:
   case class TypeDef(ident: Symbol, tpe: CompositeType) extends ModuleField
   case class ElemDeclare(kind: ExportKind, sym: Symbol) extends ModuleField
   case class ImportFunc(moduleName: String, funcName: String, ident: Symbol, funcType: FuncType) extends ModuleField
+  case class Global(ident: Symbol, tpe: ValType, mutable: Boolean, init: Instruction) extends ModuleField
+  case class Start(funcSym: Symbol) extends ModuleField

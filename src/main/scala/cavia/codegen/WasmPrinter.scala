@@ -20,6 +20,8 @@ class WasmPrinter extends IndentedPrinter:
     case t: TypeDef => printTypeDef(t)
     case elem: ElemDeclare => printElemDeclare(elem)
     case i: ImportFunc => printImportFunc(i)
+    case g: Global => printGlobal(g)
+    case s: Start => printStart(s)
 
   def printFunc(func: Func): Unit =
     print(s"(func ${func.ident.show} ")
@@ -54,6 +56,14 @@ class WasmPrinter extends IndentedPrinter:
       case None => ""
       case Some(resultType) => s" (result ${resultType.show})"
     print(s"(import \"${i.moduleName}\" \"${i.funcName}\" (func ${i.ident.show} ${paramStr}${resultStr}))")
+
+  def printGlobal(g: Global): Unit =
+    val typText = g.tpe.show
+    val typeText = if g.mutable then s"(mut ${typText})" else typText
+    print(s"(global ${g.ident.show} ${typeText} (${g.init.show}))")
+
+  def printStart(s: Start): Unit =
+    print(s"(start ${s.funcSym.show})")
 
 extension (mod: Module)
   def show: String =

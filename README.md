@@ -23,6 +23,7 @@ This is currently a toy.
 - [x] Support `struct` definitions
 - [x] Support path expressions, reading and writing fields
 - [ ] Support translating module-level definitions
+- [ ] Support translating `struct` definitions
 - [ ] Support `if` expressions
 
 ## Issues
