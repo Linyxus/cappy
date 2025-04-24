@@ -453,34 +453,7 @@ object TypeChecker:
           val tpe = Type.Capturing(classType, CaptureSet.universal)
           Term.StructInit(classSym, args1).withPosFrom(t).withTpe(tpe)
       case Syntax.Term.Apply(fun, args) => 
-        checkTerm(fun).flatMap: fun1 =>
-          val funType = fun1.tpe
-          funType.stripCaptures match
-            case Type.TermArrow(formals, resultType) =>
-              if args.length != formals.length then
-                Left(TypeError.GeneralError(s"Argument number mismatch, expected ${formals.length}, but got ${args.length}").withPos(t.pos))
-              else
-                def go(xs: List[(Syntax.Term, Type)], acc: List[Term]): Result[Term] = xs match
-                  case Nil =>
-                    val args = acc.reverse
-                    substituteAll(resultType, args).map: resultType1 =>
-                      Term.Apply(fun1, args).withPosFrom(t).withTpe(resultType1)
-                  case (arg, formal) :: xs => 
-                    checkTerm(arg, expected = formal).flatMap: arg1 =>
-                      def mxs1: Result[List[(Syntax.Term, Type)]] = hopefully:
-                        xs.zipWithIndex.map: 
-                          case ((arg, formal), idx) =>
-                            (arg, substitute(formal, arg1, idx, isParamType = true).!!)
-                      mxs1.flatMap: xs1 =>
-                        go(xs1, arg1 :: acc)
-                go(args `zip` (formals.map(_.tpe)), Nil).map: resultTerm =>
-                  fun1 match
-                    case _: VarRef =>
-                    case _ =>
-                      //println(s"markFree ${fun1.tpe.captureSet}")
-                      markFree(fun1.tpe.captureSet)
-                  resultTerm
-            case _ => Left(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(t.pos))
+        checkApply(fun, args, expected, t.pos)
       case Syntax.Term.TypeApply(term, targs) => 
         hopefully:
           val term1 = checkTerm(term).!!
@@ -538,6 +511,35 @@ object TypeChecker:
         Right(t2)
       else 
         Left(TypeError.TypeMismatch(expected.show, t1.tpe.show).withPos(t.pos))
+
+  def checkApply(fun: Syntax.Term, args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
+    hopefully:
+      val fun1 = checkTerm(fun).!!
+      val funType = fun1.tpe
+      funType.stripCaptures match
+        case Type.TermArrow(formals, resultType) =>
+          if args.length != formals.length then
+            sorry(TypeError.GeneralError(s"Argument number mismatch, expected ${formals.length}, but got ${args.length}").withPos(fun.pos))
+          def go(xs: List[(Syntax.Term, Type)], acc: List[Term]): Result[Term] = xs match
+            case Nil =>
+              val args = acc.reverse
+              substituteAll(resultType, args).map: resultType1 =>
+                Term.Apply(fun1, args).withPos(srcPos).withTpe(resultType1)
+            case (arg, formal) :: xs => 
+              val arg1 = checkTerm(arg, expected = formal).!!
+              val xs1 = xs.zipWithIndex.map: 
+                case ((arg, formal), idx) =>
+                  (arg, substitute(formal, arg1, idx, isParamType = true).!!)
+              go(xs1, arg1 :: acc)
+          val resultTerm = go(args `zip` (formals.map(_.tpe)), Nil).!!
+          fun1 match
+            case _: VarRef =>
+              // Skip, since it will already be marked
+            case _ =>
+              markFree(fun1.tpe.captureSet)
+          resultTerm
+        case _ =>
+          sorry(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(fun.pos))
 
   def substitute(tpe: Type, arg: Term, openingIdx: Int = 0, isParamType: Boolean = false): Result[Type] =
     val startingVariance = if isParamType then Variance.Contravariant else Variance.Covariant
