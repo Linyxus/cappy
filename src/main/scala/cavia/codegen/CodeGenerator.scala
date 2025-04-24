@@ -81,18 +81,72 @@ object CodeGenerator:
     ctx.locals.clear()
     result
 
-  def translatePrimOp(op: PrimitiveOp)(using Context): List[Instruction] = op match
-    case PrimitiveOp.I64Add => List(Instruction.I64Add)
-    case PrimitiveOp.I32Add => List(Instruction.I32Add)
-    case PrimitiveOp.I64Mul => List(Instruction.I64Mul)
-    case PrimitiveOp.I32Mul => List(Instruction.I32Mul)
-    case PrimitiveOp.I32Println => List(
-      Instruction.Call(Symbol.I32Println),
-      Instruction.I32Const(0)
-    )
-    case PrimitiveOp.I32Read => List(Instruction.Call(Symbol.I32Read))
-    case PrimitiveOp.Sorry => assert(false, "program contains `sorry`")
-    // case _ => assert(false, s"Not supported: $op")
+  def translatePrimOp(args: List[Expr.Term], op: PrimitiveOp)(using Context): List[Instruction] = 
+    def argInstrs = args.flatMap(genTerm)
+    op match
+      // addition
+      case PrimitiveOp.I64Add => argInstrs ++ List(Instruction.I64Add)
+      case PrimitiveOp.I32Add => argInstrs ++ List(Instruction.I32Add)
+      // multiplication
+      case PrimitiveOp.I64Mul => argInstrs ++ List(Instruction.I64Mul)
+      case PrimitiveOp.I32Mul => argInstrs ++ List(Instruction.I32Mul)
+      // subtraction
+      case PrimitiveOp.I64Sub => argInstrs ++ List(Instruction.I64Sub)
+      case PrimitiveOp.I32Sub => argInstrs ++ List(Instruction.I32Sub)
+      // division
+      case PrimitiveOp.I64Div => argInstrs ++ List(Instruction.I64Div)
+      case PrimitiveOp.I32Div => argInstrs ++ List(Instruction.I32Div)
+      // remainder
+      case PrimitiveOp.I64Rem => argInstrs ++ List(Instruction.I64Rem)
+      case PrimitiveOp.I32Rem => argInstrs ++ List(Instruction.I32Rem)
+      // negation
+      case PrimitiveOp.I32Neg => List(Instruction.I32Const(0)) ++ argInstrs ++ List(Instruction.I32Sub)
+      case PrimitiveOp.I64Neg => List(Instruction.I64Const(0)) ++ argInstrs ++ List(Instruction.I64Sub)
+      // int comparison: <, >, <=, >=, ==, !=
+      case PrimitiveOp.I32Lt => argInstrs ++ List(Instruction.I32Lt)
+      case PrimitiveOp.I32Gt => argInstrs ++ List(Instruction.I32Gt)
+      case PrimitiveOp.I32Lte => argInstrs ++ List(Instruction.I32Lte)
+      case PrimitiveOp.I32Gte => argInstrs ++ List(Instruction.I32Gte)
+      case PrimitiveOp.I32Eq => argInstrs ++ List(Instruction.I32Eq)
+      case PrimitiveOp.I64Lt => argInstrs ++ List(Instruction.I64Lt)
+      case PrimitiveOp.I64Gt => argInstrs ++ List(Instruction.I64Gt)
+      case PrimitiveOp.I64Lte => argInstrs ++ List(Instruction.I64Lte)
+      case PrimitiveOp.I64Gte => argInstrs ++ List(Instruction.I64Gte)
+      case PrimitiveOp.I64Eq => argInstrs ++ List(Instruction.I64Eq)
+      // bool ops: &&, ||
+      case PrimitiveOp.BoolAnd =>
+        val arg1 :: arg2 :: Nil = args: @unchecked
+        translateBranching(arg1, genTerm(arg2), List(Instruction.I32Const(0)), ValType.I32)
+      case PrimitiveOp.BoolOr =>
+        val arg1 :: arg2 :: Nil = args: @unchecked
+        translateBranching(arg1, List(Instruction.I32Const(1)), genTerm(arg2), ValType.I32)
+      // bool ops: not
+      case PrimitiveOp.BoolNot => argInstrs ++ List(Instruction.I32Eqz)
+      // bool ops: ==, !=
+      case PrimitiveOp.BoolEq => argInstrs ++ List(Instruction.I32Eq)
+      case PrimitiveOp.BoolNeq => argInstrs ++ List(Instruction.I32Ne)
+      // int ops: println, read
+      case PrimitiveOp.I32Println => argInstrs ++ List(
+        Instruction.Call(Symbol.I32Println),
+        Instruction.I32Const(0)
+      )
+      case PrimitiveOp.I32Read => argInstrs ++ List(Instruction.Call(Symbol.I32Read))
+      case PrimitiveOp.Sorry => assert(false, "program contains `sorry`")
+      case _ => assert(false, s"Not supported: $op")
+
+  def translateBranching(cond: Expr.Term, thenBranch: List[Instruction], elseBranch: List[Instruction], resultType: ValType)(using Context): List[Instruction] =
+    cond match
+      case Term.PrimOp(PrimitiveOp.BoolAnd, arg1 :: arg2 :: Nil) =>
+        val cond1Instrs = genTerm(arg1)
+        val moreInstrs = translateBranching(arg2, thenBranch, elseBranch, resultType)
+        cond1Instrs ++ List(Instruction.If(resultType, moreInstrs, elseBranch))
+      case Term.PrimOp(PrimitiveOp.BoolOr, arg1 :: arg2 :: Nil) =>
+        val cond1Instrs = genTerm(arg1)
+        val moreInstrs = translateBranching(arg2, thenBranch, elseBranch, resultType)
+        cond1Instrs ++ List(Instruction.If(resultType, moreInstrs, elseBranch))
+      case cond =>
+        val condInstrs = genTerm(cond)
+        condInstrs ++ List(Instruction.If(resultType, thenBranch, elseBranch))
 
   def nameEncode(name: String): String =
     name.replaceAll(" ", "_").filter(ch => ch != '(' && ch != ')')
@@ -144,6 +198,7 @@ object CodeGenerator:
     case Expr.Type.Base(Expr.BaseType.I64) => ValType.I64
     case Expr.Type.Base(Expr.BaseType.I32) => ValType.I32
     case Expr.Type.Base(Expr.BaseType.UnitType) => ValType.I32
+    case Expr.Type.Base(Expr.BaseType.BoolType) => ValType.I32
     case Expr.Type.Capturing(inner, _) => translateType(inner)
     case Expr.Type.TermArrow(params, result) =>
       val funcType = computeFuncType(tpe)
@@ -166,6 +221,7 @@ object CodeGenerator:
     case Term.SymbolRef(sym) => Set.empty
     case Term.StrLit(value) => Set.empty
     case Term.IntLit(value) => Set.empty
+    case Term.BoolLit(value) => Set.empty
     case Term.UnitLit() => Set.empty
     case Term.TermLambda(params, body) =>
       dropLocalBinders(freeLocalBinders(body), params.size)
@@ -182,6 +238,8 @@ object CodeGenerator:
     case Term.Select(base, fieldInfo) => freeLocalBinders(base)
     case Term.Assign(lhs, rhs) => freeLocalBinders(lhs) ++ freeLocalBinders(rhs)
     case Term.StructInit(sym, args) => args.flatMap(freeLocalBinders).toSet
+    case Term.If(cond, thenBranch, elseBranch) =>
+      freeLocalBinders(cond) ++ freeLocalBinders(thenBranch) ++ freeLocalBinders(elseBranch)
 
   def translateClosure(
     funType: Expr.Type,   // the type of the source function
@@ -287,9 +345,13 @@ object CodeGenerator:
         case ValType.I64 => List(Instruction.I64Const(value))
         case _ => assert(false, s"Unsupported type for int literal: ${t.tpe}")
     case Term.UnitLit() => List(Instruction.I32Const(0))
-    case Term.PrimOp(op, args) =>
-      val argInstrs = args.flatMap(genTerm)
-      argInstrs ++ translatePrimOp(op)
+    case Term.BoolLit(value) => if value then List(Instruction.I32Const(1)) else List(Instruction.I32Const(0))
+    case Term.PrimOp(op, args) => translatePrimOp(args, op)
+    case Term.If(cond, thenBranch, elseBranch) =>
+      val resultType = translateType(t.tpe)
+      val then1 = genTerm(thenBranch)
+      val else1 = genTerm(elseBranch)
+      translateBranching(cond, then1, else1, resultType)
     case Term.TermLambda(params, body) =>
       translateClosure(t.tpe, params, body, selfBinder = None)
     case Term.Bind(binder, isRecursive, Term.TermLambda(params, body), expr) =>

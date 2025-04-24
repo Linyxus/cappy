@@ -23,6 +23,37 @@ class WasmPrinter extends IndentedPrinter:
     case g: Global => printGlobal(g)
     case s: Start => printStart(s)
 
+  def printInstruction(instruction: Instruction): Unit =
+    instruction.showIfSimple match
+      case Some(str) => print(str)
+      case None =>
+        instruction match
+          case Instruction.If(resultType, thenBranch, elseBranch) =>
+            print(s"(if (result ${resultType.show})")
+            newline()
+            indented:
+              print("(then")
+              newline()
+              indented:
+                thenBranch.foreach: instruction =>
+                  printInstruction(instruction)
+                  newline()
+              newline()
+              print(")")
+            newline()
+            indented:
+              print("(else")
+              newline()
+              indented:
+                elseBranch.foreach: instruction =>
+                  printInstruction(instruction)
+                  newline()
+              newline()
+              print(")")
+            newline()
+            print(")")
+          case _ => assert(false, s"Unknown instruction: $instruction")
+
   def printFunc(func: Func): Unit =
     print(s"(func ${func.ident.show} ")
     func.params.foreach: (paramId, paramType) =>
@@ -37,7 +68,7 @@ class WasmPrinter extends IndentedPrinter:
         print(s"(local ${localId.show} ${localType.show})")
         newline()
       func.body.foreach: instruction =>
-        print(s"${instruction.show}")
+        printInstruction(instruction)
         newline()
     print(")")
 
@@ -60,7 +91,7 @@ class WasmPrinter extends IndentedPrinter:
   def printGlobal(g: Global): Unit =
     val typText = g.tpe.show
     val typeText = if g.mutable then s"(mut ${typText})" else typText
-    print(s"(global ${g.ident.show} ${typeText} (${g.init.show}))")
+    print(s"(global ${g.ident.show} ${typeText} (${g.init.showIfSimple.get}))")
 
   def printStart(s: Start): Unit =
     print(s"(start ${s.funcSym.show})")

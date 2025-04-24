@@ -20,10 +20,30 @@ object Wasm:
   enum Instruction:
     case I32Const(value: Int)
     case I32Add
+    case I32Sub
     case I32Mul
+    case I32Div
+    case I32Rem
+    case I32Gte
+    case I32Lte
+    case I32Gt
+    case I32Lt
+    case I32Eq
+    case I32Ne
+    case I32Eqz
     case I64Const(value: Int)
     case I64Add
+    case I64Sub
     case I64Mul
+    case I64Div
+    case I64Rem
+    case I64Gte
+    case I64Lte
+    case I64Gt
+    case I64Lt
+    case I64Eq
+    case I64Ne
+    case I64Eqz
     case LocalSet(sym: Symbol)
     case LocalGet(sym: Symbol)
     case GlobalSet(sym: Symbol)
@@ -37,27 +57,49 @@ object Wasm:
     case StructNew(typeSym: Symbol)
     case CallRef(typeSym: Symbol)
     case Call(funcSym: Symbol)
+    case If(resultType: ValType, thenBranch: List[Instruction], elseBranch: List[Instruction])
 
-    def show: String = this match
-      case I32Const(value) => s"i32.const $value"
-      case I32Add => "i32.add"
-      case I32Mul => "i32.mul"
-      case I64Const(value) => s"i64.const $value"
-      case I64Add => "i64.add"
-      case I64Mul => "i64.mul"
-      case LocalSet(sym) => s"local.set ${sym.show}"
-      case LocalGet(sym) => s"local.get ${sym.show}"
-      case GlobalSet(sym) => s"global.set ${sym.show}"
-      case GlobalGet(sym) => s"global.get ${sym.show}"
-      case RefCast(typeSym) => s"ref.cast (ref ${typeSym.show})"
-      case RefFunc(funcSym) => s"ref.func ${funcSym.show}"
-      case StructGet(sym, fieldSym) => s"struct.get ${sym.show} ${fieldSym.show}"
-      case StructSet(sym, fieldSym) => s"struct.set ${sym.show} ${fieldSym.show}"
-      case StructNew(typeSym) => s"struct.new ${typeSym.show}"
-      case CallRef(typeSym) => s"call_ref ${typeSym.show}"
-      case Call(funcSym) => s"call ${funcSym.show}"
-      case RefNull(typeSym) => s"ref.null ${typeSym.show}"
-      case RefNullAny => s"ref.null any"
+    def showIfSimple: Option[String] = this match
+      case I32Const(value) => Some(s"i32.const $value")
+      case I32Add => Some("i32.add")
+      case I32Sub => Some("i32.sub")
+      case I32Mul => Some("i32.mul")
+      case I32Div => Some("i32.div_s")
+      case I32Rem => Some("i32.rem_s")
+      case I32Gte => Some("i32.ge_s")
+      case I32Lte => Some("i32.le_s")
+      case I32Gt => Some("i32.gt_s")
+      case I32Lt => Some("i32.lt_s")
+      case I32Eq => Some("i32.eq")
+      case I32Ne => Some("i32.ne")
+      case I32Eqz => Some("i32.eqz")
+      case I64Const(value) => Some(s"i64.const $value")
+      case I64Add => Some("i64.add")
+      case I64Sub => Some("i64.sub")
+      case I64Mul => Some("i64.mul")
+      case I64Div => Some("i64.div_s")
+      case I64Rem => Some("i64.rem_s")
+      case I64Gte => Some("i64.ge_s")
+      case I64Lte => Some("i64.le_s")
+      case I64Gt => Some("i64.gt_s")
+      case I64Lt => Some("i64.lt_s")
+      case I64Eq => Some("i64.eq")
+      case I64Ne => Some("i64.ne")
+      case I64Eqz => Some("i64.eqz")
+      case LocalSet(sym) => Some(s"local.set ${sym.show}")
+      case LocalGet(sym) => Some(s"local.get ${sym.show}")
+      case GlobalSet(sym) => Some(s"global.set ${sym.show}")
+      case GlobalGet(sym) => Some(s"global.get ${sym.show}")
+      case RefCast(typeSym) => Some(s"ref.cast (ref ${typeSym.show})")
+      case RefFunc(funcSym) => Some(s"ref.func ${funcSym.show}")
+      case StructGet(sym, fieldSym) => Some(s"struct.get ${sym.show} ${fieldSym.show}")
+      case StructSet(sym, fieldSym) => Some(s"struct.set ${sym.show} ${fieldSym.show}")
+      case StructNew(typeSym) => Some(s"struct.new ${typeSym.show}")
+      case CallRef(typeSym) => Some(s"call_ref ${typeSym.show}")
+      case Call(funcSym) => Some(s"call ${funcSym.show}")
+      case RefNull(typeSym) => Some(s"ref.null ${typeSym.show}")
+      case RefNullAny => Some("ref.null any")
+      case _ => None
 
   enum ExportKind:
     case Func
