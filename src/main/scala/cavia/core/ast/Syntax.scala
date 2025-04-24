@@ -11,6 +11,14 @@ object Syntax:
   case class CaptureRef(name: String) extends Positioned
   case class CaptureSet(elems: List[CaptureRef]) extends Positioned
 
+  enum InfixOp extends Positioned:
+    case Plus, Minus, Mul, Div, Mod, Concat
+    case Eq, Neq, Lt, Gt, Lte, Gte
+    case And, Or
+
+  enum PrefixOp extends Positioned:
+    case Neg, Not
+
   enum Term extends Positioned:
     case Ident(name: String)
     case Select(base: Term, field: String)
@@ -25,6 +33,8 @@ object Syntax:
     //case CaptureApply(term: Term, captures: List[CaptureSet])
     case Block(stmts: List[Definition | Term])
     case Assign(lhs: Term, rhs: Term)
+    case Infix(op: InfixOp, lhs: Term, rhs: Term)
+    case Prefix(op: PrefixOp, term: Term)
   import Term.*
 
   case class TypeParamList(params: List[TypeParam | CaptureParam]) extends Positioned

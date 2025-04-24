@@ -2,10 +2,52 @@ package cavia
 package parsing
 import core.ast.*
 import tokenizing.*
+import scala.collection.mutable
 
 object Parsers:
   import Syntax.*
   import Parser.*
+
+  enum Assoc:
+    case Left, Right, Non
+  enum OpRule:
+    case Infix(assoc: Assoc, op: Parser[InfixOp])
+    case Prefix(op: Parser[PrefixOp])
+  enum OpGroup:
+    case InfixGroup(rules: List[OpRule.Infix])
+    case PrefixGroup(rules: List[OpRule.Prefix])
+  object OpGroup:
+    def infix(rules: OpRule.Infix*): OpGroup = OpGroup.InfixGroup(rules.toList)
+    def prefix(rules: OpRule.Prefix*): OpGroup = OpGroup.PrefixGroup(rules.toList)
+  import OpRule.*, OpGroup.*
+  val parseTable: List[OpGroup] = List(
+    infix(
+      Infix(Assoc.Right, tokenP[Token.DOUBLE_AMP].map(_ => InfixOp.And).positioned),
+      Infix(Assoc.Right, tokenP[Token.DOUBLE_BAR].map(_ => InfixOp.Or).positioned),
+    ),
+    infix(
+      Infix(Assoc.Non, tokenP[Token.LESS].map(_ => InfixOp.Lt).positioned),
+      Infix(Assoc.Non, tokenP[Token.GREATER].map(_ => InfixOp.Gt).positioned),
+      Infix(Assoc.Non, tokenP[Token.LESS_EQUAL].map(_ => InfixOp.Lte).positioned),
+      Infix(Assoc.Non, tokenP[Token.GREATER_EQUAL].map(_ => InfixOp.Gte).positioned),
+      Infix(Assoc.Non, tokenP[Token.DOUBLE_EQUAL].map(_ => InfixOp.Eq).positioned),
+      Infix(Assoc.Non, tokenP[Token.BANG_EQUAL].map(_ => InfixOp.Neq).positioned),
+    ),
+    infix(
+      Infix(Assoc.Left, tokenP[Token.PLUS].map(_ => InfixOp.Plus).positioned),
+      Infix(Assoc.Left, tokenP[Token.MINUS].map(_ => InfixOp.Minus).positioned),
+      Infix(Assoc.Left, tokenP[Token.DOUBLE_PLUS].map(_ => InfixOp.Concat).positioned),
+    ),
+    infix(
+      Infix(Assoc.Left, tokenP[Token.STAR].map(_ => InfixOp.Mul).positioned),
+      Infix(Assoc.Left, tokenP[Token.SLASH].map(_ => InfixOp.Div).positioned),
+      Infix(Assoc.Left, tokenP[Token.PERCENT].map(_ => InfixOp.Mod).positioned),
+    ),
+    prefix(
+      Prefix(tokenP[Token.MINUS].map(_ => PrefixOp.Neg).positioned),
+      Prefix(tokenP[Token.BANG].map(_ => PrefixOp.Not).positioned),
+    ),
+  )
 
   def valDefP: Parser[Definition] =
     val tpeP = (tokenP[Token.COLON], typeP).p.map((_, tpe) => tpe)
@@ -56,9 +98,61 @@ object Parsers:
     longestMatch(
       termLambdaP,
       typeLambdaP,
-      applyP,
+      //applyP,
+      getParserOf(0),
       blockP,
     )
+
+  private val opParsers = mutable.Map[Int, Parser[Term]]()
+  def getParserOf(prec: Int): Parser[Term] =
+    if prec >= parseTable.size then applyP  // the base case
+    else
+      opParsers.get(prec) match
+        case Some(p) => p
+        case None =>
+          val group = parseTable(prec)
+          val baseParser = getParserOf(prec + 1)
+          val p = group match
+            case InfixGroup(infixRules) => 
+              val contParsers: List[Parser[(InfixOp, Assoc, Term)]] = infixRules.map: rule =>
+                (rule.op, baseParser).p.map((op, base) => (op, rule.assoc, base))
+              val contParser: Parser[(InfixOp, Assoc, Term)] = longestMatch(contParsers*)
+              val p: Parser[Term] = (baseParser, contParser.many).p.flatMap: (base, conts) =>
+                val assocs: List[Assoc] = conts.map(x => x._2)
+                if assocs.contains(Assoc.Non) && assocs.size > 2 then
+                  fail("non-associative operator")
+                else if assocs.distinct.size > 1 then
+                  fail("mixed associativity")
+                else
+                  val isLeftAssoc = assocs.distinct.headOption match
+                    case Some(Assoc.Left) => true
+                    case _ => false
+                  if isLeftAssoc then
+                    var result = base
+                    for (op, _, t) <- conts do
+                      result = Term.Infix(op, result, t).withPosFrom(result, t)
+                    pureP(result)
+                  else
+                    val terms = (base :: conts.map(_._3)).reverse
+                    val ops = conts.map(_._1)
+                    var result = terms.head
+                    for (t, op) <- (terms.tail `zip` ops) do
+                      result = Term.Infix(op, t, result).withPosFrom(t, result)
+                    pureP(result)
+              p.positioned.withWhat("an infix expression")
+            case PrefixGroup(prefixRules) => 
+              val opParsers: List[Parser[PrefixOp]] = prefixRules.map(rule => rule.op)
+              val opParser: Parser[PrefixOp] = longestMatch(opParsers*)
+              val p = (opParser.many, baseParser).p.map: (ops, base) =>
+                def go(xs: List[PrefixOp]): Term = xs match
+                  case Nil => base
+                  case op :: ops =>
+                    val t = go(ops)
+                    Term.Prefix(op, t).withPosFrom(op, t)
+                go(ops)
+              p.positioned.withWhat("an prefix expression")
+          opParsers(prec) = p
+          p
 
   def stringLitP: Parser[Term] =
     tokenP[Token.STR].map(t => Term.StrLit(t.content.substring(1, t.content.length - 1))).positioned
