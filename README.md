@@ -21,7 +21,8 @@ This is currently a toy.
 - [x] Parsing improvement: IO^ should be IO^{cap}
 - [x] Parsing improvement: `A => B` should be `A ->{cap} B`
 - [x] Support `struct` definitions
-- [ ] Support path expressions, reading and writing fields
+- [x] Support path expressions, reading and writing fields
+- [ ] Support translating module-level definitions
 - [ ] Support `if` expressions
 
 ## Issues
