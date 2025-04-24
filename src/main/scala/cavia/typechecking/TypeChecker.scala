@@ -4,6 +4,7 @@ package typechecking
 import core.*
 import ast.*
 import scala.collection.mutable.ArrayBuffer
+import cavia.core.ast.Syntax.PrefixOp
 
 object TypeChecker:
   import Expr.*
@@ -607,7 +608,16 @@ object TypeChecker:
         Left(TypeError.GeneralError(s"Unsupported infix operation: $op").withPos(srcPos))
 
   def checkPrefix(op: Syntax.PrefixOp, term: Syntax.Term, expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
-    ???
+    op match
+      case PrefixOp.Neg =>
+        val primOp = expected match
+          case Type.Base(BaseType.I32) => PrimitiveOp.I32Neg
+          case Type.Base(BaseType.I64) => PrimitiveOp.I64Neg
+          case _ => PrimitiveOp.I32Neg
+        checkPrimOp(primOp, List(term), expected, srcPos)
+      case PrefixOp.Not =>
+        val primOp = PrimitiveOp.BoolNot
+        checkPrimOp(primOp, List(term), expected, srcPos)
 
   def checkApply(fun: Syntax.Term, args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
@@ -731,6 +741,8 @@ object TypeChecker:
       case PrimitiveOp.BoolNot => checkPrimOpArgs(PrimitiveOp.BoolNot, args, List(BaseType.BoolType), BaseType.BoolType, pos)
       case PrimitiveOp.BoolAnd => checkPrimOpArgs(PrimitiveOp.BoolAnd, args, List(BaseType.BoolType, BaseType.BoolType), BaseType.BoolType, pos)
       case PrimitiveOp.BoolOr => checkPrimOpArgs(PrimitiveOp.BoolOr, args, List(BaseType.BoolType, BaseType.BoolType), BaseType.BoolType, pos)
+      case PrimitiveOp.I32Neg => checkPrimOpArgs(PrimitiveOp.I32Neg, args, List(BaseType.I32), BaseType.I32, pos)
+      case PrimitiveOp.I64Neg => checkPrimOpArgs(PrimitiveOp.I64Neg, args, List(BaseType.I64), BaseType.I64, pos)
       case PrimitiveOp.Sorry =>
         hopefully:
           if expected.exists then

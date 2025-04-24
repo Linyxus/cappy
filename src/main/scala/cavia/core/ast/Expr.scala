@@ -187,6 +187,8 @@ object Expr:
     case BoolNot
     case BoolAnd
     case BoolOr
+    case I32Neg
+    case I64Neg
     case Sorry
 
     override def toString: String = this match
@@ -220,6 +222,8 @@ object Expr:
       case BoolNot => "#boolnot"
       case BoolAnd => "#booland"
       case BoolOr => "#boolor"
+      case I32Neg => "#i32neg"
+      case I64Neg => "#i64neg"
 
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match
@@ -252,6 +256,8 @@ object Expr:
       case "#boolnot" => Some(PrimitiveOp.BoolNot)
       case "#booland" => Some(PrimitiveOp.BoolAnd)
       case "#boolor" => Some(PrimitiveOp.BoolOr)
+      case "#i32neg" => Some(PrimitiveOp.I32Neg)
+      case "#i64neg" => Some(PrimitiveOp.I64Neg)
       case "sorry" => Some(PrimitiveOp.Sorry)
       case _ => None
 
