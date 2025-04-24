@@ -24,7 +24,7 @@ This is currently a toy.
 - [x] Support path expressions, reading and writing fields
 - [x] Support translating module-level definitions
 - [x] Support translating `struct` definitions
-- [ ] Support operator parsing
+- [x] Support operator parsing
 - [ ] Support `if` expressions
 
 ## Issues
