@@ -346,6 +346,10 @@ object TypeChecker:
               else
                 sorry(TypeError.GeneralError(s"Field is not mutable").withPosFrom(lhs))
             case _ => sorry(TypeError.GeneralError(s"Cannot assign to this target").withPosFrom(lhs))
+      case Syntax.Term.Infix(op, lhs, rhs) =>
+        checkInfix(op, lhs, rhs, expected, t.pos)
+      case Syntax.Term.Prefix(op, term) =>
+        checkPrefix(op, term, expected, t.pos)
       case Syntax.Term.Lambda(params, body) => 
         checkTermParamList(params).flatMap: params =>
           val ctx1 = ctx.extend(params)
@@ -429,18 +433,7 @@ object TypeChecker:
                   sorry(TypeError.LeakingLocalBinder(resType.show(using ctx.extend(bd1 :: Nil))).withPos(d.pos))
         go(stmts)
       case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if PrimitiveOp.fromName(name).isDefined => 
-        PrimitiveOp.fromName(name).get match
-          case PrimitiveOp.I32Add => checkPrimOpArgs(PrimitiveOp.I32Add, args, List(BaseType.I32, BaseType.I32), BaseType.I32, t.pos)
-          case PrimitiveOp.I32Mul => checkPrimOpArgs(PrimitiveOp.I32Mul, args, List(BaseType.I32, BaseType.I32), BaseType.I32, t.pos)
-          case PrimitiveOp.I64Add => checkPrimOpArgs(PrimitiveOp.I64Add, args, List(BaseType.I64, BaseType.I64), BaseType.I64, t.pos)
-          case PrimitiveOp.I64Mul => checkPrimOpArgs(PrimitiveOp.I64Mul, args, List(BaseType.I64, BaseType.I64), BaseType.I64, t.pos)
-          case PrimitiveOp.I32Println => checkPrimOpArgs(PrimitiveOp.I32Println, args, List(BaseType.I32), BaseType.UnitType, t.pos)
-          case PrimitiveOp.I32Read => checkPrimOpArgs(PrimitiveOp.I32Read, args, List(), BaseType.I32, t.pos)
-          case PrimitiveOp.Sorry =>
-            hopefully:
-              if expected.exists then
-                Term.PrimOp(PrimitiveOp.Sorry, Nil).withPosFrom(t).withTpe(expected)
-              else sorry(TypeError.GeneralError("no expected type for sorry").withPos(t.pos))
+        checkPrimOp(PrimitiveOp.fromName(name).get, args, expected, t.pos)
       case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if lookupStructSymbol(name).isDefined =>
         val classSym = lookupStructSymbol(name).get
         val classType = Type.SymbolRef(classSym)
@@ -511,6 +504,20 @@ object TypeChecker:
         Right(t2)
       else 
         Left(TypeError.TypeMismatch(expected.show, t1.tpe.show).withPos(t.pos))
+
+  def checkInfix(op: Syntax.InfixOp, lhs: Syntax.Term, rhs: Syntax.Term, expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
+    op match
+      case Syntax.InfixOp.Plus =>
+        val primOp = expected match
+          case Type.Base(BaseType.I32) => PrimitiveOp.I32Add
+          case Type.Base(BaseType.I64) => PrimitiveOp.I64Add
+          case _ => PrimitiveOp.I32Add
+        checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
+      case op =>
+        Left(TypeError.GeneralError(s"Unsupported infix operation: $op").withPos(srcPos))
+
+  def checkPrefix(op: Syntax.PrefixOp, term: Syntax.Term, expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
+    ???
 
   def checkApply(fun: Syntax.Term, args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
@@ -602,6 +609,22 @@ object TypeChecker:
       case _ => Left(TypeError.GeneralError(s"Argument number mismatch for primitive operation, expected ${formals.length}, but got ${args.length}").withPos(pos))
     go(args, formals, Nil).map: args1 =>
       Term.PrimOp(op, args1).withPos(pos).withTpe(Type.Base(resType).withKind(TypeKind.Star))
+
+  def checkPrimOp(op: PrimitiveOp, args: List[Syntax.Term], expected: Type, pos: SourcePos)(using Context): Result[Term] =
+    op match
+      case PrimitiveOp.I32Add => checkPrimOpArgs(PrimitiveOp.I32Add, args, List(BaseType.I32, BaseType.I32), BaseType.I32, pos)
+      case PrimitiveOp.I32Mul => checkPrimOpArgs(PrimitiveOp.I32Mul, args, List(BaseType.I32, BaseType.I32), BaseType.I32, pos)
+      case PrimitiveOp.I64Add => checkPrimOpArgs(PrimitiveOp.I64Add, args, List(BaseType.I64, BaseType.I64), BaseType.I64, pos)
+      case PrimitiveOp.I64Mul => checkPrimOpArgs(PrimitiveOp.I64Mul, args, List(BaseType.I64, BaseType.I64), BaseType.I64, pos)
+      case PrimitiveOp.I32Println => checkPrimOpArgs(PrimitiveOp.I32Println, args, List(BaseType.I32), BaseType.UnitType, pos)
+      case PrimitiveOp.I32Read => checkPrimOpArgs(PrimitiveOp.I32Read, args, List(), BaseType.I32, pos)
+      case PrimitiveOp.Sorry =>
+        hopefully:
+          if expected.exists then
+            Term.PrimOp(PrimitiveOp.Sorry, Nil).withPos(pos).withTpe(expected)
+          else sorry(TypeError.GeneralError("no expected type for sorry").withPos(pos))
+      // case _ => Left(TypeError.GeneralError(s"Unsupported primitive operation: $op").withPos(pos))
+      
 
   def checkStructDef(d: Syntax.Definition.StructDef)(using Context): Result[StructInfo] =
     hopefully:
