@@ -4,6 +4,8 @@ package typechecking
 import core.*
 import ast.*
 import reporting.trace
+import cavia.core.ast.Expr.CaptureSet.Const
+import cavia.core.ast.Expr.CaptureSet.UniversalSet
 
 object TypeComparer:
   import TypeChecker.*
@@ -13,8 +15,20 @@ object TypeComparer:
   def checkSubcapture(cs1: CaptureSet, cs2: CaptureSet)(using Context): Boolean = //trace(s"checkSubcapture(${cs1.show}, ${cs2.show})"):
     cs1.elems.forall(checkSubcapture(_, cs2))
 
+  def accountsFor(cs2: CaptureSet, x1: CaptureRef)(using Context): Boolean =
+    cs2 match
+      case Const(elems) => elems.contains(x1)
+      case cs2: UniversalSet if !cs2.solved =>
+        val existingCs = CaptureSet.Const(cs2.existingRefs ++ cs2.absorbedRefs)
+        checkSubcapture(x1, existingCs) || {
+          cs2.absorb(x1)
+          true
+        }
+      case cs2: UniversalSet =>
+        cs2.elems.contains(x1)
+
   def checkSubcapture(x1: CaptureRef, cs2: CaptureSet)(using Context): Boolean = //trace(s"checkSubcapture(${x1.show}, ${cs2.show})"):
-    cs2.elems.contains(x1) || {
+    accountsFor(cs2, x1) || {
       x1 match
         case CaptureRef.Ref(Term.BinderRef(idx)) => getBinder(idx) match
           case Binder.TermBinder(name, tpe) => checkSubcapture(tpe.captureSet, cs2)

@@ -2,6 +2,8 @@ package cavia
 package core
 package ast
 
+import scala.collection.mutable.Set
+
 object Expr:
   /** A trait for expressions that have a type */
   trait Typed:
@@ -44,12 +46,50 @@ object Expr:
     case Ref(ref: VarRef)
     case CAP()
 
-  case class CaptureSet(elems: List[CaptureRef]) extends Positioned:
-    def ++ (other: CaptureSet): CaptureSet = CaptureSet(elems ++ other.elems)
+  sealed trait CaptureSet extends Positioned:
+    import CaptureSet.*
+    def elems: List[CaptureRef]
+    def ++ (other: CaptureSet): CaptureSet =
+      (this, other) match
+        case (Const(xs), Const(ys)) => Const(xs ++ ys)
+        case (cs: Const, univ: UniversalSet) => univ.mergeConst(cs)
+        case (univ: UniversalSet, cs: Const) => univ.mergeConst(cs)
+        case (univ1: UniversalSet, univ2: UniversalSet) => univ1.merge(univ2)
+        case _ => assert(false, s"Cannot concatenate $this and $other")
 
   object CaptureSet:
-    def empty: CaptureSet = CaptureSet(Nil)
-    def universal: CaptureSet = CaptureSet(List(CaptureRef.CAP()))
+    case class Const(elems: List[CaptureRef]) extends CaptureSet
+    case class UniversalSet(existingRefs: List[CaptureRef]) extends CaptureSet:
+      private var mySolved: Boolean = false
+      def solved: Boolean = mySolved
+      private var absorbed: Set[CaptureRef] = Set.empty
+      def elems: List[CaptureRef] =
+        assert(solved, "getting elems of an unsolved universal set")
+        absorbed.toList ++ existingRefs.toList
+
+      def solve(): CaptureSet =
+        mySolved = true
+        CaptureSet(elems)
+
+      def absorb(ref: CaptureRef): Unit =
+        absorbed += ref
+
+      def merge(other: UniversalSet): UniversalSet =
+        absorbed ++= other.absorbed
+        val res = new UniversalSet(existingRefs ++ other.existingRefs)
+        res.absorbed = absorbed
+        res
+
+      def mergeConst(other: Const): UniversalSet =
+        val res = new UniversalSet(existingRefs ++ other.elems)
+        res.absorbed = absorbed
+        res
+
+      def absorbedRefs: List[CaptureRef] = absorbed.toList
+
+    def apply(elems: List[CaptureRef]): CaptureSet = Const(elems)
+    def empty: CaptureSet = Const(Nil)
+    def universal: CaptureSet = Const(List(CaptureRef.CAP()))
 
   enum TypeKind:
     case Star  // *

@@ -247,3 +247,27 @@ extension (tpe: Type)
     collector(tpe)
     CaptureSet(collector.collected.toList)
 
+class UniversalConversion extends TypeMap:
+  import scala.collection.mutable.Set
+  var createdUniversals: List[CaptureSet.UniversalSet] = Nil
+
+  def maybeCreateUniversal(elems: List[CaptureRef]): CaptureSet =
+    if elems.contains(CaptureRef.CAP()) then
+      val existingRefs = elems.filterNot(_ == CaptureRef.CAP())
+      val univSet = CaptureSet.UniversalSet(existingRefs)
+      createdUniversals = univSet :: createdUniversals
+      univSet
+    else CaptureSet.Const(elems)
+
+  override def mapCaptureSet(captureSet: CaptureSet): CaptureSet = 
+    captureSet match
+      case CaptureSet.Const(elems) => maybeCreateUniversal(elems)
+      case univ: CaptureSet.UniversalSet if univ.solved => maybeCreateUniversal(univ.elems)
+      case univ: CaptureSet.UniversalSet =>
+        assert(false, "universal conversion on a non-solved universal set")
+
+  override def apply(tpe: Type): Type = tpe match
+    case Type.TypeArrow(ps, result) => tpe
+    case Type.TermArrow(ps, result) => tpe
+    case _ => mapOver(tpe)
+

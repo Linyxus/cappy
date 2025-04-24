@@ -520,23 +520,32 @@ object TypeChecker:
         case Type.TermArrow(formals, resultType) =>
           if args.length != formals.length then
             sorry(TypeError.GeneralError(s"Argument number mismatch, expected ${formals.length}, but got ${args.length}").withPos(fun.pos))
-          def go(xs: List[(Syntax.Term, Type)], acc: List[Term]): Result[Term] = xs match
+          def go(xs: List[(Syntax.Term, Type)], acc: List[Term], captureSetAcc: List[CaptureSet]): Result[(Term, List[CaptureSet])] = xs match
             case Nil =>
               val args = acc.reverse
               substituteAll(resultType, args).map: resultType1 =>
-                Term.Apply(fun1, args).withPos(srcPos).withTpe(resultType1)
+                val resTerm = Term.Apply(fun1, args).withPos(srcPos).withTpe(resultType1)
+                (resTerm, captureSetAcc)
             case (arg, formal) :: xs => 
-              val arg1 = checkTerm(arg, expected = formal).!!
+              val tm = UniversalConversion()
+              val formal1 = tm.apply(formal)
+              val localSets = tm.createdUniversals
+              val arg1 = checkTerm(arg, expected = formal1).!!
+              val css = localSets.map(_.solve())
               val xs1 = xs.zipWithIndex.map: 
                 case ((arg, formal), idx) =>
                   (arg, substitute(formal, arg1, idx, isParamType = true).!!)
-              go(xs1, arg1 :: acc)
-          val resultTerm = go(args `zip` (formals.map(_.tpe)), Nil).!!
+              go(xs1, arg1 :: acc, css ++ captureSetAcc)
+          val (resultTerm, css) = go(args `zip` (formals.map(_.tpe)), Nil, Nil).!!
           fun1 match
             case _: VarRef =>
               // Skip, since it will already be marked
             case _ =>
               markFree(fun1.tpe.captureSet)
+          for i <- 0 until css.length do
+            for j <- i + 1 until css.length do
+              if !checkSeparation(css(i), css(j)) then
+                sorry(TypeError.SeparationError(css(i).show, css(j).show).withPos(srcPos))
           resultTerm
         case _ =>
           sorry(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(fun.pos))
