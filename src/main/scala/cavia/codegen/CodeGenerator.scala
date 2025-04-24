@@ -26,6 +26,9 @@ object CodeGenerator:
     case FuncDef(funcSym: Symbol, workerSym: Symbol)
     case GlobalDef(globalSym: Symbol)
 
+  enum TypeInfo:
+    case StructDef(structSym: Symbol, fields: Map[String, Symbol])
+
   case class Context(
     funcs: ArrayBuffer[Func] = ArrayBuffer.empty,
     globals: ArrayBuffer[Global] = ArrayBuffer.empty,
@@ -36,7 +39,8 @@ object CodeGenerator:
     closureTypes: mutable.Map[FuncType, ClosureTypeInfo] = mutable.Map.empty,
     declares: ArrayBuffer[ElemDeclare] = ArrayBuffer.empty,
     binderInfos: List[BinderInfo] = Nil,
-    defInfos: mutable.Map[Expr.Symbol, DefInfo] = new IdentityHashMap[Expr.Symbol, DefInfo]().asScala,
+    defInfos: mutable.Map[Expr.DefSymbol, DefInfo] = new IdentityHashMap[Expr.DefSymbol, DefInfo]().asScala,
+    typeInfos: mutable.Map[Expr.StructSymbol, TypeInfo] = new IdentityHashMap[Expr.StructSymbol, TypeInfo]().asScala,
     var startFunc: Option[Symbol] = None,
   ):
     def withLocalSym(binder: Expr.Binder, sym: Symbol): Context =
@@ -101,7 +105,7 @@ object CodeGenerator:
         paramTypes = ValType.AnyRef :: paramTypes
       FuncType(paramTypes, Some(translateType(result)))
     case Expr.Type.Capturing(inner, _) => computeFuncType(inner)
-    case _ => assert(false, s"Unsupported type for computing func type: $tpe")
+    case _ => assert(false, s"Unsupported type for computing func type")
 
   def createFuncParams(params: List[Expr.Binder.TermBinder])(using Context): List[(Symbol, ValType)] =
     params.map: binder =>
@@ -124,7 +128,7 @@ object CodeGenerator:
         val closSymm = Symbol.fresh(closName)
         val closType = StructType(
           List(
-            (Symbol.Function, ValType.TypedRef(funcSymm)),
+            FieldType(Symbol.Function, ValType.TypedRef(funcSymm), mutable = false),
           ),
           subClassOf = None
         )
@@ -145,6 +149,9 @@ object CodeGenerator:
       val funcType = computeFuncType(tpe)
       val info = createClosureTypes(funcType)
       ValType.TypedRef(info.closTypeSym)
+    case Expr.Type.SymbolRef(sym) =>
+      val TypeInfo.StructDef(structSym, _) = ctx.typeInfos(sym): @unchecked
+      ValType.TypedRef(structSym)
     case _ => assert(false, s"Unsupported type: $tpe")
 
   def dropLocalBinders(xs: Set[Int], numLocals: Int): Set[Int] =
@@ -199,7 +206,10 @@ object CodeGenerator:
         val sym = Symbol.fresh(binder.name)
         val tpe = translateType(binder.tpe)
         (idx, (sym, tpe))
-    val fields = (Symbol.Function -> ValType.TypedRef(closureInfo.funcTypeSym)) :: depVars.map(idx => envMap(idx))
+    val fields = 
+      FieldType(Symbol.Function, ValType.TypedRef(closureInfo.funcTypeSym), mutable = false) :: depVars.map: idx =>
+        val (sym, tpe) = envMap(idx)
+        FieldType(sym, tpe, mutable = false)
     val exactClosureType = StructType(fields, subClassOf = Some(closureInfo.closTypeSym))
     val exactClosureTypeName = s"clos_${funName}"
     val exactClosureTypeSym = Symbol.fresh(exactClosureTypeName)
@@ -331,7 +341,58 @@ object CodeGenerator:
       val argInstrs = args.flatMap(genTerm)
       val callRefInstrs = List(Instruction.CallRef(info.funcTypeSym))
       funInstrs ++ getSelfArgInstrs ++ argInstrs ++ getWorkerInstrs ++ callRefInstrs
+    case Term.StructInit(classSym, args) =>
+      genStructInit(classSym, args)
+    case Term.Select(base, fieldInfo) =>
+      genSelect(base, fieldInfo)
+    case Term.Assign(lhs, rhs) =>
+      genAssign(lhs, rhs)
     case _ => assert(false, s"Don't know how to translate this term: $t")
+
+  def genStructInit(classSym: Expr.StructSymbol, args: List[Expr.Term])(using Context): List[Instruction] =
+    val TypeInfo.StructDef(structSym, _) = ctx.typeInfos(classSym): @unchecked
+    val argInstrs = args.flatMap(genTerm)
+    val createStructInstrs = List(Instruction.StructNew(structSym))
+    argInstrs ++ createStructInstrs
+
+  def genSelect(base: Expr.Term, fieldInfo: Expr.FieldInfo)(using Context): List[Instruction] =
+    base.tpe.stripCaptures match
+      case Expr.Type.SymbolRef(classSym) =>
+        val TypeInfo.StructDef(structSym, nameMap) = ctx.typeInfos(classSym): @unchecked
+        val fieldName = fieldInfo.name
+        val fieldSym = nameMap(fieldName)
+        val baseInstrs = genTerm(base)
+        val getFieldInstrs = List(Instruction.StructGet(structSym, fieldSym))
+        baseInstrs ++ getFieldInstrs
+      case _ => assert(false, "impossible, otherwise a bug in the typechecker")
+
+  def genAssign(lhs: Expr.Term.Select, rhs: Expr.Term)(using Context): List[Instruction] =
+    val Expr.Term.Select(base, fieldInfo) = lhs
+    base.tpe.stripCaptures match
+      case Expr.Type.SymbolRef(classSym) =>
+        val TypeInfo.StructDef(structSym, nameMap) = ctx.typeInfos(classSym): @unchecked
+        val fieldName = fieldInfo.name
+        val fieldSym = nameMap(fieldName)
+        val lhsInstrs = genTerm(base)
+        val rhsInstrs = genTerm(rhs)
+        val setFieldInstrs = List(Instruction.StructSet(structSym, fieldSym))
+        val unitInstrs = List(Instruction.I32Const(0))
+        lhsInstrs ++ rhsInstrs ++ setFieldInstrs ++ unitInstrs
+      case _ => assert(false, "impossible, otherwise a bug in the typechecker")
+
+  def genStructDef(sym: Expr.StructSymbol)(using Context): TypeInfo =
+    val structSym = Symbol.fresh(sym.name)
+    val info = sym.info
+    val fields = info.fields.map: field =>
+      val Expr.FieldInfo(name, tpe, mutable) = field
+      val fieldSym = Symbol.fresh(name)
+      val fieldType = translateType(tpe)
+      FieldType(fieldSym, fieldType, mutable)
+    val structType = StructType(fields, subClassOf = None)
+    val typeDef = TypeDef(structSym, structType)
+    val nameMap = Map.from((info.fields `zip` fields).map((s, t) => (s.name, t.sym)))
+    emitType(typeDef)
+    TypeInfo.StructDef(structSym, nameMap)
 
   def genModuleFunction(funType: Expr.Type, funSymbol: Symbol, workerSymbol: Symbol, expr: Expr.Term)(using Context): Unit =
     val Term.TermLambda(ps, body) = expr: @unchecked
@@ -400,6 +461,7 @@ object CodeGenerator:
     // First of all, emit imports
     emitDefaultImports()
     // (1) create symbols for all the definitions
+    //   for struct symbols, we create the type as well
     m.defns.foreach: defn =>
       defn match
         case Definition.ValDef(sym, body) =>
@@ -414,7 +476,8 @@ object CodeGenerator:
               val globalSym = Symbol.fresh(sym.name)
               ctx.defInfos += (sym -> DefInfo.GlobalDef(globalSym))
         case Definition.StructDef(sym) =>
-          assert(false, s"Not supported yet: ${sym}")
+          val info = genStructDef(sym)
+          ctx.typeInfos += (sym -> info)
     // (2) emit func definitions
     m.defns.foreach: defn =>
       defn match

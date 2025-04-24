@@ -33,6 +33,7 @@ object Wasm:
     case RefNull(typeSym: Symbol)
     case RefNullAny
     case StructGet(sym: Symbol, fieldSym: Symbol)
+    case StructSet(sym: Symbol, fieldSym: Symbol)
     case StructNew(typeSym: Symbol)
     case CallRef(typeSym: Symbol)
     case Call(funcSym: Symbol)
@@ -51,6 +52,7 @@ object Wasm:
       case RefCast(typeSym) => s"ref.cast (ref ${typeSym.show})"
       case RefFunc(funcSym) => s"ref.func ${funcSym.show}"
       case StructGet(sym, fieldSym) => s"struct.get ${sym.show} ${fieldSym.show}"
+      case StructSet(sym, fieldSym) => s"struct.set ${sym.show} ${fieldSym.show}"
       case StructNew(typeSym) => s"struct.new ${typeSym.show}"
       case CallRef(typeSym) => s"call_ref ${typeSym.show}"
       case Call(funcSym) => s"call ${funcSym.show}"
@@ -92,6 +94,8 @@ object Wasm:
   val I32PrintlnType = FuncType(List(ValType.I32), None)
   val I32ReadType = FuncType(List(), Some(ValType.I32))
 
+  case class FieldType(sym: Symbol, tpe: ValType, mutable: Boolean)
+
   sealed trait CompositeType:
     def show: String
   case class FuncType(paramTypes: List[ValType], resultType: Option[ValType]) extends CompositeType:
@@ -102,10 +106,12 @@ object Wasm:
           case None => ""
           case Some(resultType) => s"(result ${resultType.show})"
       s"(func ${paramStrs.mkString(" ")} ${resultStr})"
-  case class StructType(fields: List[(Symbol, ValType)], subClassOf: Option[Symbol]) extends CompositeType:
+  case class StructType(fields: List[FieldType], subClassOf: Option[Symbol]) extends CompositeType:
     def show: String = 
-      val fieldStrs = fields.map: (sym, tpe) =>
-        s"(field ${sym.show} ${tpe.show})"
+      val fieldStrs = fields.map: 
+        case FieldType(sym, tpe, mutable) =>
+          val typeStr = if mutable then s"(mut ${tpe.show})" else tpe.show
+          s"(field ${sym.show} $typeStr)"
       val subclassStr = subClassOf match
         case None => ""
         case Some(sym) => s"${sym.show} "

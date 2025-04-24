@@ -209,7 +209,8 @@ object Expr:
     val from: Module
 
   case class DefSymbol(name: String, var tpe: Type, from: Module) extends Symbol
-  case class StructSymbol(name: String, var info: StructInfo, from: Module) extends Symbol
+  case class StructSymbol(name: String, var info: StructInfo, from: Module) extends Symbol:
+    override def toString(): String = s"StructSymbol($name)"
 
   enum Definition extends Positioned:
     case ValDef(sym: DefSymbol, body: Term)
