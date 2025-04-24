@@ -517,6 +517,92 @@ object TypeChecker:
           case Type.Base(BaseType.I64) => PrimitiveOp.I64Add
           case _ => PrimitiveOp.I32Add
         checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
+      case Syntax.InfixOp.Minus =>
+        val primOp = expected match
+          case Type.Base(BaseType.I32) => PrimitiveOp.I32Sub
+          case Type.Base(BaseType.I64) => PrimitiveOp.I64Sub
+          case _ => PrimitiveOp.I32Sub
+        checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
+      case Syntax.InfixOp.Mul =>
+        val primOp = expected match
+          case Type.Base(BaseType.I32) => PrimitiveOp.I32Mul
+          case Type.Base(BaseType.I64) => PrimitiveOp.I64Mul
+          case _ => PrimitiveOp.I32Mul
+        checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
+      case Syntax.InfixOp.Div =>
+        val primOp = expected match
+          case Type.Base(BaseType.I32) => PrimitiveOp.I32Div
+          case Type.Base(BaseType.I64) => PrimitiveOp.I64Div
+          case _ => PrimitiveOp.I32Div
+        checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
+      case Syntax.InfixOp.Mod =>
+        val primOp = expected match
+          case Type.Base(BaseType.I32) => PrimitiveOp.I32Rem
+          case Type.Base(BaseType.I64) => PrimitiveOp.I64Rem
+          case _ => PrimitiveOp.I32Rem
+        checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
+      case Syntax.InfixOp.Eq =>
+        hopefully:
+          val lhs1 = checkTerm(lhs).!!
+          val tpe = lhs1.tpe
+          val primOp = tpe match
+            case Type.Base(BaseType.I32) => PrimitiveOp.I32Eq
+            case Type.Base(BaseType.I64) => PrimitiveOp.I64Eq
+            case Type.Base(BaseType.BoolType) => PrimitiveOp.BoolEq
+            case _ => PrimitiveOp.I32Eq
+          checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
+      case Syntax.InfixOp.Neq =>
+        hopefully:
+          val lhs1 = checkTerm(lhs).!!
+          val tpe = lhs1.tpe
+          val primOp = tpe match
+            case Type.Base(BaseType.I32) => PrimitiveOp.I32Neq
+            case Type.Base(BaseType.I64) => PrimitiveOp.I64Neq
+            case Type.Base(BaseType.BoolType) => PrimitiveOp.BoolNeq
+            case _ => PrimitiveOp.I32Neq
+          checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
+      case Syntax.InfixOp.Lt =>
+        hopefully:
+          val lhs1 = checkTerm(lhs).!!
+          val tpe = lhs1.tpe
+          val primOp = tpe match
+            case Type.Base(BaseType.I32) => PrimitiveOp.I32Lt
+            case Type.Base(BaseType.I64) => PrimitiveOp.I64Lt
+            case _ => PrimitiveOp.I32Lt
+          checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
+      case Syntax.InfixOp.Gt =>
+        hopefully:
+          val lhs1 = checkTerm(lhs).!!
+          val tpe = lhs1.tpe
+          val primOp = tpe match
+            case Type.Base(BaseType.I32) => PrimitiveOp.I32Gt
+            case Type.Base(BaseType.I64) => PrimitiveOp.I64Gt
+            case _ => PrimitiveOp.I32Gt
+          checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
+      case Syntax.InfixOp.Lte =>
+        hopefully:
+          val lhs1 = checkTerm(lhs).!!
+          val tpe = lhs1.tpe
+          val primOp = tpe match
+            case Type.Base(BaseType.I32) => PrimitiveOp.I32Lte
+            case Type.Base(BaseType.I64) => PrimitiveOp.I64Lte
+            case _ => PrimitiveOp.I32Lte
+          checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
+      case Syntax.InfixOp.Gte =>
+        hopefully:
+          val lhs1 = checkTerm(lhs).!!
+          val tpe = lhs1.tpe
+          val primOp = tpe match
+            case Type.Base(BaseType.I32) => PrimitiveOp.I32Gte
+            case Type.Base(BaseType.I64) => PrimitiveOp.I64Gte
+            case _ => PrimitiveOp.I32Gte
+          checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
+      case Syntax.InfixOp.And =>
+        val primOp = PrimitiveOp.BoolAnd
+        checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
+      case Syntax.InfixOp.Or =>
+        val primOp = PrimitiveOp.BoolOr
+        checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
       case op =>
         Left(TypeError.GeneralError(s"Unsupported infix operation: $op").withPos(srcPos))
 
@@ -622,6 +708,29 @@ object TypeChecker:
       case PrimitiveOp.I64Mul => checkPrimOpArgs(PrimitiveOp.I64Mul, args, List(BaseType.I64, BaseType.I64), BaseType.I64, pos)
       case PrimitiveOp.I32Println => checkPrimOpArgs(PrimitiveOp.I32Println, args, List(BaseType.I32), BaseType.UnitType, pos)
       case PrimitiveOp.I32Read => checkPrimOpArgs(PrimitiveOp.I32Read, args, List(), BaseType.I32, pos)
+      case PrimitiveOp.I32Sub => checkPrimOpArgs(PrimitiveOp.I32Sub, args, List(BaseType.I32, BaseType.I32), BaseType.I32, pos)
+      case PrimitiveOp.I32Div => checkPrimOpArgs(PrimitiveOp.I32Div, args, List(BaseType.I32, BaseType.I32), BaseType.I32, pos)
+      case PrimitiveOp.I32Rem => checkPrimOpArgs(PrimitiveOp.I32Rem, args, List(BaseType.I32, BaseType.I32), BaseType.I32, pos)
+      case PrimitiveOp.I64Sub => checkPrimOpArgs(PrimitiveOp.I64Sub, args, List(BaseType.I64, BaseType.I64), BaseType.I64, pos)
+      case PrimitiveOp.I64Div => checkPrimOpArgs(PrimitiveOp.I64Div, args, List(BaseType.I64, BaseType.I64), BaseType.I64, pos)
+      case PrimitiveOp.I64Rem => checkPrimOpArgs(PrimitiveOp.I64Rem, args, List(BaseType.I64, BaseType.I64), BaseType.I64, pos)
+      case PrimitiveOp.I32Eq => checkPrimOpArgs(PrimitiveOp.I32Eq, args, List(BaseType.I32, BaseType.I32), BaseType.BoolType, pos)
+      case PrimitiveOp.I32Neq => checkPrimOpArgs(PrimitiveOp.I32Neq, args, List(BaseType.I32, BaseType.I32), BaseType.BoolType, pos)
+      case PrimitiveOp.I32Lt => checkPrimOpArgs(PrimitiveOp.I32Lt, args, List(BaseType.I32, BaseType.I32), BaseType.BoolType, pos)
+      case PrimitiveOp.I32Gt => checkPrimOpArgs(PrimitiveOp.I32Gt, args, List(BaseType.I32, BaseType.I32), BaseType.BoolType, pos)
+      case PrimitiveOp.I32Lte => checkPrimOpArgs(PrimitiveOp.I32Lte, args, List(BaseType.I32, BaseType.I32), BaseType.BoolType, pos)
+      case PrimitiveOp.I32Gte => checkPrimOpArgs(PrimitiveOp.I32Gte, args, List(BaseType.I32, BaseType.I32), BaseType.BoolType, pos)
+      case PrimitiveOp.I64Eq => checkPrimOpArgs(PrimitiveOp.I64Eq, args, List(BaseType.I64, BaseType.I64), BaseType.BoolType, pos)
+      case PrimitiveOp.I64Neq => checkPrimOpArgs(PrimitiveOp.I64Neq, args, List(BaseType.I64, BaseType.I64), BaseType.BoolType, pos)
+      case PrimitiveOp.I64Lt => checkPrimOpArgs(PrimitiveOp.I64Lt, args, List(BaseType.I64, BaseType.I64), BaseType.BoolType, pos)
+      case PrimitiveOp.I64Gt => checkPrimOpArgs(PrimitiveOp.I64Gt, args, List(BaseType.I64, BaseType.I64), BaseType.BoolType, pos)
+      case PrimitiveOp.I64Lte => checkPrimOpArgs(PrimitiveOp.I64Lte, args, List(BaseType.I64, BaseType.I64), BaseType.BoolType, pos)
+      case PrimitiveOp.I64Gte => checkPrimOpArgs(PrimitiveOp.I64Gte, args, List(BaseType.I64, BaseType.I64), BaseType.BoolType, pos)
+      case PrimitiveOp.BoolEq => checkPrimOpArgs(PrimitiveOp.BoolEq, args, List(BaseType.BoolType, BaseType.BoolType), BaseType.BoolType, pos)
+      case PrimitiveOp.BoolNeq => checkPrimOpArgs(PrimitiveOp.BoolNeq, args, List(BaseType.BoolType, BaseType.BoolType), BaseType.BoolType, pos)
+      case PrimitiveOp.BoolNot => checkPrimOpArgs(PrimitiveOp.BoolNot, args, List(BaseType.BoolType), BaseType.BoolType, pos)
+      case PrimitiveOp.BoolAnd => checkPrimOpArgs(PrimitiveOp.BoolAnd, args, List(BaseType.BoolType, BaseType.BoolType), BaseType.BoolType, pos)
+      case PrimitiveOp.BoolOr => checkPrimOpArgs(PrimitiveOp.BoolOr, args, List(BaseType.BoolType, BaseType.BoolType), BaseType.BoolType, pos)
       case PrimitiveOp.Sorry =>
         hopefully:
           if expected.exists then

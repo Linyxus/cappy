@@ -160,10 +160,6 @@ class Tokenizer(source: SourceFile):
           case '}' => Token.RBRACE()
           case '^' => Token.HAT()
           case '-' if expectChar('>') => Token.ARROW()
-          // case '-' if peek.isDigit =>
-          //   var startPos = currentPos - 1
-          //   consumeInt()
-          //   Token.INT(source.content.substring(startPos, currentPos))
           case '-' => Token.MINUS()
           case '<' if expectChar(':') => Token.LESSCOLON()
           case '<' if expectChar('=') => Token.LESS_EQUAL()
