@@ -1,7 +1,7 @@
-package cavia.tokenizing
-import cavia.io.SourceFile
-import cavia.core.*
-import scala.compiletime.ops.double
+package cavia
+package tokenizing
+import io.SourceFile
+import core.*
 
 class Tokenizer(source: SourceFile):
   import Tokenizer.*
@@ -31,12 +31,12 @@ class Tokenizer(source: SourceFile):
   def locateColumn(pos: Int): Int =
     var remain = pos
     var lineIdx = 0
-    
+
     // Find which line contains the position
     while lineIdx < lineLengths.size && remain >= lineLengths(lineIdx) do
       remain -= lineLengths(lineIdx)
       lineIdx += 1
-    
+
     // remain is now the offset within the line
     remain
 
@@ -147,6 +147,7 @@ class Tokenizer(source: SourceFile):
               val what = if isAtEnd then "end of file" else "new line"
               Error(s"Unclosed string literal, unexpected $what")
           case '=' if expectChar('>') => Token.FAT_ARROW()
+          case '=' if expectChar('=') => Token.DOUBLE_EQUAL()
           case '=' => Token.EQUAL()
           case '(' => Token.LPAREN()
           case ')' => Token.RPAREN()
@@ -163,7 +164,21 @@ class Tokenizer(source: SourceFile):
             var startPos = currentPos - 1
             consumeInt()
             Token.INT(source.content.substring(startPos, currentPos))
+          case '-' => Token.MINUS()
           case '<' if expectChar(':') => Token.LESSCOLON()
+          case '<' if expectChar('=') => Token.LESS_EQUAL()
+          case '<' => Token.LESS()
+          case '>' if expectChar('=') => Token.GREATER_EQUAL()
+          case '>' => Token.GREATER()
+          case '!' if expectChar('=') => Token.BANG_EQUAL()
+          case '!' => Token.BANG()
+          case '+' if expectChar('+') => Token.DOUBLE_PLUS()
+          case '+' => Token.PLUS()
+          case '*' => Token.STAR()
+          case '/' => Token.SLASH()
+          case '%' => Token.PERCENT()
+          case '&' if expectChar('&') => Token.DOUBLE_AMP()
+          case '|' if expectChar('|') => Token.DOUBLE_BAR()
           case ch if ch.isDigit =>
             var startPos = currentPos - 1
             consumeInt()

@@ -19,6 +19,21 @@ enum Token extends Positioned:
   case ARROW()  // ->
   case FAT_ARROW()  // =>
   case HAT()  // ^
+  case PLUS()  // +
+  case MINUS()  // -
+  case STAR()  // *
+  case SLASH()  // /
+  case PERCENT() //  %
+  case BANG()  // !
+  case DOUBLE_AMP() // &&
+  case DOUBLE_BAR()  // ||
+  case DOUBLE_EQUAL() // ==
+  case BANG_EQUAL() // !=
+  case LESS() // <
+  case GREATER() // >
+  case LESS_EQUAL() // <=
+  case GREATER_EQUAL()  // >=
+  case DOUBLE_PLUS()  // ++
   case EOF()  // End of file
   case INDENT()  // >>> indent
   case DEDENT()  // <<< dedent
