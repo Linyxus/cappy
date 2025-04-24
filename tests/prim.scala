@@ -16,7 +16,6 @@ def printPrimes(now: i32, limit: i32): Unit =
   if now < limit then
     printPrimes(now + 1, limit)
 def main(): Unit =
-  val limit = #i32read()
-  printPrimes(2, limit)
+  printPrimes(2, 50)
   printNumCalls()
   ()
