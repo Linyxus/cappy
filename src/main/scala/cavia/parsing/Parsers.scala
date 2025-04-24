@@ -98,6 +98,7 @@ object Parsers:
     longestMatch(
       termLambdaP,
       typeLambdaP,
+      ifP,
       //applyP,
       getParserOf(0),
       blockP,
@@ -168,6 +169,13 @@ object Parsers:
 
   def unitLitP: Parser[Term] =
     (tokenP[Token.LPAREN], tokenP[Token.RPAREN]).p.map(_ => Term.UnitLit()).positioned
+
+  def ifP: Parser[Term] =
+    val elseBranchP = (tokenP[Token.NEWLINE].tryIt, keywordP("else"), termP).p.map: (_, _, elseBranch) =>
+      elseBranch
+    val p = (keywordP("if"), termP, keywordP("then"), termP, elseBranchP.tryIt).p.map: (_, cond, _, thenBranch, maybeElseBranch) =>
+      Term.If(cond, thenBranch, maybeElseBranch)
+    p.positioned.withWhat("an if expression")
 
   def blockP: Parser[Term] = 
     val clauseP: Parser[Definition | Term] = orP(

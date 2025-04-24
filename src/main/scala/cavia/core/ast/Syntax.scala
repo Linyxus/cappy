@@ -36,6 +36,7 @@ object Syntax:
     case Assign(lhs: Term, rhs: Term)
     case Infix(op: InfixOp, lhs: Term, rhs: Term)
     case Prefix(op: PrefixOp, term: Term)
+    case If(cond: Term, thenBranch: Term, elseBranch: Option[Term])
   import Term.*
 
   case class TypeParamList(params: List[TypeParam | CaptureParam]) extends Positioned
