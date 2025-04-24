@@ -160,6 +160,12 @@ object Parsers:
   def intLitP: Parser[Term] =
     tokenP[Token.INT].map(t => Term.IntLit(t.content.toInt)).positioned
 
+  def boolLitP: Parser[Term] =
+    val trueP = keywordP("true").map(_ => Term.BoolLit(true))
+    val falseP = keywordP("false").map(_ => Term.BoolLit(false))
+    val p = trueP `or` falseP
+    p.positioned
+
   def unitLitP: Parser[Term] =
     (tokenP[Token.LPAREN], tokenP[Token.RPAREN]).p.map(_ => Term.UnitLit()).positioned
 

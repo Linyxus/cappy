@@ -28,6 +28,7 @@ object Expr:
     case IntType
     case UnitType
     case AnyType
+    case BoolType  // will be represented as i32
     /** Primitive types in WebAssembly */
     case I32
     case I64
@@ -190,6 +191,7 @@ object Expr:
     case SymbolRef(sym: DefSymbol)
     case StrLit(value: String)
     case IntLit(value: Int)
+    case BoolLit(value: Boolean)
     case UnitLit()
     case TermLambda(params: List[TermBinder], body: Term)
     case TypeLambda(params: List[TypeBinder | CaptureBinder], body: Term)
@@ -228,6 +230,7 @@ object Expr:
     def i64Type: Type = Type.Base(BaseType.I64).withKind(TypeKind.Star)
     def i32Type: Type = Type.Base(BaseType.I32).withKind(TypeKind.Star)
     def unitType: Type = Type.Base(BaseType.UnitType).withKind(TypeKind.Star)
+    def boolType: Type = Type.Base(BaseType.BoolType).withKind(TypeKind.Star)
     def capCaptureSet: CaptureSet = CaptureSet(List(CaptureRef.CAP()))
 
   enum Variance:

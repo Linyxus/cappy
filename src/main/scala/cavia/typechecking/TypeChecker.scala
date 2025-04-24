@@ -149,6 +149,7 @@ object TypeChecker:
     case "i64" => Some(BaseType.I64)
     case "f32" => Some(BaseType.F32)
     case "f64" => Some(BaseType.F64)
+    case "bool" => Some(BaseType.BoolType)
     case _ => None
 
   def computePeak(set: CaptureSet)(using Context): CaptureSet =
@@ -322,6 +323,9 @@ object TypeChecker:
       case Syntax.Term.IntLit(value) => 
         val tpe = if expected.exists && expected.isIntegralType then expected else Definitions.i32Type
         Right(Term.IntLit(value).withPosFrom(t).withTpe(tpe))
+      case Syntax.Term.BoolLit(value) =>
+        val tpe = Definitions.boolType
+        Right(Term.BoolLit(value).withPosFrom(t).withTpe(tpe))
       case Syntax.Term.UnitLit() => 
         Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
       case Syntax.Term.Select(base, field) =>

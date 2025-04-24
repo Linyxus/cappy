@@ -24,6 +24,7 @@ object Syntax:
     case Select(base: Term, field: String)
     case StrLit(value: String)
     case IntLit(value: Int)
+    case BoolLit(value: Boolean)
     case UnitLit()
     case Lambda(params: List[TermParam], body: Term)
     case TypeLambda(params: List[TypeParam | CaptureParam], body: Term)
