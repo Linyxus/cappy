@@ -255,7 +255,7 @@ object CodeGenerator:
         typeSym
       case Some(symbol) => symbol
 
-  def computeArrayType(tpe: Expr.Type)(using Context): ArrayType = tpe match
+  def computeArrayType(tpe: Expr.Type)(using Context): ArrayType = tpe.stripCaptures match
     case PrimArrayType(elemType) => ArrayType(translateType(elemType), mutable = true)
     case _ => assert(false, s"Unsupported type: $tpe")
 

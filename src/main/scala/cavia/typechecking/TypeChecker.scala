@@ -790,7 +790,7 @@ object TypeChecker:
               val elemType1 = checkType(elemType).!!
               val arrayLength = checkTerm(arg1, expected = Definitions.i32Type).!!
               val arrayInit = checkTerm(arg2, expected = elemType1).!!
-              val tpe = Definitions.arrayType(elemType1)
+              val tpe = Type.Capturing(Definitions.arrayType(elemType1), CaptureSet.universal)
               Term.PrimOp(PrimitiveOp.ArrayNew, elemType1 :: Nil, arrayLength :: arrayInit :: Nil).withPos(pos).withTpe(tpe)
             case _ => sorry(TypeError.GeneralError(s"Argument number mismatch, `newArray` expects one type argument and two term arguments"))
         case _ => sorry(TypeError.GeneralError(s"Primitive operation $op cannot be applied to type arguments").withPos(pos))
