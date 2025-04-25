@@ -26,9 +26,9 @@ This is currently a toy.
 - [x] Support translating `struct` definitions
 - [x] Support operator parsing
 - [x] Support `if` expressions
-- [ ] Standardise assignment: translate to primitive ops
+- [x] Standardise assignment: translate to primitive ops
 - [ ] Support translating type lambdas
-- [ ] Support primitive array types
+- [x] Support primitive array types
 - [ ] Support struct methods
 
 ## Issues
