@@ -769,7 +769,7 @@ object TypeChecker:
           if expected.exists then
             Term.PrimOp(PrimitiveOp.Sorry, Nil).withPos(pos).withTpe(expected)
           else sorry(TypeError.GeneralError("no expected type for sorry").withPos(pos))
-      // case _ => Left(TypeError.GeneralError(s"Unsupported primitive operation: $op").withPos(pos))
+      case _ => assert(false, s"Unsupported primitive operation: $op")
       
 
   def checkStructDef(d: Syntax.Definition.StructDef)(using Context): Result[StructInfo] =
