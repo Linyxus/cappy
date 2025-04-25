@@ -14,6 +14,7 @@ extension (tpe: Type)
     case Type.Capturing(inner, captureSet) => inner.captureSet ++ captureSet
     case Type.TermArrow(params, result) => CaptureSet.empty
     case Type.TypeArrow(params, result) => CaptureSet.empty
+    case Type.AppliedType(constructor, args) => CaptureSet.empty
     case Type.NoType => assert(false, "computing capture set from no type")
 
   def stripCaptures: Type = tpe match

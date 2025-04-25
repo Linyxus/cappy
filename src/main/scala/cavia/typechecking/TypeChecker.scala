@@ -693,6 +693,16 @@ object TypeChecker:
               if !checkSeparation(css(i), css(j)) then
                 sorry(TypeError.SeparationError(css(i).show, css(j).show).withPos(srcPos))
           resultTerm
+        case Type.AppliedType(Type.Base(BaseType.ArrayType), elemType :: Nil) =>
+          args match
+            case arg :: Nil =>
+              val arg1 = checkTerm(arg, expected = Definitions.i32Type).!!
+              Term.PrimOp(
+                PrimitiveOp.ArrayGet,
+                targs = Nil,
+                args = List(fun1, arg1),
+              ).withPos(srcPos).withTpe(elemType)
+            case _ => sorry(TypeError.GeneralError(s"Expect exact one array index, but got ${args.length}").withPos(srcPos))
         case _ =>
           sorry(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(fun.pos))
 
