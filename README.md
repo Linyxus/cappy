@@ -29,7 +29,7 @@ This is currently a toy.
 - [x] Standardise assignment: translate to primitive ops
 - [ ] Support translating type lambdas
 - [x] Support primitive array types
-- [ ] Support struct methods
+- [ ] Support extension methods
 
 ## Issues
 
