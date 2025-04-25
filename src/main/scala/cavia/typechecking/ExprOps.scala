@@ -7,6 +7,12 @@ import Expr.*
 import TypeChecker.*
 
 class ExprPrinter extends IndentedPrinter:
+  def showBinders(bds: List[Binder])(using Context): List[String] = bds match
+    case Nil => Nil
+    case p :: ps =>
+      val s = TypePrinter.show(p)
+      s :: showBinders(ps)(using ctx.extend(p))
+
   def show(t: Expr.Term)(using Context): Unit = 
     t match
       case Term.BinderRef(idx) => print(getBinder(idx).name)
@@ -17,11 +23,6 @@ class ExprPrinter extends IndentedPrinter:
       case Term.UnitLit() => print("()")
       case Term.TermLambda(params, body) =>
         print("(")
-        def showBinders(bds: List[Binder])(using Context): List[String] = bds match
-          case Nil => Nil
-          case p :: ps =>
-            val s = TypePrinter.show(p)
-            s :: showBinders(ps)(using ctx.extend(p))
         print(showBinders(params).mkString(", "))
         print(") => {")
         newline()
@@ -35,11 +36,6 @@ class ExprPrinter extends IndentedPrinter:
         print(fieldInfo.name)
       case Term.TypeLambda(params, body) =>
         print("[")
-        def showBinders(bds: List[Binder])(using Context): List[String] = bds match
-          case Nil => Nil
-          case p :: ps =>
-            val s = TypePrinter.show(p)
-            s :: showBinders(ps)(using ctx.extend(p))
         print(showBinders(params).mkString(", "))
         print("] => {")
         newline()
@@ -139,13 +135,20 @@ class ExprPrinter extends IndentedPrinter:
       case Definition.StructDef(sym) =>
         print("struct ")
         print(sym.name)
+        val binders = sym.info.targs
+        val binderStrs = showBinders(binders)
+        if binders.nonEmpty then
+          print("[")
+          print(binderStrs.mkString(", "))
+          print("]")
         print("(")
+        val ctx1 = ctx.extend(binders)
         sym.info.fields.zipWithIndex.foreach: (field, idx) =>
           if field.mutable then
             print("var ")
           print(field.name)
           print(": ")
-          showType(field.tpe)
+          showType(field.tpe)(using ctx1)
           if idx < sym.info.fields.size - 1 then
             print(", ")
         print(")")

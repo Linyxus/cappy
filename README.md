@@ -27,9 +27,15 @@ This is currently a toy.
 - [x] Support operator parsing
 - [x] Support `if` expressions
 - [x] Standardise assignment: translate to primitive ops
-- [ ] Support translating type lambdas
 - [x] Support primitive array types
+- [ ] Support generic structs
+- [ ] Instantiate `cap`s
+- [ ] Handle struct captures more precisely
 - [ ] Support extension methods
+- [ ] Add boxed int type
+- [ ] Support array literal
+- [ ] Support `char`
+- [ ] Support translating type lambdas
 
 ## Issues
 

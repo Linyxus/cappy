@@ -280,4 +280,3 @@ object PrimArrayType:
   def unapply(tpe: Type): Option[Type] = tpe match
     case Type.AppliedType(Type.Base(BaseType.ArrayType), elemType :: Nil) => Some(elemType)
     case _ => None
-

@@ -199,7 +199,12 @@ object TypeChecker:
           Left(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a type").maybeWithPosFrom(tpe))
         case None => Left(TypeError.UnboundVariable(name).maybeWithPosFrom(tpe))
       def trySymbol: Result[Type] = lookupSymbol(name) match
-        case Some(sym: StructSymbol) => Right(Type.SymbolRef(sym).withKind(TypeKind.Star).maybeWithPosFrom(tpe))
+        case Some(sym: StructSymbol) => 
+          val numArgs = sym.info.targs.length
+          val kind =
+            if numArgs == 0 then TypeKind.Star
+            else TypeKind.Arrow(numArgs, TypeKind.Star)
+          Right(Type.SymbolRef(sym).withKind(kind).maybeWithPosFrom(tpe))
         case _ => Left(TypeError.UnboundVariable(name).maybeWithPosFrom(tpe))
       tryBaseType || tryBinder || trySymbol
     case Syntax.Type.Arrow(params, result) =>
@@ -441,6 +446,18 @@ object TypeChecker:
       case Syntax.Term.Apply(Syntax.Term.TypeApply(Syntax.Term.Ident(name), targs), args) if PrimitiveOp.fromName(name).isDefined =>
         val primOp = PrimitiveOp.fromName(name).get
         checkPolyPrimOp(primOp, targs, args, expected, t.pos)
+      case Syntax.Term.Apply(Syntax.Term.TypeApply(Syntax.Term.Ident(name), targs), args) if lookupStructSymbol(name).isDefined =>
+        val classSym = lookupStructSymbol(name).get
+        val tformals = classSym.info.targs
+        val fields = classSym.info.fields
+        hopefully:
+          if targs.length != tformals.length then
+            sorry(TypeError.GeneralError(s"Constructor type argument number mismatch, expected ${tformals.length}, but got ${targs.length}").withPos(t.pos))
+          if args.length != fields.length then
+            sorry(TypeError.GeneralError(s"Constructor argument number mismatch, expected ${fields.length}, but got ${args.length}").withPos(t.pos))
+          val targs1 = (targs `zip` tformals).map: (targ, tformal) =>
+            ??? //TODO: check type arguments
+          ???
       case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if lookupStructSymbol(name).isDefined =>
         val classSym = lookupStructSymbol(name).get
         val classType = Type.SymbolRef(classSym)
@@ -797,13 +814,15 @@ object TypeChecker:
 
   def checkStructDef(d: Syntax.Definition.StructDef)(using Context): Result[StructInfo] =
     hopefully:
+      val binders = checkTypeParamList(d.targs).!!
+      val ctx1 = ctx.extend(binders)
       val fieldNames = d.fields.map(_.name)
       if fieldNames.distinct.length != fieldNames.length then
         sorry(TypeError.GeneralError("Duplicated field name").withPos(d.pos))
       val fields = d.fields.map: fieldDef =>
-        val fieldType = checkType(fieldDef.tpe).!!
+        val fieldType = checkType(fieldDef.tpe)(using ctx1).!!
         FieldInfo(fieldDef.name, fieldType, fieldDef.isVar)
-      StructInfo(fields)
+      StructInfo(binders, fields)
 
   def checkDef(d: Syntax.ValueDef)(using Context): Result[(TermBinder, Term)] = d match
     case Syntax.Definition.ValDef(name, tpe, expr) =>
@@ -908,7 +927,7 @@ object TypeChecker:
           case _: (Syntax.Definition.ValDef | Syntax.Definition.DefDef) => 
             DefSymbol(defn.name, Definitions.anyType, mod).withPosFrom(defn)
           case _: Syntax.Definition.StructDef =>
-            StructSymbol(defn.name, StructInfo(Nil), mod).withPosFrom(defn)
+            StructSymbol(defn.name, StructInfo(Nil, Nil), mod).withPosFrom(defn)
       def checkDefns(defns: List[(DefSymbol, Syntax.ValueDef)]): Result[List[Expr.Definition]] = defns match
         case Nil => Right(Nil)
         case (sym, defn) :: defns =>
@@ -963,6 +982,12 @@ object TypeChecker:
             case Some(fieldInfo) => fieldInfo
             case None => sorry(TypeError.GeneralError(s"Field $field not found in ${classSym.name}").withPos(srcPos))
           val fieldType = fieldInfo.tpe
+          Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldType)
+        case Type.AppliedType(Type.SymbolRef(classSym), targs) =>
+          val fieldInfo = classSym.info.fields.find(_.name == field) match
+            case Some(fieldInfo) => fieldInfo
+            case None => sorry(TypeError.GeneralError(s"Field $field not found in ${classSym.name}").withPos(srcPos))
+          val fieldType = substituteAllType(fieldInfo.tpe, targs, isParamType = false)
           Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldType)
         case PrimArrayType(elemType) =>
           field match

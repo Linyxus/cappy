@@ -81,8 +81,10 @@ object Parsers:
 
   def structP: Parser[Definition] =
     val fieldsP = fieldDefP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
-    val p = (keywordP("struct"), tokenP[Token.IDENT], fieldsP).p.map: (_, nameTk, fields) =>
-      Definition.StructDef(nameTk.name, fields)
+    val paramP: Parser[TypeParam | CaptureParam] = captureParamP `or` typeParamP
+    val paramsP = paramP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
+    val p = (keywordP("struct"), tokenP[Token.IDENT], paramsP.optional, fieldsP).p.map: (_, nameTk, maybeParams, fields) =>
+      Definition.StructDef(nameTk.name, maybeParams.getOrElse(Nil), fields)
     p.positioned.withWhat("a struct definition")
 
   def definitionP: Parser[Definition] = 

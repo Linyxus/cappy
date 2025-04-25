@@ -47,7 +47,7 @@ object Syntax:
   enum Definition extends Positioned:
     case ValDef(name: String, tpe: Option[Type], expr: Term)
     case DefDef(name: String, captureSet: Option[CaptureSet], paramss: List[TypeParamList | TermParamList], resultType: Option[Type], expr: Term)
-    case StructDef(name: String, fields: List[FieldDef])
+    case StructDef(name: String, targs: List[TypeParam | CaptureParam], fields: List[FieldDef])
 
     val name: String
   import Definition.*

@@ -311,7 +311,7 @@ object Expr:
   case class Module(var defns: List[Definition])
 
   case class FieldInfo(name: String, tpe: Type, mutable: Boolean)
-  case class StructInfo(fields: List[FieldInfo])
+  case class StructInfo(targs: List[TypeBinder | CaptureBinder], fields: List[FieldInfo])
 
   object Definitions:
     def anyType: Type = Type.Base(BaseType.AnyType).withKind(TypeKind.Star)
