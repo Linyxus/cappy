@@ -8,5 +8,5 @@ def printFactors(now: i32, num: i32): Unit =
       #i32println(now)
     printFactors(now + 1, num)
 def main(): Unit =
-  printFactors(1, 100)
+  printFactors(1, 10000)
   ()
