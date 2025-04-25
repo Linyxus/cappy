@@ -194,6 +194,7 @@ object Expr:
     case ArrayNew
     case ArraySet
     case ArrayGet
+    case ArrayLen
     case Sorry
 
     override def toString: String = this match
@@ -233,6 +234,7 @@ object Expr:
       case ArrayNew => "#arraynew"
       case ArraySet => "#arrayset"
       case ArrayGet => "#arrayget"
+      case ArrayLen => "#arraylen"
 
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match

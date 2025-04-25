@@ -345,16 +345,7 @@ object TypeChecker:
       case Syntax.Term.UnitLit() => 
         Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
       case Syntax.Term.Select(base, field) =>
-        hopefully:
-          val base1 = checkTerm(base).!!
-          val classSym = base1.tpe.stripCaptures match
-            case Type.SymbolRef(sym) => sym
-            case _ => sorry(TypeError.TypeMismatch("a type that can be selected from", base1.tpe.show).withPosFrom(base))
-          val fieldInfo = classSym.info.fields.find(_.name == field) match
-            case Some(fieldInfo) => fieldInfo
-            case None => sorry(TypeError.GeneralError(s"Field $field not found in ${classSym.name}").withPosFrom(t))
-          val fieldType = fieldInfo.tpe
-          Term.Select(base1, fieldInfo).withPosFrom(t).withTpe(fieldType)
+        checkSelect(base, field, t.pos)
       case Syntax.Term.Assign(lhs, rhs) =>
         checkAssign(lhs, rhs, t.pos)
       case Syntax.Term.Infix(op, lhs, rhs) =>
@@ -962,6 +953,24 @@ object TypeChecker:
         // Done
         mod.defns = structDefns ++ valueDefns
         mod
+
+  def checkSelect(base: Syntax.Term, field: String, srcPos: SourcePos)(using Context): Result[Term] =
+    hopefully:
+      val base1 = checkTerm(base).!!
+      base1.tpe.stripCaptures match
+        case Type.SymbolRef(classSym) =>
+          val fieldInfo = classSym.info.fields.find(_.name == field) match
+            case Some(fieldInfo) => fieldInfo
+            case None => sorry(TypeError.GeneralError(s"Field $field not found in ${classSym.name}").withPos(srcPos))
+          val fieldType = fieldInfo.tpe
+          Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldType)
+        case PrimArrayType(elemType) =>
+          field match
+            case "size" =>
+              Term.PrimOp(PrimitiveOp.ArrayLen, Nil, List(base1)).withPos(srcPos).withTpe(Definitions.i32Type)
+            case _ => 
+              sorry(TypeError.GeneralError(s"Field $field not found in `array`").withPos(srcPos))
+        case _ => sorry(TypeError.TypeMismatch("a type that can be selected from", base1.tpe.show).withPosFrom(base))
 
   def checkAssign(lhs: Syntax.Term, rhs: Syntax.Term, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
