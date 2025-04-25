@@ -25,7 +25,7 @@ This is currently a toy.
 - [x] Support translating module-level definitions
 - [x] Support translating `struct` definitions
 - [x] Support operator parsing
-- [ ] Support `if` expressions
+- [x] Support `if` expressions
 
 ## Issues
 
