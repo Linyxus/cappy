@@ -58,6 +58,10 @@ object Wasm:
     case CallRef(typeSym: Symbol)
     case Call(funcSym: Symbol)
     case If(resultType: ValType, thenBranch: List[Instruction], elseBranch: List[Instruction])
+    case ArrayNew(typeSym: Symbol)
+    case ArraySet(typeSym: Symbol)
+    case ArrayGet(typeSym: Symbol)
+    case ArrayLen
 
     def showIfSimple: Option[String] = this match
       case I32Const(value) => Some(s"i32.const $value")
@@ -99,6 +103,10 @@ object Wasm:
       case Call(funcSym) => Some(s"call ${funcSym.show}")
       case RefNull(typeSym) => Some(s"ref.null ${typeSym.show}")
       case RefNullAny => Some("ref.null any")
+      case ArrayNew(typeSym) => Some(s"array.new ${typeSym.show}")
+      case ArraySet(typeSym) => Some(s"array.set ${typeSym.show}")
+      case ArrayGet(typeSym) => Some(s"array.get ${typeSym.show}")
+      case ArrayLen => Some(s"array.len")
       case _ => None
 
   enum ExportKind:
@@ -158,6 +166,10 @@ object Wasm:
         case None => ""
         case Some(sym) => s"${sym.show} "
       s"(sub ${subclassStr}(struct ${fieldStrs.mkString(" ")}))"
+  case class ArrayType(elemType: ValType, mutable: Boolean) extends CompositeType:
+    def show: String = 
+      val typeStr = if mutable then s"(mut ${elemType.show})" else elemType.show
+      s"(array $typeStr)"
 
   sealed trait ModuleField
   case class Func(ident: Symbol, params: List[(Symbol, ValType)], result: Option[ValType], locals: List[(Symbol, ValType)], body: List[Instruction]) extends ModuleField:

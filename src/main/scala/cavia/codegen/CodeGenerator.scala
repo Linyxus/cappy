@@ -12,6 +12,7 @@ import cavia.core.ast.Expr.PrimitiveOp
 import cavia.core.ast.Expr.Definition
 import java.util.IdentityHashMap
 import scala.jdk.CollectionConverters._
+import cavia.core.ast.Expr.ArrayPrimitiveOp
 
 object CodeGenerator:
   case class ClosureTypeInfo(funcTypeSym: Symbol, closTypeSym: Symbol)
@@ -37,6 +38,7 @@ object CodeGenerator:
     locals: ArrayBuffer[(Symbol, ValType)] = ArrayBuffer.empty,
     types: ArrayBuffer[TypeDef] = ArrayBuffer.empty,
     closureTypes: mutable.Map[FuncType, ClosureTypeInfo] = mutable.Map.empty,
+    arrayTypes: mutable.Map[ArrayType, Symbol] = mutable.Map.empty,
     declares: ArrayBuffer[ElemDeclare] = ArrayBuffer.empty,
     binderInfos: List[BinderInfo] = Nil,
     defInfos: mutable.Map[Expr.DefSymbol, DefInfo] = new IdentityHashMap[Expr.DefSymbol, DefInfo]().asScala,
@@ -80,6 +82,42 @@ object CodeGenerator:
     val result = ctx.locals.toList
     ctx.locals.clear()
     result
+
+  def translateArrayPrimOp(op: Expr.ArrayPrimitiveOp, tpe: Expr.Type, targs: List[Expr.Type], args: List[Expr.Term])(using Context): List[Instruction] =
+    op match
+      case PrimitiveOp.ArrayNew => 
+        val elemType :: Nil = targs: @unchecked
+        val size :: init :: Nil = args: @unchecked
+        val elemValType = translateType(elemType)
+        val arrType = computeArrayType(tpe)
+        val arrSym = createArrayType(arrType)
+        val initInstrs = genTerm(init)
+        val sizeInstrs = genTerm(size)
+        val newInstrs = List(Instruction.ArrayNew(arrSym))
+        initInstrs ++ sizeInstrs ++ newInstrs
+      case PrimitiveOp.ArrayGet => 
+        val arr :: idx :: Nil = args: @unchecked
+        val arrType = computeArrayType(arr.tpe)
+        val arrSym = createArrayType(arrType)
+        val arrInstrs = genTerm(arr)
+        val idxInstrs = genTerm(idx)
+        val getInstrs = List(Instruction.ArrayGet(arrSym))
+        arrInstrs ++ idxInstrs ++ getInstrs
+      case PrimitiveOp.ArraySet => 
+        val arr :: idx :: value :: Nil = args: @unchecked
+        val arrType = computeArrayType(arr.tpe)
+        val arrSym = createArrayType(arrType)
+        val arrInstrs = genTerm(arr)
+        val idxInstrs = genTerm(idx)
+        val valueInstrs = genTerm(value)
+        val setInstrs = List(Instruction.ArraySet(arrSym))
+        val unitInstrs = List(Instruction.I32Const(0))
+        arrInstrs ++ idxInstrs ++ valueInstrs ++ setInstrs ++ unitInstrs
+      case PrimitiveOp.ArrayLen =>
+        val arr :: Nil = args: @unchecked
+        val arrInstrs = genTerm(arr)
+        val lenInstrs = List(Instruction.ArrayLen)
+        arrInstrs ++ lenInstrs
 
   def translateSimplePrimOp(args: List[Expr.Term], op: PrimitiveOp)(using Context): List[Instruction] = 
     def argInstrs = args.flatMap(genTerm)
@@ -205,6 +243,22 @@ object CodeGenerator:
         result
       case Some(info) => info
 
+  /** Declare an array type in the type section; if exists, return the existing symbol */
+  def createArrayType(arrType: ArrayType)(using Context): Symbol =
+    ctx.arrayTypes.get(arrType) match
+      case None => 
+        val elemTypeStr = arrType.elemType.show
+        val mutStr = if arrType.mutable then "mut_" else ""
+        val typeName = nameEncode(s"array_of_${mutStr}${elemTypeStr}")
+        val typeSym = Symbol.fresh(typeName)
+        emitType(TypeDef(typeSym, arrType))
+        typeSym
+      case Some(symbol) => symbol
+
+  def computeArrayType(tpe: Expr.Type)(using Context): ArrayType = tpe match
+    case PrimArrayType(elemType) => ArrayType(translateType(elemType), mutable = true)
+    case _ => assert(false, s"Unsupported type: $tpe")
+
   /** What is the WASM type of the WASM representation of a value of this type? */
   def translateType(tpe: Expr.Type)(using Context): ValType = tpe match
     case Expr.Type.Base(Expr.BaseType.I64) => ValType.I64
@@ -216,6 +270,10 @@ object CodeGenerator:
       val funcType = computeFuncType(tpe)
       val info = createClosureTypes(funcType)
       ValType.TypedRef(info.closTypeSym)
+    case PrimArrayType(elemType) => 
+      val arrType = computeArrayType(tpe)
+      val arrSym = createArrayType(arrType)
+      ValType.TypedRef(arrSym)
     case Expr.Type.SymbolRef(sym) =>
       val TypeInfo.StructDef(structSym, _) = ctx.typeInfos(sym): @unchecked
       ValType.TypedRef(structSym)
@@ -357,7 +415,9 @@ object CodeGenerator:
         case _ => assert(false, s"Unsupported type for int literal: ${t.tpe}")
     case Term.UnitLit() => List(Instruction.I32Const(0))
     case Term.BoolLit(value) => if value then List(Instruction.I32Const(1)) else List(Instruction.I32Const(0))
-    case Term.PrimOp(op, _, args) => translateSimplePrimOp(args, op)
+    case Term.PrimOp(arrayOp: Expr.ArrayPrimitiveOp, targs, args) =>
+      translateArrayPrimOp(arrayOp, t.tpe, targs, args)
+    case Term.PrimOp(op, Nil, args) => translateSimplePrimOp(args, op)
     case Term.If(cond, thenBranch, elseBranch) =>
       val resultType = translateType(t.tpe)
       val then1 = genTerm(thenBranch)

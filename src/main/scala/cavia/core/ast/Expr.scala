@@ -158,6 +158,9 @@ object Expr:
   object Type:
     private var nextId: Int = 0
 
+  // marker trait for primitive ops that are related to arrays
+  trait ArrayPrimitiveOp
+
   enum PrimitiveOp extends Positioned:
     case I32Add
     case I32Mul
@@ -191,10 +194,10 @@ object Expr:
     case I32Neg
     case I64Neg
     case StructSet
-    case ArrayNew
-    case ArraySet
-    case ArrayGet
-    case ArrayLen
+    case ArrayNew extends PrimitiveOp, ArrayPrimitiveOp
+    case ArraySet extends PrimitiveOp, ArrayPrimitiveOp
+    case ArrayGet extends PrimitiveOp, ArrayPrimitiveOp
+    case ArrayLen extends PrimitiveOp, ArrayPrimitiveOp
     case Sorry
 
     override def toString: String = this match
