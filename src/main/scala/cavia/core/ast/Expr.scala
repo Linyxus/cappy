@@ -189,6 +189,7 @@ object Expr:
     case BoolOr
     case I32Neg
     case I64Neg
+    case StructSet
     case Sorry
 
     override def toString: String = this match
@@ -224,6 +225,7 @@ object Expr:
       case BoolOr => "#boolor"
       case I32Neg => "#i32neg"
       case I64Neg => "#i64neg"
+      case StructSet => "#structset"
 
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match
@@ -276,7 +278,6 @@ object Expr:
     case Apply(fun: Term, args: List[Term])
     case TypeApply(term: Term, targs: List[Type | CaptureSet])
     case Select(base: Term, fieldInfo: FieldInfo)
-    case Assign(lhs: Select, rhs: Term)
     case If(cond: Term, thenBranch: Term, elseBranch: Term)
 
   /** Reference to a variable, either a binder or a symbol */

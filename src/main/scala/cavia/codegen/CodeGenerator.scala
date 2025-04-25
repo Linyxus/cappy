@@ -133,6 +133,16 @@ object CodeGenerator:
         Instruction.I32Const(0)
       )
       case PrimitiveOp.I32Read => argInstrs ++ List(Instruction.Call(Symbol.I32Read))
+      case PrimitiveOp.StructSet =>
+        val Expr.Term.Select(base, fieldInfo) :: rhs :: Nil = args: @unchecked
+        val rhsInstrs = genTerm(rhs)
+        val Expr.Type.SymbolRef(classSym) = base.tpe.stripCaptures: @unchecked
+        val TypeInfo.StructDef(structSym, fieldMap) = ctx.typeInfos(classSym): @unchecked
+        val fieldSym = fieldMap(fieldInfo.name)
+        val baseInstrs = genTerm(base)
+        val setFieldInstrs = List(Instruction.StructSet(structSym, fieldSym))
+        val unitInstrs = List(Instruction.I32Const(0))
+        baseInstrs ++ rhsInstrs ++ setFieldInstrs ++ unitInstrs
       case PrimitiveOp.Sorry => assert(false, "program contains `sorry`")
       case _ => assert(false, s"Not supported: $op")
 
@@ -238,7 +248,6 @@ object CodeGenerator:
     case Term.Apply(fun, args) => freeLocalBinders(fun) ++ args.flatMap(freeLocalBinders)
     case Term.TypeApply(term, targs) => freeLocalBinders(term)
     case Term.Select(base, fieldInfo) => freeLocalBinders(base)
-    case Term.Assign(lhs, rhs) => freeLocalBinders(lhs) ++ freeLocalBinders(rhs)
     case Term.StructInit(sym, args) => args.flatMap(freeLocalBinders).toSet
     case Term.If(cond, thenBranch, elseBranch) =>
       freeLocalBinders(cond) ++ freeLocalBinders(thenBranch) ++ freeLocalBinders(elseBranch)
@@ -410,8 +419,6 @@ object CodeGenerator:
       genStructInit(classSym, args)
     case Term.Select(base, fieldInfo) =>
       genSelect(base, fieldInfo)
-    case Term.Assign(lhs, rhs) =>
-      genAssign(lhs, rhs)
     case _ => assert(false, s"Don't know how to translate this term: $t")
 
   def genStructInit(classSym: Expr.StructSymbol, args: List[Expr.Term])(using Context): List[Instruction] =
@@ -429,20 +436,6 @@ object CodeGenerator:
         val baseInstrs = genTerm(base)
         val getFieldInstrs = List(Instruction.StructGet(structSym, fieldSym))
         baseInstrs ++ getFieldInstrs
-      case _ => assert(false, "impossible, otherwise a bug in the typechecker")
-
-  def genAssign(lhs: Expr.Term.Select, rhs: Expr.Term)(using Context): List[Instruction] =
-    val Expr.Term.Select(base, fieldInfo) = lhs
-    base.tpe.stripCaptures match
-      case Expr.Type.SymbolRef(classSym) =>
-        val TypeInfo.StructDef(structSym, nameMap) = ctx.typeInfos(classSym): @unchecked
-        val fieldName = fieldInfo.name
-        val fieldSym = nameMap(fieldName)
-        val lhsInstrs = genTerm(base)
-        val rhsInstrs = genTerm(rhs)
-        val setFieldInstrs = List(Instruction.StructSet(structSym, fieldSym))
-        val unitInstrs = List(Instruction.I32Const(0))
-        lhsInstrs ++ rhsInstrs ++ setFieldInstrs ++ unitInstrs
       case _ => assert(false, "impossible, otherwise a bug in the typechecker")
 
   def genStructDef(sym: Expr.StructSymbol)(using Context): TypeInfo =

@@ -347,7 +347,7 @@ object TypeChecker:
             case lhs1 @ Term.Select(_, fieldInfo) =>
               if fieldInfo.mutable then
                 val rhs1 = checkTerm(rhs, expected = fieldInfo.tpe).!!
-                Term.Assign(lhs1, rhs1).withPosFrom(t).withTpe(Definitions.unitType)
+                Term.PrimOp(PrimitiveOp.StructSet, List(lhs1, rhs1)).withPosFrom(t).withTpe(Definitions.unitType)
               else
                 sorry(TypeError.GeneralError(s"Field is not mutable").withPosFrom(lhs))
             case _ => sorry(TypeError.GeneralError(s"Cannot assign to this target").withPosFrom(lhs))
