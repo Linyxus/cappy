@@ -356,16 +356,7 @@ object TypeChecker:
           val fieldType = fieldInfo.tpe
           Term.Select(base1, fieldInfo).withPosFrom(t).withTpe(fieldType)
       case Syntax.Term.Assign(lhs, rhs) =>
-        hopefully:
-          val lhs1 = checkTerm(lhs).!!
-          lhs1 match
-            case lhs1 @ Term.Select(_, fieldInfo) =>
-              if fieldInfo.mutable then
-                val rhs1 = checkTerm(rhs, expected = fieldInfo.tpe).!!
-                Term.PrimOp(PrimitiveOp.StructSet, Nil, List(lhs1, rhs1)).withPosFrom(t).withTpe(Definitions.unitType)
-              else
-                sorry(TypeError.GeneralError(s"Field is not mutable").withPosFrom(lhs))
-            case _ => sorry(TypeError.GeneralError(s"Cannot assign to this target").withPosFrom(lhs))
+        checkAssign(lhs, rhs, t.pos)
       case Syntax.Term.Infix(op, lhs, rhs) =>
         checkInfix(op, lhs, rhs, expected, t.pos)
       case Syntax.Term.Prefix(op, term) =>
@@ -971,3 +962,21 @@ object TypeChecker:
         // Done
         mod.defns = structDefns ++ valueDefns
         mod
+
+  def checkAssign(lhs: Syntax.Term, rhs: Syntax.Term, srcPos: SourcePos)(using Context): Result[Term] =
+    hopefully:
+      def fail = sorry(TypeError.GeneralError(s"Cannot assign to this target").withPosFrom(lhs))
+      val lhs1 = checkTerm(lhs).!!
+      lhs1 match
+        case lhs1 @ Term.Select(_, fieldInfo) =>
+          if fieldInfo.mutable then
+            val rhs1 = checkTerm(rhs, expected = fieldInfo.tpe).!!
+            Term.PrimOp(PrimitiveOp.StructSet, Nil, List(lhs1, rhs1)).withPos(srcPos).withTpe(Definitions.unitType)
+          else
+            sorry(TypeError.GeneralError(s"Field is not mutable").withPosFrom(lhs))
+        case lhs1 @ Term.PrimOp(PrimitiveOp.ArrayGet, Nil, arr :: arg :: Nil) =>
+          val PrimArrayType(elemType) = arr.tpe.stripCaptures: @unchecked
+          val rhs1 = checkTerm(rhs, expected = elemType).!!
+          Term.PrimOp(PrimitiveOp.ArraySet, Nil, List(arr, arg, rhs1)).withPos(srcPos).withTpe(Definitions.unitType)
+        case _ => 
+          fail
