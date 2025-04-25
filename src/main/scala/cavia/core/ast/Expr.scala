@@ -30,10 +30,10 @@ object Expr:
     case AnyType
     case BoolType  // will be represented as i32
     /** Primitive types in WebAssembly */
-    case I32
-    case I64
-    case F32
-    case F64
+    case I32, I64
+    case F32, F64
+    /** Array type: `array[T]` */
+    case ArrayType  // it is a type constructor
 
     def isIntegralType: Boolean = this match
       case I32 | I64 | IntType => true
@@ -136,6 +136,7 @@ object Expr:
     case Capturing(inner: Type, captureSet: CaptureSet)
     case TermArrow(params: List[TermBinder], result: Type)
     case TypeArrow(params: List[TypeBinder | CaptureBinder], result: Type)
+    case AppliedType(constructor: Type, args: List[Type])
     case NoType
 
     def like(other: Type): this.type =
@@ -190,6 +191,9 @@ object Expr:
     case I32Neg
     case I64Neg
     case StructSet
+    case ArrayNew
+    case ArraySet
+    case ArrayGet
     case Sorry
 
     override def toString: String = this match
@@ -226,6 +230,9 @@ object Expr:
       case I32Neg => "#i32neg"
       case I64Neg => "#i64neg"
       case StructSet => "#structset"
+      case ArrayNew => "#arraynew"
+      case ArraySet => "#arrayset"
+      case ArrayGet => "#arrayget"
 
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match
@@ -260,6 +267,7 @@ object Expr:
       case "#boolor" => Some(PrimitiveOp.BoolOr)
       case "#i32neg" => Some(PrimitiveOp.I32Neg)
       case "#i64neg" => Some(PrimitiveOp.I64Neg)
+      case "newArray" => Some(PrimitiveOp.ArrayNew)
       case "sorry" => Some(PrimitiveOp.Sorry)
       case _ => None
 
@@ -273,7 +281,7 @@ object Expr:
     case TermLambda(params: List[TermBinder], body: Term)
     case TypeLambda(params: List[TypeBinder | CaptureBinder], body: Term)
     case Bind(binder: TermBinder, recursive: Boolean, bound: Term, body: Term)
-    case PrimOp(op: PrimitiveOp, args: List[Term])
+    case PrimOp(op: PrimitiveOp, targs: List[Type], args: List[Term])
     case StructInit(sym: StructSymbol, args: List[Term])
     case Apply(fun: Term, args: List[Term])
     case TypeApply(term: Term, targs: List[Type | CaptureSet])
@@ -308,6 +316,10 @@ object Expr:
     def i32Type: Type = Type.Base(BaseType.I32).withKind(TypeKind.Star)
     def unitType: Type = Type.Base(BaseType.UnitType).withKind(TypeKind.Star)
     def boolType: Type = Type.Base(BaseType.BoolType).withKind(TypeKind.Star)
+    def arrayConstructorType: Type =
+      Type.Base(BaseType.ArrayType).withKind(TypeKind.Arrow(1, TypeKind.Star))
+    def arrayType(elemType: Type): Type =
+      Type.AppliedType(arrayConstructorType, List(elemType)).withKind(TypeKind.Star)
     def capCaptureSet: CaptureSet = CaptureSet(List(CaptureRef.CAP()))
 
   enum Variance:

@@ -81,7 +81,7 @@ object CodeGenerator:
     ctx.locals.clear()
     result
 
-  def translatePrimOp(args: List[Expr.Term], op: PrimitiveOp)(using Context): List[Instruction] = 
+  def translateSimplePrimOp(args: List[Expr.Term], op: PrimitiveOp)(using Context): List[Instruction] = 
     def argInstrs = args.flatMap(genTerm)
     op match
       // addition
@@ -148,11 +148,11 @@ object CodeGenerator:
 
   def translateBranching(cond: Expr.Term, thenBranch: List[Instruction], elseBranch: List[Instruction], resultType: ValType)(using Context): List[Instruction] =
     cond match
-      case Term.PrimOp(PrimitiveOp.BoolAnd, arg1 :: arg2 :: Nil) =>
+      case Term.PrimOp(PrimitiveOp.BoolAnd, _, arg1 :: arg2 :: Nil) =>
         val cond1Instrs = genTerm(arg1)
         val moreInstrs = translateBranching(arg2, thenBranch, elseBranch, resultType)
         cond1Instrs ++ List(Instruction.If(resultType, moreInstrs, elseBranch))
-      case Term.PrimOp(PrimitiveOp.BoolOr, arg1 :: arg2 :: Nil) =>
+      case Term.PrimOp(PrimitiveOp.BoolOr, _, arg1 :: arg2 :: Nil) =>
         val cond1Instrs = genTerm(arg1)
         val moreInstrs = translateBranching(arg2, thenBranch, elseBranch, resultType)
         cond1Instrs ++ List(Instruction.If(resultType, moreInstrs, elseBranch))
@@ -244,7 +244,7 @@ object CodeGenerator:
       val boundFree1 = if recursive then dropLocalBinders(boundFree, 1) else boundFree
       val bodyFree = dropLocalBinders(freeLocalBinders(body), 1)
       boundFree1 ++ bodyFree
-    case Term.PrimOp(op, args) => args.flatMap(freeLocalBinders).toSet
+    case Term.PrimOp(op, _, args) => args.flatMap(freeLocalBinders).toSet
     case Term.Apply(fun, args) => freeLocalBinders(fun) ++ args.flatMap(freeLocalBinders)
     case Term.TypeApply(term, targs) => freeLocalBinders(term)
     case Term.Select(base, fieldInfo) => freeLocalBinders(base)
@@ -357,7 +357,7 @@ object CodeGenerator:
         case _ => assert(false, s"Unsupported type for int literal: ${t.tpe}")
     case Term.UnitLit() => List(Instruction.I32Const(0))
     case Term.BoolLit(value) => if value then List(Instruction.I32Const(1)) else List(Instruction.I32Const(0))
-    case Term.PrimOp(op, args) => translatePrimOp(args, op)
+    case Term.PrimOp(op, _, args) => translateSimplePrimOp(args, op)
     case Term.If(cond, thenBranch, elseBranch) =>
       val resultType = translateType(t.tpe)
       val then1 = genTerm(thenBranch)

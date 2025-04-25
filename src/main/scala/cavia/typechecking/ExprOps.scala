@@ -59,8 +59,15 @@ class ExprPrinter extends IndentedPrinter:
           show(expr)(using ctx1)
         newline()
         show(body)(using ctx.extend(binder))
-      case Term.PrimOp(op, args) =>
+      case Term.PrimOp(op, targs, args) =>
         print(op.toString)
+        if targs.nonEmpty then
+          print("[")
+          targs.zipWithIndex.foreach: (targ, idx) =>
+            showType(targ)
+            if idx < targs.size - 1 then
+              print(", ")
+          print("]")
         print("(")
         args.zipWithIndex.foreach: (arg, idx) =>
           show(arg)

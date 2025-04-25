@@ -61,6 +61,7 @@ object TypePrinter:
     case BaseType.F32 => "f32"
     case BaseType.F64 => "f64"
     case BaseType.BoolType => "bool"
+    case BaseType.ArrayType => "array"
 
   def showFunctionType(params: List[Binder], result: Type, cs: Option[CaptureSet] = None, isType: Boolean = false)(using ctx: TypeChecker.Context) =
     def showParams(params: List[Binder])(using ctx: TypeChecker.Context): List[String] = params match
@@ -84,6 +85,8 @@ object TypePrinter:
       case Type.Base(base) => show(base)
       case Type.BinderRef(idx) => TypeChecker.getBinder(idx).name
       case Type.SymbolRef(sym) => sym.name
+      case Type.AppliedType(constructor, args) =>
+        s"${show(constructor)}[${args.map(show).mkString(", ")}]"
       case Type.Capturing(inner, captureSet) => 
         inner match
           case Type.TermArrow(params, result) =>

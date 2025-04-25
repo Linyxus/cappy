@@ -141,16 +141,18 @@ object TypeChecker:
       case Some(sym: StructSymbol) => Some(sym)
       case _ => None
 
-  def findBaseType(name: String): Option[BaseType] = name match
-    case "Unit" => Some(BaseType.UnitType)
-    case "Int" => Some(BaseType.IntType)
-    case "String" => Some(BaseType.StrType)
-    case "Any" => Some(BaseType.AnyType)
-    case "i32" => Some(BaseType.I32)
-    case "i64" => Some(BaseType.I64)
-    case "f32" => Some(BaseType.F32)
-    case "f64" => Some(BaseType.F64)
-    case "bool" => Some(BaseType.BoolType)
+  def findBaseType(name: String): Option[Type] = name match
+    case "Unit" => Some(Definitions.unitType)
+    case "Int" => Some(Definitions.intType)
+    case "String" => Some(Definitions.strType)
+    case "Any" => Some(Definitions.anyType)
+    case "i32" => Some(Definitions.i32Type)
+    case "i64" => Some(Definitions.i64Type)
+    case "bool" => Some(Definitions.boolType)
+    case "array" => Some(Definitions.arrayConstructorType)
+    // Float types are not supported yet, so commenting them out for now
+    // case "f32" => Some(Definitions.f32Type)
+    // case "f64" => Some(Definitions.f64Type)
     case _ => None
 
   def computePeak(set: CaptureSet)(using Context): CaptureSet =
@@ -181,11 +183,15 @@ object TypeChecker:
     val pk2 = computePeak(cs2)
     val intersection = pk1.elems.intersect(pk2.elems)
     intersection.isEmpty
+
+  def checkTypeArg(targ: (Syntax.Type | Syntax.CaptureSet))(using Context): Result[Type | CaptureSet] = targ match
+    case targ: Syntax.Type => checkType(targ)
+    case targ: Syntax.CaptureSet => checkCaptureSet(targ)
     
   def checkType(tpe: Syntax.Type)(using Context): Result[Type] = tpe match
     case Syntax.Type.Ident(name) => 
       def tryBaseType: Result[Type] = findBaseType(name) match
-        case Some(baseType) => Right(Type.Base(baseType).withKind(TypeKind.Star).withPos(tpe.pos))
+        case Some(baseType) => Right(baseType.maybeWithPosFrom(tpe))
         case None => Left(TypeError.UnboundVariable(name).withPos(tpe.pos))
       def tryBinder: Result[Type] = lookupBinder(name) match
         case Some((binder: Binder.TypeBinder, idx)) => Right(Type.BinderRef(idx).withKind(TypeKind.Star).maybeWithPosFrom(tpe))
@@ -219,7 +225,16 @@ object TypeChecker:
         val inner1 = checkType(inner).!!
         val captureSet1 = checkCaptureSet(captureSet).!!
         Type.Capturing(inner1, captureSet1).maybeWithPosFrom(tpe).withKind(TypeKind.Star)
-    case Syntax.Type.AppliedType(tycon, args) => ???
+    case Syntax.Type.AppliedType(tycon, args) =>
+      hopefully:
+        val tycon1 = checkType(tycon).!!
+        tycon1.kind match
+          case TypeKind.Arrow(arity, resKind) =>
+            if arity != args.length then
+              sorry(TypeError.GeneralError(s"Number of type arguments mismatch: expected $arity, but got ${args.length}").withPos(tpe.pos))
+            val targs1 = args.map(arg => checkType(arg).!!)
+            Type.AppliedType(tycon1, targs1).maybeWithPosFrom(tpe).withKind(resKind)
+          case _ => sorry(TypeError.GeneralError("This is not a type constructor").withPos(tycon.pos))
 
   def checkTermParamList(params: List[Syntax.TermParam])(using Context): Result[List[TermBinder]] =
     hopefully:
@@ -347,7 +362,7 @@ object TypeChecker:
             case lhs1 @ Term.Select(_, fieldInfo) =>
               if fieldInfo.mutable then
                 val rhs1 = checkTerm(rhs, expected = fieldInfo.tpe).!!
-                Term.PrimOp(PrimitiveOp.StructSet, List(lhs1, rhs1)).withPosFrom(t).withTpe(Definitions.unitType)
+                Term.PrimOp(PrimitiveOp.StructSet, Nil, List(lhs1, rhs1)).withPosFrom(t).withTpe(Definitions.unitType)
               else
                 sorry(TypeError.GeneralError(s"Field is not mutable").withPosFrom(lhs))
             case _ => sorry(TypeError.GeneralError(s"Cannot assign to this target").withPosFrom(lhs))
@@ -441,6 +456,9 @@ object TypeChecker:
         go(stmts)
       case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if PrimitiveOp.fromName(name).isDefined => 
         checkPrimOp(PrimitiveOp.fromName(name).get, args, expected, t.pos)
+      case Syntax.Term.Apply(Syntax.Term.TypeApply(Syntax.Term.Ident(name), targs), args) if PrimitiveOp.fromName(name).isDefined =>
+        val primOp = PrimitiveOp.fromName(name).get
+        checkPolyPrimOp(primOp, targs, args, expected, t.pos)
       case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if lookupStructSymbol(name).isDefined =>
         val classSym = lookupStructSymbol(name).get
         val classType = Type.SymbolRef(classSym)
@@ -729,7 +747,7 @@ object TypeChecker:
           go(args, formals, arg1 :: acc)
       case _ => Left(TypeError.GeneralError(s"Argument number mismatch for primitive operation, expected ${formals.length}, but got ${args.length}").withPos(pos))
     go(args, formals, Nil).map: args1 =>
-      Term.PrimOp(op, args1).withPos(pos).withTpe(Type.Base(resType).withKind(TypeKind.Star))
+      Term.PrimOp(op, Nil, args1).withPos(pos).withTpe(Type.Base(resType).withKind(TypeKind.Star))
 
   def checkPrimOp(op: PrimitiveOp, args: List[Syntax.Term], expected: Type, pos: SourcePos)(using Context): Result[Term] =
     op match
@@ -767,10 +785,23 @@ object TypeChecker:
       case PrimitiveOp.Sorry =>
         hopefully:
           if expected.exists then
-            Term.PrimOp(PrimitiveOp.Sorry, Nil).withPos(pos).withTpe(expected)
+            Term.PrimOp(PrimitiveOp.Sorry, Nil, Nil).withPos(pos).withTpe(expected)
           else sorry(TypeError.GeneralError("no expected type for sorry").withPos(pos))
       case _ => assert(false, s"Unsupported primitive operation: $op")
       
+  def checkPolyPrimOp(op: PrimitiveOp, targs: List[Syntax.Type | Syntax.CaptureSet], args: List[Syntax.Term], expected: Type, pos: SourcePos)(using Context): Result[Term] =
+    hopefully:
+      op match
+        case PrimitiveOp.ArrayNew =>
+          (targs, args) match
+            case ((elemType : Syntax.Type) :: Nil, arg1 :: arg2 :: Nil) =>
+              val elemType1 = checkType(elemType).!!
+              val arrayLength = checkTerm(arg1, expected = Definitions.i32Type).!!
+              val arrayInit = checkTerm(arg2, expected = elemType1).!!
+              val tpe = Definitions.arrayType(elemType1)
+              Term.PrimOp(PrimitiveOp.ArrayNew, elemType1 :: Nil, arrayLength :: arrayInit :: Nil).withPos(pos).withTpe(tpe)
+            case _ => sorry(TypeError.GeneralError(s"Argument number mismatch, `newArray` expects one type argument and two term arguments"))
+        case _ => sorry(TypeError.GeneralError(s"Primitive operation $op cannot be applied to type arguments").withPos(pos))
 
   def checkStructDef(d: Syntax.Definition.StructDef)(using Context): Result[StructInfo] =
     hopefully:
