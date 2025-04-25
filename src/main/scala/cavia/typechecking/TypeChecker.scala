@@ -966,7 +966,7 @@ object TypeChecker:
           Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldType)
         case PrimArrayType(elemType) =>
           field match
-            case "size" =>
+            case "size" | "length" =>
               Term.PrimOp(PrimitiveOp.ArrayLen, Nil, List(base1)).withPos(srcPos).withTpe(Definitions.i32Type)
             case _ => 
               sorry(TypeError.GeneralError(s"Field $field not found in `array`").withPos(srcPos))
