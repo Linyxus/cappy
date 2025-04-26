@@ -337,7 +337,7 @@ object Expr:
     case If(cond: Term, thenBranch: Term, elseBranch: Term)
 
   /** Reference to a variable, either a binder or a symbol */
-  type VarRef = Term.BinderRef | Term.SymbolRef
+  type VarRef = Term.BinderRef | Term.SymbolRef | Term.Select
 
   sealed trait Symbol extends Positioned:
     val name: String

@@ -740,8 +740,6 @@ object TypeChecker:
           // perform separation check
           val sigCaptures = funType.signatureCaptureSet
           val css1 = sigCaptures :: css
-          println(s"separation todos for $funType:")
-          css1.foreach(cs => println(s"  ${cs.show}"))
           for i <- 0 until css1.length do
             for j <- i + 1 until css1.length do
               if !checkSeparation(css1(i), css1(j)) then
@@ -788,7 +786,8 @@ object TypeChecker:
       case ref: VarRef =>
         val ref1: VarRef = ref match
           case Term.BinderRef(idx) => Term.BinderRef(idx + openingIdx).maybeWithPosFrom(ref).asInstanceOf[VarRef]
-          case Term.SymbolRef(sym) => Term.SymbolRef(sym).maybeWithPosFrom(ref).asInstanceOf[VarRef]
+          case Term.SymbolRef(sym) => ref
+          case Term.Select(base, field) => assert(false, "not supported yet")
         val tm = OpenTermBinderExact(ref1, openingIdx, startingVariance)
         Right(tm.apply(tpe))
       case _ => 
