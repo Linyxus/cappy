@@ -10,3 +10,4 @@ def main(): Unit =
     x
   mapArray(p.y, f)  // error
   // requires {p} and {f} be separated, but {f} <: {p}
+
