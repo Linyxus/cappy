@@ -104,13 +104,16 @@ object TypePrinter:
         showFunctionType(params, result, cs = None, isType = true)
 
   def show(binder: Binder)(using TypeChecker.Context): String = binder match
-    case Binder.TermBinder(name, tpe) => s"$name: ${show(tpe)}"
+    case Binder.TermBinder(name, tpe, localCapInsts) => s"$name: ${show(tpe)}"
     case Binder.TypeBinder(name, tpe) => s"$name <: ${show(tpe)}"
     case Binder.CaptureBinder(name, tpe) => s"$name <: ${show(tpe)}"
 
   def show(captureSet: CaptureSet)(using TypeChecker.Context): String = 
-    val elems = captureSet.elems.map(show).mkString(", ")
-    s"{$elems}"
+    captureSet match
+      case CaptureSet.Const(elems) =>
+        val elemsStr = captureSet.elems.map(show).mkString(", ")
+        s"{$elemsStr}"
+      case _: CaptureSet.UniversalSet => "?"
 
   def show(captureRef: CaptureRef)(using TypeChecker.Context): String = captureRef match
     case CaptureRef.Ref(Term.BinderRef(idx)) => TypeChecker.getBinder(idx).name
@@ -257,13 +260,18 @@ extension (tpe: Type)
     CaptureSet(collector.collected.toList)
 
 class CapInstantiation extends TypeMap:
+  var localCaps: List[CaptureRef.CapInst] = Nil
+
   override def apply(tpe: Type): Type = tpe match
     case Type.TypeArrow(ps, result) => tpe
     case Type.TermArrow(ps, result) => tpe
     case _ => mapOver(tpe)
 
   override def mapCaptureRef(ref: CaptureRef): CaptureRef = ref match
-    case CaptureRef.CAP() => CaptureRef.makeCapInst()
+    case CaptureRef.CAP() => 
+      val inst: CaptureRef.CapInst = CaptureRef.makeCapInst()
+      localCaps = inst :: localCaps
+      inst
     case _ => ref
   
 

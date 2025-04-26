@@ -124,14 +124,14 @@ object Expr:
       this
 
   enum Binder extends Positioned:
-    case TermBinder(name: String, tpe: Type)
+    case TermBinder(name: String, tpe: Type, localCapInsts: List[CaptureRef.CapInst] = Nil)
     case TypeBinder(name: String, bound: Type)
     case CaptureBinder(name: String, bound: CaptureSet)
 
     val name: String
 
     def kindStr: String = this match
-      case TermBinder(_, _) => "term"
+      case TermBinder(_, _, _) => "term"
       case TypeBinder(_, _) => "type"
       case CaptureBinder(_, _) => "capture"
 
@@ -380,7 +380,7 @@ object Expr:
     def apply(tp: Type): Type = mapOver(tp)
 
     def mapBinder(param: Binder): Binder = param match
-      case TermBinder(name, tpe) => TermBinder(name, apply(tpe)).maybeWithPosFrom(param)
+      case TermBinder(name, tpe, localCapInsts) => TermBinder(name, apply(tpe), localCapInsts).maybeWithPosFrom(param)
       case TypeBinder(name, bound) => TypeBinder(name, apply(bound)).maybeWithPosFrom(param)
       case CaptureBinder(name, bound) => CaptureBinder(name, mapCaptureSet(bound)).maybeWithPosFrom(param)
 
@@ -456,7 +456,7 @@ object Expr:
   extension (binder: Binder)
     def shift(amount: Int): Binder =
       binder match
-        case TermBinder(name, tpe) => TermBinder(name, tpe.shift(amount)).maybeWithPosFrom(binder)
+        case TermBinder(name, tpe, localCapInsts) => TermBinder(name, tpe.shift(amount), localCapInsts).maybeWithPosFrom(binder)
         case TypeBinder(name, bound) => TypeBinder(name, bound.shift(amount)).maybeWithPosFrom(binder)
         case CaptureBinder(name, bound) => CaptureBinder(name, bound.shift(amount)).maybeWithPosFrom(binder)
 

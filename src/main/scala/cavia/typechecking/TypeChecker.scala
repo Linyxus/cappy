@@ -159,7 +159,7 @@ object TypeChecker:
     def goRef(ref: CaptureRef): Set[CaptureRef] = ref match
       case CaptureRef.Ref(Term.BinderRef(idx)) =>
         getBinder(idx) match
-          case Binder.TermBinder(_, tpe) =>
+          case Binder.TermBinder(_, tpe, _) =>
             val elems = tpe.captureSet.elems
             goRefs(elems)
           case _: Binder.CaptureBinder => Set(ref)
@@ -173,6 +173,10 @@ object TypeChecker:
       refs.flatMap(goRef).toSet
     val elems = goRefs(set.elems)
     CaptureSet(elems.toList)
+
+  def dropLocalCapInsts(localInsts: List[CaptureRef.CapInst])(using Context): Unit =
+    localInsts.foreach: capInst =>
+      ctx.captured.cv -= capInst
 
   def checkSeparation(cs1: CaptureSet, cs2: CaptureSet)(using Context): Boolean =
     val pk1 = computePeak(cs1)
@@ -286,7 +290,7 @@ object TypeChecker:
           ref match
             case CaptureRef.Ref(Term.BinderRef(idx)) if idx < delta =>
               getBinder(idx) match
-                case TermBinder(name, tpe) => tpe.captureSet.elems
+                case TermBinder(name, tpe, _) => tpe.captureSet.elems
                 case CaptureBinder(name, bound) => bound.elems
                 case _ => assert(false)
             case ref => List(ref)
@@ -351,6 +355,12 @@ object TypeChecker:
           sorry(TypeError.GeneralError(s"Type argument number mismatch: expected ${formals.length}, but got ${targs.length}").withPos(srcPos))
       go(targs, formalTypes)
 
+  def instantiateBinderCaps(binder: TermBinder)(using Context): TermBinder =
+    val tm = CapInstantiation()
+    val tpe1 = tm.apply(binder.tpe)
+    val binder1 = TermBinder(binder.name, tpe1, tm.localCaps)
+    binder1.maybeWithPosFrom(binder).asInstanceOf[TermBinder]
+
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType)(using Context): Result[Term] = 
     val result: Result[Term] = t match
       case Syntax.Term.Ident(name) => 
@@ -390,7 +400,8 @@ object TypeChecker:
         checkIf(cond, thenBranch, maybeElseBranch, expected, t.pos)
       case Syntax.Term.Lambda(params, body) => 
         checkTermParamList(params).flatMap: params =>
-          val ctx1 = ctx.extend(params)
+          val params1 = params.map(instantiateBinderCaps)
+          val ctx1 = ctx.extend(params1)
           val env1 = CaptureEnv.empty(ctx1.binders.length)
           checkTerm(body)(using ctx1.withEnv(env1)).map: body1 =>
             val t1 = Term.TermLambda(params, body1).withPosFrom(t)
@@ -441,9 +452,8 @@ object TypeChecker:
                   TermBinder(bd.name, tpe1).withPos(bd.pos).asInstanceOf[TermBinder]
                 else bd
               // Instantiate CAPs in the type
-              val tm = CapInstantiation()
-              val tpe1 = tm.apply(bd1.tpe)
-              val bd2 = TermBinder(bd1.name, tpe1).withPos(bd1.pos).asInstanceOf[TermBinder]
+              val bd2 = instantiateBinderCaps(bd1)
+              // Avoid self type in the body
               val expr1 =
                 if selfType.isDefined then
                   val tpe1 = avoidSelfType(expr.tpe, d).!!
@@ -465,10 +475,22 @@ object TypeChecker:
                 case d: Syntax.Definition => d
                 case t: Syntax.Term => Syntax.Definition.ValDef(Fresh.freshName("_"), None, t).withPosFrom(t)
               hopefully:
+                // typecheck the binder
                 val (bd1, boundExpr1, isRecursive) = goDefinition(d1).!!
+
+                // typecheck the body
                 val bodyExpr = go(ds)(using ctx.extend(bd1 :: Nil)).!!
+                // drop local cap instances from the cv of the body
+                dropLocalCapInsts(bd1.localCapInsts)
+
                 val resType = bodyExpr.tpe
-                val tm = AvoidLocalBinder(bd1.tpe.captureSet)
+                val approxElems = bd1.tpe.captureSet.elems.flatMap: cref =>
+                  if bd1.localCapInsts.contains(cref) then 
+                    // drop local cap instances, since they mean "fresh" things
+                    None
+                  else Some(cref)
+                val approxCs = CaptureSet(approxElems)
+                val tm = AvoidLocalBinder(approxCs)
                 val resType1 = tm.apply(resType)
                 if tm.ok then
                   Term.Bind(bd1, recursive = isRecursive, boundExpr1, bodyExpr).withPosFrom(d, bodyExpr).withTpe(resType1)
