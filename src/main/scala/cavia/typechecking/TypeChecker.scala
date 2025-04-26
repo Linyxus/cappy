@@ -322,6 +322,35 @@ object TypeChecker:
         case _ => Some(ref)
     (existsLocalParams, newCrefs)
 
+  def checkTypeArgs(targs: List[Syntax.Type | Syntax.CaptureSet], formals: List[TypeBinder | CaptureBinder], srcPos: SourcePos)(using Context): Result[List[Type | CaptureSet]] =
+    val formalTypes: List[Type | CaptureSet] = formals.map:
+      case TypeBinder(name, bound) => bound
+      case CaptureBinder(name, bound) => bound
+    hopefully:
+      def go(ts: List[Syntax.Type | Syntax.CaptureSet], fs: List[Type | CaptureSet])(using Context): List[Type | CaptureSet] = (ts, fs) match
+        case (Nil, Nil) => Nil
+        case (t :: ts, f :: fs) =>
+          val typeArg: (Type | CaptureSet) = 
+            (t, f) match
+              case (t: Syntax.Type, f: Type) =>
+                val tpe = checkType(t).!!
+                if TypeComparer.checkSubtype(tpe, f) then
+                  tpe
+                else
+                  sorry(TypeError.GeneralError(s"Type argument ${tpe.show} does not conform to the bound ${f.show}").withPosFrom(t))
+              case (t: Syntax.CaptureSet, f: CaptureSet) => 
+                val cs1 = checkCaptureSet(t).!!
+                if TypeComparer.checkSubcapture(cs1, f) then
+                  cs1
+                else sorry(TypeError.GeneralError(s"Capture set argument ${cs1.show} does not conform to the bound ${f.show}").withPosFrom(t))
+              case (t, f) => sorry(TypeError.GeneralError("Argument kind mismatch").withPosFrom(t))
+          val fs1 = fs.zipWithIndex.map: (f, i) =>
+            substituteType(f, typeArg, i, isParamType = true)
+          typeArg :: go(ts, fs1)
+        case _ => 
+          sorry(TypeError.GeneralError(s"Type argument number mismatch: expected ${formals.length}, but got ${targs.length}").withPos(srcPos))
+      go(targs, formalTypes)
+
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType)(using Context): Result[Term] = 
     val result: Result[Term] = t match
       case Syntax.Term.Ident(name) => 
@@ -476,38 +505,43 @@ object TypeChecker:
           val term1 = checkTerm(term).!!
           term1.tpe.stripCaptures match
             case funTpe @ Type.TypeArrow(formals, resultType) => 
-              val formalTypes: List[(Type | CaptureSet)] = formals.map:
-                case bd: TypeBinder => bd.bound
-                case bd: CaptureBinder => bd.bound
-              def go(xs: List[((Syntax.Type | Syntax.CaptureSet), (Type | CaptureSet))], acc: List[(Type | CaptureSet)]): (Term, List[CaptureSet]) = xs match
-                case Nil =>
-                  val targs = acc.reverse
-                  val resultType1 = substituteAllType(resultType, targs)
-                  val captureSets = targs.flatMap:
-                    case targ: CaptureSet => Some(targ)
-                    case _ => None
-                  (Term.TypeApply(term1, targs).withPosFrom(t).withTpe(resultType1), captureSets)
-                case (targ, tformal) :: xs => 
-                  val targ1: Type | CaptureSet = 
-                    (targ, tformal) match
-                      case (targ: Syntax.Type, tformal: Type) => 
-                        val targ1 = checkType(targ).!!
-                        if TypeComparer.checkSubtype(targ1, tformal) then
-                          targ1
-                        else 
-                          sorry(TypeError.TypeMismatch(tformal.show, targ1.show).withPos(targ.pos))
-                      case (targ: Syntax.CaptureSet, tformal: CaptureSet) => 
-                        val targ1 = checkCaptureSet(targ).!!
-                        if TypeComparer.checkSubcapture(targ1, tformal) then
-                          targ1
-                        else
-                          sorry(TypeError.TypeMismatch(tformal.show, targ1.show).withPos(targ.pos))
-                      case _ => sorry(TypeError.GeneralError(s"argument kind mismatch").withPos(targ.pos))
-                  val xs1 = xs.zipWithIndex.map: 
-                    case ((targ, tformal), idx) =>
-                      (targ, substituteType(tformal, targ1, idx, isParamType = true))
-                  go(xs1, targ1 :: acc)
-              val (resultTerm, captureArgs) = go(targs `zip` formalTypes, Nil)
+              // val formalTypes: List[(Type | CaptureSet)] = formals.map:
+              //   case bd: TypeBinder => bd.bound
+              //   case bd: CaptureBinder => bd.bound
+              // def go(xs: List[((Syntax.Type | Syntax.CaptureSet), (Type | CaptureSet))], acc: List[(Type | CaptureSet)]): (Term, List[CaptureSet]) = xs match
+              //   case Nil =>
+              //     val targs = acc.reverse
+              //     val resultType1 = substituteAllType(resultType, targs)
+              //     val captureSets = targs.flatMap:
+              //       case targ: CaptureSet => Some(targ)
+              //       case _ => None
+              //     (Term.TypeApply(term1, targs).withPosFrom(t).withTpe(resultType1), captureSets)
+              //   case (targ, tformal) :: xs => 
+              //     val targ1: Type | CaptureSet = 
+              //       (targ, tformal) match
+              //         case (targ: Syntax.Type, tformal: Type) => 
+              //           val targ1 = checkType(targ).!!
+              //           if TypeComparer.checkSubtype(targ1, tformal) then
+              //             targ1
+              //           else 
+              //             sorry(TypeError.TypeMismatch(tformal.show, targ1.show).withPos(targ.pos))
+              //         case (targ: Syntax.CaptureSet, tformal: CaptureSet) => 
+              //           val targ1 = checkCaptureSet(targ).!!
+              //           if TypeComparer.checkSubcapture(targ1, tformal) then
+              //             targ1
+              //           else
+              //             sorry(TypeError.TypeMismatch(tformal.show, targ1.show).withPos(targ.pos))
+              //         case _ => sorry(TypeError.GeneralError(s"argument kind mismatch").withPos(targ.pos))
+              //     val xs1 = xs.zipWithIndex.map: 
+              //       case ((targ, tformal), idx) =>
+              //         (targ, substituteType(tformal, targ1, idx, isParamType = true))
+              //     go(xs1, targ1 :: acc)
+              // val (resultTerm, captureArgs) = go(targs `zip` formalTypes, Nil)
+              val typeArgs = checkTypeArgs(targs, formals, t.pos).!!
+              val captureArgs = typeArgs.collect:
+                case cs: CaptureSet => cs
+              val resultType1 = substituteAllType(resultType, typeArgs)
+              val resultTerm = Term.TypeApply(term1, typeArgs).withPosFrom(t).withTpe(resultType1)
               term1 match
                 case _: VarRef =>
                 case _ =>
