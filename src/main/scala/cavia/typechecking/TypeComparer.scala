@@ -13,6 +13,9 @@ object TypeComparer:
   import Binder.*
 
   def checkSubcapture(cs1: CaptureSet, cs2: CaptureSet)(using Context): Boolean = //trace(s"checkSubcapture(${cs1.show}, ${cs2.show})"):
+    // println(s"checkSubcapture(${cs1.show}, ${cs2.show})")
+    if cs1.show == "{t1.x}" then
+      assert(false, "quoi???")
     cs1.elems.forall(checkSubcapture(_, cs2))
 
   def accountsFor(cs2: CaptureSet, x1: CaptureRef)(using Context): Boolean =
@@ -28,6 +31,7 @@ object TypeComparer:
         cs2.elems.contains(x1)
 
   def checkSubcapture(x1: CaptureRef, cs2: CaptureSet)(using Context): Boolean = //trace(s"checkSubcapture(${x1.show}, ${cs2.show})"):
+    //println(s"checkSubcapture(${x1.show}, ${cs2.show})")
     accountsFor(cs2, x1) || {
       x1 match
         case CaptureRef.Ref(Term.BinderRef(idx)) => getBinder(idx) match
@@ -35,6 +39,12 @@ object TypeComparer:
           case Binder.CaptureBinder(name, bound) => checkSubcapture(bound, cs2)
           case _: Binder.TypeBinder => assert(false, "binder kind is absurd")
         case CaptureRef.Ref(Term.SymbolRef(sym)) => checkSubcapture(sym.tpe.captureSet, cs2)
+        // case CaptureRef.Ref(Term.Select(base: VarRef, fieldInfo)) =>
+        //   def tryWiden: Boolean =
+        //     checkSubcapture(fieldInfo.tpe.captureSet, cs2)
+        //   def tryParent: Boolean =
+        //     checkSubcapture(base.singletonCaptureSet, cs2)
+        //   tryWiden || tryParent
         case _ => false
     }
 

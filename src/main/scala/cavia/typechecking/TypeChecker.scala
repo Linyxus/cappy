@@ -158,6 +158,8 @@ object TypeChecker:
         case CaptureRef.Ref(Term.SymbolRef(sym)) =>
           val refs = sym.tpe.captureSet.elems
           goRefs(refs)
+        case CaptureRef.Ref(Term.Select(base, fieldInfo)) => 
+          assert(false, "TODO: implement")
         case CaptureRef.CAP() => Set(ref)
         case CaptureRef.CapInst(capId) => Set(ref)
     def goRefs(refs: List[CaptureRef]): Set[CaptureRef] =
@@ -394,6 +396,7 @@ object TypeChecker:
             case Some((binder: Binder, idx)) => sorry(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
             case _ => sorry(TypeError.UnboundVariable(name).withPos(t.pos))
           //if !tpe.isPure then markFree(ref)
+          println(s"check pure $tpe, ${tpe.captureSet}")
           val cv = if !tpe.isPure then ref.singletonCaptureSet else CaptureSet.empty
           tpe.stripCaptures match
             case LazyType(resultType) => 

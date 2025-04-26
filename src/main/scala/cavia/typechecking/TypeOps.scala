@@ -29,21 +29,32 @@ extension (ref: VarRef)
   def asCaptureRef: CaptureRef = CaptureRef.Ref(ref).maybeWithPosFrom(ref)
   def singletonCaptureSet: CaptureSet = CaptureSet(List(ref.asCaptureRef))
 
+// object CapturePathOfRoot:
+//   def unapply(ref: CaptureRef): Option[Int] = ref match
+//     case CaptureRef.Ref(ref) =>
+//       getRoot(ref) match
+//         case Term.BinderRef(idx) => Some(idx)
+//         case _ => None
+//     case _ => None
+// TODO: fix this
+// Maybe the thing is that: we should include TermRef in Types
+
 class AvoidLocalBinder(approx: CaptureSet) extends TypeMap:
   var ok: Boolean = true
   override def mapCaptureSet(captureSet: CaptureSet): CaptureSet = 
-    val elems1 = captureSet.elems.flatMap:
-      case ref @ CaptureRef.Ref(Term.BinderRef(idx)) if idx == localBinders.size =>
-        if variance == Variance.Covariant then
-          approx.elems
-        else if variance == Variance.Contravariant then
-          Nil
-        else
-          ok = false
-          ref :: Nil
-      case ref @ CaptureRef.Ref(Term.BinderRef(idx)) if idx > localBinders.size =>
-        CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref) :: Nil
-      case ref => ref :: Nil
+    val elems1 = captureSet.elems.flatMap: ref =>
+      ref match
+        case CapturePathOfRoot(idx) if idx == localBinders.size =>
+          if variance == Variance.Covariant then
+            approx.elems
+          else if variance == Variance.Contravariant then
+            Nil
+          else
+            ok = false
+            ref :: Nil
+        case ref @ CapturePathOfRoot(idx) if idx > localBinders.size =>
+          CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref) :: Nil
+        case ref => ref :: Nil
     CaptureSet(elems1).maybeWithPosFrom(captureSet)
   
   override def apply(tpe: Type): Type = tpe match
@@ -56,7 +67,7 @@ object TypePrinter:
   def show(base: BaseType): String = base match
     case BaseType.AnyType => "Any"
     case BaseType.IntType => "Int"
-    case BaseType.StrType => "Str"
+    case BaseType.StrType => "String"
     case BaseType.UnitType => "Unit"
     case BaseType.I32 => "i32"
     case BaseType.I64 => "i64"

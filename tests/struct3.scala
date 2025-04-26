@@ -6,6 +6,6 @@ def main(): Unit =
   val b = Ref(0)
   val p = Pair(a, b)
   val t1 = p.x
-  val t2 = () => p.x
+  //val t2 = () => p.x
   val t3: Ref^{a} = t1
 
