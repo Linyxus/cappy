@@ -10,18 +10,8 @@ object TypeChecker:
   import Expr.*
   import Binder.*
 
-  case class CaptureEnv(var cv: Set[CaptureRef], level: Int):
-    def add(ref: CaptureRef): Unit = 
-      cv += ref
-
-    def add(refs: Set[CaptureRef]): Unit =
-      cv ++= refs
-
-  object CaptureEnv:
-    def empty(level: Int): CaptureEnv = CaptureEnv(Set.empty, level)
-
   /** Type checking context. */
-  case class Context(binders: List[Binder], symbols: List[Symbol], captured: CaptureEnv):
+  case class Context(binders: List[Binder], symbols: List[Symbol]):
     /** Extend the context with a list of binders. */
     def extend(bds: List[Binder]): Context =
       if bds.isEmpty then this
@@ -43,11 +33,8 @@ object TypeChecker:
           newSymbols = sym :: newSymbols
         copy(symbols = newSymbols)
 
-    def withEnv(env: CaptureEnv): Context =
-      copy(captured = env)
-
   object Context:
-    def empty: Context = Context(Nil, Nil, CaptureEnv.empty(level = 0))
+    def empty: Context = Context(Nil, Nil)
 
   enum TypeError extends Positioned:
     case UnboundVariable(name: String, addenda: String = "")
@@ -174,10 +161,6 @@ object TypeChecker:
     val elems = goRefs(set.elems)
     CaptureSet(elems.toList)
 
-  def dropLocalCapInsts(localInsts: List[CaptureRef.CapInst])(using Context): Unit =
-    localInsts.foreach: capInst =>
-      ctx.captured.cv -= capInst
-
   def checkSeparation(cs1: CaptureSet, cs2: CaptureSet)(using Context): Boolean =
     val pk1 = computePeak(cs1)
     val pk2 = computePeak(cs2)
@@ -259,59 +242,59 @@ object TypeChecker:
           go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
     go(params, Nil)
 
-  def markFree(cs: CaptureSet, srcPos: SourcePos)(using Context): Result[Unit] =
-    hopefully:
-    //println(s"markFree $cs")
-      val crefs = cs.elems.flatMap: ref =>
-        ref match
-          case CaptureRef.Ref(ref) => Some(ref)
-          case CaptureRef.CapInst(capId) => 
-            sorry(TypeError.GeneralError(s"A `{cap}` that is ambiguous is charged to the environment; consider using explicit capture parameters").withPos(srcPos))
-          case CaptureRef.CAP() =>
-            sorry(TypeError.GeneralError(s"A CAP() template is charged to the environment; consider using explicit capture parameters").withPos(srcPos))
-      crefs.foreach(markFree)
+  // def markFree(cs: CaptureSet, srcPos: SourcePos)(using Context): Result[Unit] =
+  //   hopefully:
+  //   //println(s"markFree $cs")
+  //     val crefs = cs.elems.flatMap: ref =>
+  //       ref match
+  //         case CaptureRef.Ref(ref) => Some(ref)
+  //         case CaptureRef.CapInst(capId) => 
+  //           sorry(TypeError.GeneralError(s"A `{cap}` that is ambiguous is charged to the environment; consider using explicit capture parameters").withPos(srcPos))
+  //         case CaptureRef.CAP() =>
+  //           sorry(TypeError.GeneralError(s"A CAP() template is charged to the environment; consider using explicit capture parameters").withPos(srcPos))
+  //     crefs.foreach(markFree)
 
-  def markFree(ref: VarRef)(using Context): Unit =
-    //println(s"markFree $ref")
-    def widenUntilWf(crefs: List[CaptureRef], delta: Int): List[CaptureRef] =
-      def allWf(crefs: List[CaptureRef]): Boolean = crefs.forall: ref =>
-        ref match
-          case CaptureRef.Ref(Term.BinderRef(idx)) => idx >= delta
-          case _ => true
-      if allWf(crefs) then
-        crefs.map: ref =>
-          ref match
-            case CaptureRef.Ref(Term.BinderRef(idx)) =>
-              //assert(idx >= delta)
-              CaptureRef.Ref(Term.BinderRef(idx - delta))
-            case _ => ref
-      else
-        val crefs1 = crefs.flatMap: ref =>
-          ref match
-            case CaptureRef.Ref(Term.BinderRef(idx)) if idx < delta =>
-              getBinder(idx) match
-                case TermBinder(name, tpe, _) => tpe.captureSet.elems
-                case CaptureBinder(name, bound) => bound.elems
-                case _ => assert(false)
-            case ref => List(ref)
-        widenUntilWf(crefs1, delta)
+  // def markFree(ref: VarRef)(using Context): Unit =
+  //   //println(s"markFree $ref")
+  //   def widenUntilWf(crefs: List[CaptureRef], delta: Int): List[CaptureRef] =
+  //     def allWf(crefs: List[CaptureRef]): Boolean = crefs.forall: ref =>
+  //       ref match
+  //         case CaptureRef.Ref(Term.BinderRef(idx)) => idx >= delta
+  //         case _ => true
+  //     if allWf(crefs) then
+  //       crefs.map: ref =>
+  //         ref match
+  //           case CaptureRef.Ref(Term.BinderRef(idx)) =>
+  //             //assert(idx >= delta)
+  //             CaptureRef.Ref(Term.BinderRef(idx - delta))
+  //           case _ => ref
+  //     else
+  //       val crefs1 = crefs.flatMap: ref =>
+  //         ref match
+  //           case CaptureRef.Ref(Term.BinderRef(idx)) if idx < delta =>
+  //             getBinder(idx) match
+  //               case TermBinder(name, tpe, _) => tpe.captureSet.elems
+  //               case CaptureBinder(name, bound) => bound.elems
+  //               case _ => assert(false)
+  //           case ref => List(ref)
+  //       widenUntilWf(crefs1, delta)
 
-    def avoidVarRef(ref: VarRef, delta: Int): List[CaptureRef] = ref match
-      case Term.BinderRef(idx) => 
-        if idx >= delta then
-          List(Term.BinderRef(idx - delta).asCaptureRef)
-        else
-          //println(s"!!! markFree: dropping local binder $ref")
-          widenUntilWf(List(ref.asCaptureRef), delta)
-      case Term.SymbolRef(sym) => List(ref.asCaptureRef)
-    val level = ctx.captured.level
-    val curLevel = ctx.binders.length
-    val delta = curLevel - level
-    //println(s"level = $level, curLevel = $curLevel, delta = $delta")
-    assert(delta >= 0, s"absurd levels")
-    val crefs = avoidVarRef(ref, delta)
-    //println(s"markFree $ref ==> $crefs")
-    ctx.captured.add(crefs.toSet)
+  //   def avoidVarRef(ref: VarRef, delta: Int): List[CaptureRef] = ref match
+  //     case Term.BinderRef(idx) => 
+  //       if idx >= delta then
+  //         List(Term.BinderRef(idx - delta).asCaptureRef)
+  //       else
+  //         //println(s"!!! markFree: dropping local binder $ref")
+  //         widenUntilWf(List(ref.asCaptureRef), delta)
+  //     case Term.SymbolRef(sym) => List(ref.asCaptureRef)
+  //   val level = ctx.captured.level
+  //   val curLevel = ctx.binders.length
+  //   val delta = curLevel - level
+  //   //println(s"level = $level, curLevel = $curLevel, delta = $delta")
+  //   assert(delta >= 0, s"absurd levels")
+  //   val crefs = avoidVarRef(ref, delta)
+  //   //println(s"markFree $ref ==> $crefs")
+  //   ctx.captured.add(crefs.toSet)
 
   private def dropLocalParams(crefs: List[CaptureRef], numParams: Int): (Boolean, List[CaptureRef]) = 
     var existsLocalParams = false
@@ -376,8 +359,6 @@ object TypeChecker:
         substituteAllType(tpe, typeArgs, isParamType = true)
       val syntheticFunctionType = Type.TermArrow(argFormals.map(tpe => TermBinder("_", tpe)), Type.AppliedType(Type.SymbolRef(classSym), typeArgs))
       val (termArgs, _) = checkFunctionApply(syntheticFunctionType, args, expected, srcPos).!!
-      // val termArgs = (args `zip` argFormals).map: (arg, formal) =>
-      //   checkTerm(arg, expected = formal).!!
       val classType = 
         if typeArgs.isEmpty then
           Type.SymbolRef(classSym)
@@ -387,7 +368,7 @@ object TypeChecker:
         arg.tpe.captureSet.elems
       val captureSet = CaptureSet(CaptureRef.CAP() :: termCaptureElems)
       val outType = Type.Capturing(classType, captureSet)
-      Term.StructInit(classSym, typeArgs, termArgs).withPos(srcPos).withTpe(outType)
+      Term.StructInit(classSym, typeArgs, termArgs).withPos(srcPos).withTpe(outType).withCVFrom(termArgs*)
 
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType)(using Context): Result[Term] = 
     val result: Result[Term] = t match
@@ -398,24 +379,28 @@ object TypeChecker:
             case Some((binder: Binder.TermBinder, idx)) => (Term.BinderRef(idx): VarRef, binder.tpe)
             case Some((binder: Binder, idx)) => sorry(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
             case _ => sorry(TypeError.UnboundVariable(name).withPos(t.pos))
-          if !tpe.isPure then markFree(ref)
+          //if !tpe.isPure then markFree(ref)
+          val cv = if !tpe.isPure then ref.singletonCaptureSet else CaptureSet.empty
           tpe.stripCaptures match
             case LazyType(resultType) => 
               val t1 = Term.TypeApply(ref, Nil).withPosFrom(t)
-              t1.withTpe(resultType)
+              t1.withTpe(resultType).withCV(cv)
             case _ =>
-              val tpe1 = if tpe.isPure then tpe else Type.Capturing(tpe.stripCaptures, ref.singletonCaptureSet).withKind(TypeKind.Star)
-              ref.withPosFrom(t).withTpe(tpe1)
+              val tpe1 = 
+                if tpe.isPure then 
+                  tpe 
+                else Type.Capturing(tpe.stripCaptures, ref.singletonCaptureSet).withKind(TypeKind.Star)
+              ref.withPosFrom(t).withTpe(tpe1).withCV(cv)
       case Syntax.Term.StrLit(value) => 
-        Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType))
+        Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType).withCV(CaptureSet.empty))
       case Syntax.Term.IntLit(value) => 
         val tpe = if expected.exists && expected.isIntegralType then expected else Definitions.i32Type
-        Right(Term.IntLit(value).withPosFrom(t).withTpe(tpe))
+        Right(Term.IntLit(value).withPosFrom(t).withTpe(tpe).withCV(CaptureSet.empty))
       case Syntax.Term.BoolLit(value) =>
         val tpe = Definitions.boolType
-        Right(Term.BoolLit(value).withPosFrom(t).withTpe(tpe))
+        Right(Term.BoolLit(value).withPosFrom(t).withTpe(tpe).withCV(CaptureSet.empty))
       case Syntax.Term.UnitLit() => 
-        Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
+        Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType).withCV(CaptureSet.empty))
       case Syntax.Term.Select(base, field) =>
         checkSelect(base, field, t.pos)
       case Syntax.Term.Assign(lhs, rhs) =>
@@ -430,28 +415,28 @@ object TypeChecker:
         checkTermParamList(params).flatMap: params =>
           val params1 = params.map(instantiateBinderCaps)
           val ctx1 = ctx.extend(params1)
-          val env1 = CaptureEnv.empty(ctx1.binders.length)
-          checkTerm(body)(using ctx1.withEnv(env1)).map: body1 =>
+          checkTerm(body)(using ctx1).map: body1 =>
             val t1 = Term.TermLambda(params, body1).withPosFrom(t)
-            val cv = env1.cv
-            val (_, cv1) = dropLocalParams(cv.toList, params.length)
+            val cv = body1.cv
+            val (_, cv1) = dropLocalParams(cv.elems.toList, params.length)
             val tpe = Type.TermArrow(params, body1.tpe).withKind(TypeKind.Star)
             val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
-            t1.withTpe(tpe1)
+            val lambdaCV = CaptureSet.empty  // values in Capybara have an empty cv
+            t1.withTpe(tpe1).withCV(lambdaCV)
       case Syntax.Term.TypeLambda(params, body) =>
         hopefully:
           val params1 = checkTypeParamList(params).!!
           val ctx1 = ctx.extend(params1)
-          val env1 = CaptureEnv.empty(ctx1.binders.length)
-          val body1 = checkTerm(body)(using ctx1.withEnv(env1)).!!
+          val body1 = checkTerm(body)(using ctx1).!!
           val t1 = Term.TypeLambda(params1, body1).withPosFrom(t)
-          val cv = env1.cv
-          val (existsLocalParams, cv1) = dropLocalParams(cv.toList, params.length)
+          val cv = body1.cv
+          val (existsLocalParams, cv1) = dropLocalParams(cv.elems.toList, params.length)
           if existsLocalParams then
             sorry(TypeError.GeneralError("local capture parameters captured by the body of a the lambda"))
           val tpe = Type.TypeArrow(params1, body1.tpe).withKind(TypeKind.Star)
           val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
-          t1.withTpe(tpe1)
+          val lambdaCV = CaptureSet.empty  // values in Capybara have an empty cv
+          t1.withTpe(tpe1).withCV(lambdaCV)
       case Syntax.Term.Block(stmts) => 
         def avoidSelfType(tpe: Type, d: Syntax.Definition): Result[Type] =
           val tm = AvoidLocalBinder(CaptureSet.universal)
@@ -490,14 +475,18 @@ object TypeChecker:
               (bd2, expr1, selfType.isDefined)
           stmts match
             case Nil => 
-              Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
+              Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType).withCV(CaptureSet.empty))
             case (t: Syntax.Term) :: Nil => 
               checkTerm(t)
             case (d: Syntax.Definition) :: Nil =>
               hopefully:
                 val (bd1, expr1, isRecursive) = goDefinition(d).!!
                 val retType = Definitions.unitType
-                Term.Bind(bd1, recursive = isRecursive, expr1, Term.UnitLit().withPosFrom(d).withTpe(retType)).withPosFrom(d).withTpe(retType)
+                Term.Bind(
+                  bd1, 
+                  recursive = isRecursive, 
+                  expr1, 
+                  Term.UnitLit().withPosFrom(d).withTpe(retType).withCV(CaptureSet.empty)).withPosFrom(d).withTpe(retType).withCVFrom(expr1)
             case d :: ds =>
               val d1 = d match
                 case d: Syntax.Definition => d
@@ -509,7 +498,12 @@ object TypeChecker:
                 // typecheck the body
                 val bodyExpr = go(ds)(using ctx.extend(bd1 :: Nil)).!!
                 // drop local cap instances from the cv of the body
-                dropLocalCapInsts(bd1.localCapInsts)
+                //dropLocalCapInsts(bd1.localCapInsts)
+                bodyExpr.withCV:
+                  val oldCV = bodyExpr.cv
+                  val newCV = oldCV.elems.filter: cref =>
+                    !bd1.localCapInsts.contains(cref)
+                  CaptureSet(newCV)
 
                 val resType = bodyExpr.tpe
                 val approxElems = bd1.tpe.captureSet.elems.flatMap: cref =>
@@ -520,8 +514,10 @@ object TypeChecker:
                 val approxCs = CaptureSet(approxElems)
                 val tm = AvoidLocalBinder(approxCs)
                 val resType1 = tm.apply(resType)
+                val bodyCV = bodyExpr.cv
+                val outCV = tm.mapCaptureSet(bodyCV) ++ boundExpr1.cv
                 if tm.ok then
-                  Term.Bind(bd1, recursive = isRecursive, boundExpr1, bodyExpr).withPosFrom(d, bodyExpr).withTpe(resType1)
+                  Term.Bind(bd1, recursive = isRecursive, boundExpr1, bodyExpr).withPosFrom(d, bodyExpr).withTpe(resType1).withCV(outCV)
                 else
                   sorry(TypeError.LeakingLocalBinder(resType.show(using ctx.extend(bd1 :: Nil))).withPos(d.pos))
         go(stmts)
@@ -548,10 +544,15 @@ object TypeChecker:
                 case cs: CaptureSet => cs
               val resultType1 = substituteAllType(resultType, typeArgs)
               val resultTerm = Term.TypeApply(term1, typeArgs).withPosFrom(t).withTpe(resultType1)
+              // term1 match
+              //   case _: VarRef =>
+              //   case _ =>
+              //     markFree(funTpe.captureSet, t.pos)
+              resultTerm.withCVFrom(term1)
               term1 match
                 case _: VarRef =>
                 case _ =>
-                  markFree(funTpe.captureSet, t.pos)
+                  resultTerm.withMoreCV(funTpe.captureSet)
               val signature = funTpe.signatureCaptureSet
               val todoCaptureSets = signature :: captureArgs
               for i <- 0 until todoCaptureSets.length do
@@ -586,7 +587,7 @@ object TypeChecker:
       val thenBranch1 = checkTerm(thenBranch, expected = expected1).!!
       val elseBranch1 = checkTerm(elseBranch, expected = thenBranch1.tpe).!!
       val finalTpe = thenBranch1.tpe
-      Term.If(cond1, thenBranch1, elseBranch1).withPos(srcPos).withTpe(finalTpe)
+      Term.If(cond1, thenBranch1, elseBranch1).withPos(srcPos).withTpe(finalTpe).withCVFrom(cond1, thenBranch1, elseBranch1)
 
   def checkInfix(op: Syntax.InfixOp, lhs: Syntax.Term, rhs: Syntax.Term, expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     op match
@@ -736,11 +737,17 @@ object TypeChecker:
         case Type.TermArrow(formals, resultType) =>
           val (args1, outType) = checkFunctionApply(funType, args, expected, srcPos).!!
           val resultTerm = Term.Apply(fun1, args1).withPos(srcPos).withTpe(outType)
+          // fun1 match
+          //   case _: VarRef =>
+          //     // Skip, since it will already be marked
+          //   case _ =>
+          //     markFree(fun1.tpe.captureSet, fun.pos)
+          resultTerm.withCVFrom(fun1 :: args1*)
           fun1 match
             case _: VarRef =>
-              // Skip, since it will already be marked
+              // skip, since it will already be marked
             case _ =>
-              markFree(fun1.tpe.captureSet, fun.pos)
+              resultTerm.withMoreCV(fun1.tpe.captureSet)
           resultTerm
         case PrimArrayType(elemType) =>
           args match
@@ -750,7 +757,7 @@ object TypeChecker:
                 PrimitiveOp.ArrayGet,
                 targs = Nil,
                 args = List(fun1, arg1),
-              ).withPos(srcPos).withTpe(elemType)
+              ).withPos(srcPos).withTpe(elemType).withCV(CaptureSet.empty)
             case _ => sorry(TypeError.GeneralError(s"Expect exact one array index, but got ${args.length}").withPos(srcPos))
         case _ =>
           sorry(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(fun.pos))
@@ -806,7 +813,7 @@ object TypeChecker:
           go(args, formals, arg1 :: acc)
       case _ => Left(TypeError.GeneralError(s"Argument number mismatch for primitive operation, expected ${formals.length}, but got ${args.length}").withPos(pos))
     go(args, formals, Nil).map: args1 =>
-      Term.PrimOp(op, Nil, args1).withPos(pos).withTpe(Type.Base(resType).withKind(TypeKind.Star))
+      Term.PrimOp(op, Nil, args1).withPos(pos).withTpe(Type.Base(resType).withKind(TypeKind.Star)).withCVFrom(args1*)
 
   def checkPrimOp(op: PrimitiveOp, args: List[Syntax.Term], expected: Type, pos: SourcePos)(using Context): Result[Term] =
     op match
@@ -844,7 +851,7 @@ object TypeChecker:
       case PrimitiveOp.Sorry =>
         hopefully:
           if expected.exists then
-            Term.PrimOp(PrimitiveOp.Sorry, Nil, Nil).withPos(pos).withTpe(expected)
+            Term.PrimOp(PrimitiveOp.Sorry, Nil, Nil).withPos(pos).withTpe(expected).withCV(CaptureSet.empty)
           else sorry(TypeError.GeneralError("no expected type for sorry").withPos(pos))
       case _ => assert(false, s"Unsupported primitive operation: $op")
       
@@ -858,7 +865,7 @@ object TypeChecker:
               val arrayLength = checkTerm(arg1, expected = Definitions.i32Type).!!
               val arrayInit = checkTerm(arg2, expected = elemType1).!!
               val tpe = Type.Capturing(Definitions.arrayType(elemType1), CaptureSet.universal)
-              Term.PrimOp(PrimitiveOp.ArrayNew, elemType1 :: Nil, arrayLength :: arrayInit :: Nil).withPos(pos).withTpe(tpe)
+              Term.PrimOp(PrimitiveOp.ArrayNew, elemType1 :: Nil, arrayLength :: arrayInit :: Nil).withPos(pos).withTpe(tpe).withCVFrom(arrayLength, arrayInit)
             case _ => sorry(TypeError.GeneralError(s"Argument number mismatch, `newArray` expects one type argument and two term arguments"))
         case _ => sorry(TypeError.GeneralError(s"Primitive operation $op cannot be applied to type arguments").withPos(pos))
 
@@ -887,14 +894,14 @@ object TypeChecker:
     case Syntax.Definition.DefDef(name, _, paramss, resultType, expr) => 
       def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[(Term, Option[CaptureSet])] = pss match
         case Nil => 
-          val env1 = CaptureEnv.empty(ctx.binders.length)
+          //val env1 = CaptureEnv.empty(ctx.binders.length)
           hopefully:
             val expected1 = resultType match
               case None => Type.NoType
               case Some(expected) => checkType(expected).!!
             //println(s"checkTerm $expr with new env")
-            val expr1 = checkTerm(expr, expected = expected1)(using ctx.withEnv(env1)).!!
-            val captureSet = CaptureSet(env1.cv.toList)
+            val expr1 = checkTerm(expr, expected = expected1).!!
+            val captureSet = expr1.cv
             (expr1, Some(captureSet))
         case (ps: Syntax.TermParamList) :: pss =>
           checkTermParamList(ps.params).flatMap: params =>
@@ -907,7 +914,7 @@ object TypeChecker:
                 case Some(cs) => 
                   val (_, cs1) = dropLocalParams(cs.elems, params.length)
                   Type.Capturing(tpe, CaptureSet(cs1))
-              (Term.TermLambda(params, body1).withPosFrom(d).withTpe(tpe1), None)
+              (Term.TermLambda(params, body1).withPosFrom(d).withTpe(tpe1).withCV(CaptureSet.empty), None)
         case (ps: Syntax.TypeParamList) :: pss =>
           checkTypeParamList(ps.params).flatMap: params =>
             go(pss)(using ctx.extend(params)).flatMap: (body1, captureSet) =>
@@ -921,7 +928,7 @@ object TypeChecker:
                   else
                     Right(Type.Capturing(tpe, CaptureSet(cs1)))
               computeTpe1.map: tpe1 =>
-                (Term.TypeLambda(params, body1).withPosFrom(d).withTpe(tpe1), None)
+                (Term.TypeLambda(params, body1).withPosFrom(d).withTpe(tpe1).withCV(CaptureSet.empty), None)
       go(paramss).flatMap: (expr1, captureSet) =>
         captureSet match
           case None =>
@@ -930,7 +937,7 @@ object TypeChecker:
             Right((bd.asInstanceOf[TermBinder], expr1))
           case Some(cs) =>
             val tpe1 = Type.Capturing(Type.TypeArrow(Nil, expr1.tpe), cs)
-            val expr2 = Term.TypeLambda(Nil, expr1).withPosFrom(d).withTpe(tpe1)
+            val expr2 = Term.TypeLambda(Nil, expr1).withPosFrom(d).withTpe(tpe1).withCV(CaptureSet.empty)
             val bd = TermBinder(name, tpe1).withPos(d.pos)
             Right((bd.asInstanceOf[TermBinder], expr2))
 
@@ -1034,17 +1041,17 @@ object TypeChecker:
             case Some(fieldInfo) => fieldInfo
             case None => sorry(TypeError.GeneralError(s"Field $field not found in ${classSym.name}").withPos(srcPos))
           val fieldType = fieldInfo.tpe
-          Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldType)
+          Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldType).withCV(base1.cv)
         case Type.AppliedType(Type.SymbolRef(classSym), targs) =>
           val fieldInfo = classSym.info.fields.find(_.name == field) match
             case Some(fieldInfo) => fieldInfo
             case None => sorry(TypeError.GeneralError(s"Field $field not found in ${classSym.name}").withPos(srcPos))
           val fieldType = substituteAllType(fieldInfo.tpe, targs, isParamType = false)
-          Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldType)
+          Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldType).withCV(base1.cv)
         case PrimArrayType(elemType) =>
           field match
             case "size" | "length" =>
-              Term.PrimOp(PrimitiveOp.ArrayLen, Nil, List(base1)).withPos(srcPos).withTpe(Definitions.i32Type)
+              Term.PrimOp(PrimitiveOp.ArrayLen, Nil, List(base1)).withPos(srcPos).withTpe(Definitions.i32Type).withCV(base1.cv)
             case _ => 
               sorry(TypeError.GeneralError(s"Field $field not found in `array`").withPos(srcPos))
         case _ => sorry(TypeError.TypeMismatch("a type that can be selected from", base1.tpe.show).withPosFrom(base))
@@ -1057,12 +1064,12 @@ object TypeChecker:
         case lhs1 @ Term.Select(_, fieldInfo) =>
           if fieldInfo.mutable then
             val rhs1 = checkTerm(rhs, expected = lhs1.tpe).!!
-            Term.PrimOp(PrimitiveOp.StructSet, Nil, List(lhs1, rhs1)).withPos(srcPos).withTpe(Definitions.unitType)
+            Term.PrimOp(PrimitiveOp.StructSet, Nil, List(lhs1, rhs1)).withPos(srcPos).withTpe(Definitions.unitType).withCVFrom(lhs1, rhs1)
           else
             sorry(TypeError.GeneralError(s"Field is not mutable").withPosFrom(lhs))
         case lhs1 @ Term.PrimOp(PrimitiveOp.ArrayGet, Nil, arr :: arg :: Nil) =>
           val PrimArrayType(elemType) = arr.tpe.stripCaptures: @unchecked
           val rhs1 = checkTerm(rhs, expected = elemType).!!
-          Term.PrimOp(PrimitiveOp.ArraySet, Nil, List(arr, arg, rhs1)).withPos(srcPos).withTpe(Definitions.unitType)
+          Term.PrimOp(PrimitiveOp.ArraySet, Nil, List(arr, arg, rhs1)).withPos(srcPos).withTpe(Definitions.unitType).withCVFrom(lhs1, rhs1)
         case _ => 
           fail

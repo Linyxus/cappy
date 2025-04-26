@@ -4,5 +4,4 @@ struct Pair(x: Ref^, y: Ref^)
 def main(): Unit =
   val a = Ref(0)
   val b = Ref(0)
-  val p = Pair(a, b)
 

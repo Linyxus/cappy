@@ -8,6 +8,7 @@ object Expr:
   /** A trait for expressions that have a type */
   trait Typed:
     private var myTpe: Type = Type.NoType
+    private var myCaptured: CaptureSet | Null = null
 
     /** The type of the expression, assuming it is typed */
     def tpe: Type = myTpe
@@ -22,6 +23,24 @@ object Expr:
     def withTpe(tpe: Type): this.type =
       setTpe(tpe)
       this
+
+    def cv: CaptureSet =
+      assert(myCaptured != null, s"Expression has no captured variables")
+      myCaptured
+
+    def setCV(cv: CaptureSet): Unit =
+      myCaptured = cv
+
+    def withCV(cv: CaptureSet): this.type =
+      setCV(cv)
+      this
+
+    def withCVFrom(other: Typed*): this.type =
+      val cv = other.map(_.cv).reduce(_ ++ _)
+      withCV(cv)
+
+    def withMoreCV(more: CaptureSet): this.type =
+      withCV(myCaptured ++ more)
 
   enum BaseType:
     case StrType
