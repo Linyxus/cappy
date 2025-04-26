@@ -164,6 +164,7 @@ object Expr:
     case TermArrow(params: List[TermBinder], result: Type)
     case TypeArrow(params: List[TypeBinder | CaptureBinder], result: Type)
     case AppliedType(constructor: Type, args: List[Type | CaptureSet])
+    case RefinedType(base: Type, refinements: List[FieldInfo])
     case NoType
 
     def like(other: Type): this.type =

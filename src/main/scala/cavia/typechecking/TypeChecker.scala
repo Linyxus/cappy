@@ -353,10 +353,11 @@ object TypeChecker:
       if args.length != fields.length then
         sorry(TypeError.GeneralError(s"Constructor argument number mismatch, expected ${fields.length}, but got ${args.length}").withPos(srcPos))
       val typeArgs = checkTypeArgs(targs, tformals, srcPos).!!
-      // TODO: do separation check
-      val argFormals = fields.map: field =>
+      val fields1: List[(String, Type, Boolean)] = fields.map: field =>
         val tpe = field.tpe
-        substituteAllType(tpe, typeArgs, isParamType = true)
+        val fieldType = substituteAllType(tpe, typeArgs, isParamType = true)
+        (field.name, fieldType, field.mutable)
+      val argFormals = fields1.map(_._2)
       val syntheticFunctionType = Type.TermArrow(argFormals.map(tpe => TermBinder("_", tpe)), Type.AppliedType(Type.SymbolRef(classSym), typeArgs))
       val (termArgs, _) = checkFunctionApply(syntheticFunctionType, args, expected, srcPos).!!
       val classType = 
@@ -366,9 +367,17 @@ object TypeChecker:
           Type.AppliedType(Type.SymbolRef(classSym), typeArgs)
       val termCaptureElems = termArgs.flatMap: arg =>
         arg.tpe.captureSet.elems
+      val refinements: List[FieldInfo] = (fields1 `zip` termArgs).flatMap: 
+        case ((name, fieldType, mutable), arg) =>
+          if fieldType.isPure then None
+          else Some(FieldInfo(name, arg.tpe, mutable))
       val captureSet = CaptureSet(CaptureRef.CAP() :: termCaptureElems)
       val outType = Type.Capturing(classType, captureSet)
-      Term.StructInit(classSym, typeArgs, termArgs).withPos(srcPos).withTpe(outType).withCVFrom(termArgs*)
+      val refinedOutType =
+        if !refinements.isEmpty then
+          Type.RefinedType(outType, refinements)
+        else outType
+      Term.StructInit(classSym, typeArgs, termArgs).withPos(srcPos).withTpe(refinedOutType).withCVFrom(termArgs*)
 
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType)(using Context): Result[Term] = 
     val result: Result[Term] = t match
@@ -1036,25 +1045,30 @@ object TypeChecker:
     hopefully:
       val base1 = checkTerm(base).!!
       base1.tpe.stripCaptures match
-        case Type.SymbolRef(classSym) =>
-          val fieldInfo = classSym.info.fields.find(_.name == field) match
-            case Some(fieldInfo) => fieldInfo
-            case None => sorry(TypeError.GeneralError(s"Field $field not found in ${classSym.name}").withPos(srcPos))
-          val fieldType = fieldInfo.tpe
-          Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldType).withCV(base1.cv)
-        case Type.AppliedType(Type.SymbolRef(classSym), targs) =>
-          val fieldInfo = classSym.info.fields.find(_.name == field) match
-            case Some(fieldInfo) => fieldInfo
-            case None => sorry(TypeError.GeneralError(s"Field $field not found in ${classSym.name}").withPos(srcPos))
-          val fieldType = substituteAllType(fieldInfo.tpe, targs, isParamType = false)
-          Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldType).withCV(base1.cv)
+        // case Type.SymbolRef(classSym) =>
+        //   val fieldInfo = classSym.info.fields.find(_.name == field) match
+        //     case Some(fieldInfo) => fieldInfo
+        //     case None => sorry(TypeError.GeneralError(s"Field $field not found in ${classSym.name}").withPos(srcPos))
+        //   val fieldType = fieldInfo.tpe
+        //   Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldType).withCV(base1.cv)
+        // case Type.AppliedType(Type.SymbolRef(classSym), targs) =>
+        //   val fieldInfo = classSym.info.fields.find(_.name == field) match
+        //     case Some(fieldInfo) => fieldInfo
+        //     case None => sorry(TypeError.GeneralError(s"Field $field not found in ${classSym.name}").withPos(srcPos))
+        //   val fieldType = substituteAllType(fieldInfo.tpe, targs, isParamType = false)
+        //   Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldType).withCV(base1.cv)
         case PrimArrayType(elemType) =>
           field match
             case "size" | "length" =>
               Term.PrimOp(PrimitiveOp.ArrayLen, Nil, List(base1)).withPos(srcPos).withTpe(Definitions.i32Type).withCV(base1.cv)
             case _ => 
               sorry(TypeError.GeneralError(s"Field $field not found in `array`").withPos(srcPos))
-        case _ => sorry(TypeError.TypeMismatch("a type that can be selected from", base1.tpe.show).withPosFrom(base))
+        case _ => 
+          getFieldInfo(base1.tpe, field) match
+            case Some(fieldInfo) =>
+              Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldInfo.tpe).withCV(base1.cv)
+            case None =>
+              sorry(TypeError.TypeMismatch(s"a type with the field $field", base1.tpe.show).withPosFrom(base))
 
   def checkAssign(lhs: Syntax.Term, rhs: Syntax.Term, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
@@ -1073,3 +1087,16 @@ object TypeChecker:
           Term.PrimOp(PrimitiveOp.ArraySet, Nil, List(arr, arg, rhs1)).withPos(srcPos).withTpe(Definitions.unitType).withCVFrom(lhs1, rhs1)
         case _ => 
           fail
+
+  def getFieldInfo(tpe: Type, field: String)(using Context): Option[FieldInfo] = 
+    def go(tpe: Type): Option[FieldInfo] =
+      tpe match
+        case AppliedStructType(classSym, targs) => 
+          classSym.info.fields.find(_.name == field).map: fieldInfo =>
+            val fieldType = substituteAllType(fieldInfo.tpe, targs, isParamType = false)
+            FieldInfo(fieldInfo.name, fieldType, fieldInfo.mutable)
+        case Type.Capturing(tpe, _) => go(tpe)
+        case Type.RefinedType(core, refinements) =>
+          refinements.find(_.name == field).orElse(go(core))
+        case _ => None
+    go(tpe)

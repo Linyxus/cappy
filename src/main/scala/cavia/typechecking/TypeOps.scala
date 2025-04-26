@@ -15,6 +15,7 @@ extension (tpe: Type)
     case Type.TermArrow(params, result) => CaptureSet.empty
     case Type.TypeArrow(params, result) => CaptureSet.empty
     case Type.AppliedType(constructor, args) => CaptureSet.empty
+    case Type.RefinedType(base, _) => base.captureSet
     case Type.NoType => assert(false, "computing capture set from no type")
 
   def stripCaptures: Type = tpe match
@@ -105,6 +106,10 @@ object TypePrinter:
         showFunctionType(params, result, cs = None, isType = false)
       case Type.TypeArrow(params, result) =>
         showFunctionType(params, result, cs = None, isType = true)
+      case Type.RefinedType(base, refinements) =>
+        val baseStr = show(base)
+        val refinementsStr = refinements.map(refinement => s"${refinement.name}: ${show(refinement.tpe)}").mkString("; ")
+        s"$baseStr with { $refinementsStr }"
 
   def show(binder: Binder)(using TypeChecker.Context): String = binder match
     case Binder.TermBinder(name, tpe, localCapInsts) => s"$name: ${show(tpe)}"
