@@ -46,6 +46,14 @@ object Expr:
   enum CaptureRef extends Positioned:
     case Ref(ref: VarRef)
     case CAP()
+    case CapInst(capId: Int)
+  object CaptureRef:
+    private var nextCapId: Int = 0
+
+    def makeCapInst(): CaptureRef.CapInst =
+      val result: CaptureRef.CapInst = CaptureRef.CapInst(nextCapId)
+      nextCapId += 1
+      result
 
   sealed trait CaptureSet extends Positioned:
     import CaptureSet.*
@@ -153,7 +161,21 @@ object Expr:
     def exists: Boolean = this match
       case NoType => false
       case _ => true
+
+    def derivedTermArrow(params1: List[Binder], result1: Type): Type =
+      this match
+        case Type.TermArrow(params, result) if (params eq params1) && (result eq result1) => this
+        case _ => Type.TermArrow(params1.asInstanceOf[List[TermBinder]], result1).like(this)
+
+    def derivedTypeArrow(params1: List[Binder], result1: Type): Type =
+      this match
+        case Type.TypeArrow(params, result) if (params eq params1) && (result eq result1) => this
+        case _ => Type.TypeArrow(params1.asInstanceOf[List[TypeBinder | CaptureBinder]], result1).like(this)
     
+    def derivedAppliedType(constructor1: Type, args1: List[Type | CaptureSet]): Type =
+      this match
+        case Type.AppliedType(constructor, args) if (constructor eq constructor1) && (args eq args1) => this
+        case _ => Type.AppliedType(constructor1, args1).like(this)
   
   object Type:
     private var nextId: Int = 0
@@ -373,7 +395,7 @@ object Expr:
       case Type.TermArrow(params, result) => 
         def go(ps: List[TermBinder], bs: List[Binder]): Type =
           ps match
-            case Nil => Type.TermArrow(bs.reverse.asInstanceOf, apply(result)).like(tp)
+            case Nil => tp.derivedTermArrow(bs.reverse, apply(result))
             case p :: ps =>
               val p1 = withVariance(variance.negate):
                 mapBinder(p)
@@ -383,14 +405,20 @@ object Expr:
       case Type.TypeArrow(params, result) =>
         def go(ps: List[TypeBinder | CaptureBinder], bs: List[Binder]): Type =
           ps match
-            case Nil => Type.TypeArrow(bs.reverse.asInstanceOf, apply(result)).like(tp)
+            case Nil => tp.derivedTypeArrow(bs.reverse, apply(result))
             case p :: ps =>
               val p1 = withVariance(variance.negate):
                 mapBinder(p)
               withBinder(p1):
                 go(ps, p1 :: bs)
         go(params, Nil)
+      case Type.AppliedType(constructor, args) =>
+        tp.derivedAppliedType(apply(constructor), args.map(mapTypeArg))
       case _ => tp
+
+    def mapTypeArg(arg: Type | CaptureSet): Type | CaptureSet = arg match
+      case tpe: Type => apply(tpe)
+      case cs: CaptureSet => mapCaptureSet(cs)
 
   class ShiftType(amount: Int) extends TypeMap:
     override def mapCaptureRef(ref: CaptureRef): CaptureRef = ref match

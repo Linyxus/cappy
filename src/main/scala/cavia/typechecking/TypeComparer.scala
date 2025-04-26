@@ -35,7 +35,7 @@ object TypeComparer:
           case Binder.CaptureBinder(name, bound) => checkSubcapture(bound, cs2)
           case _: Binder.TypeBinder => assert(false, "binder kind is absurd")
         case CaptureRef.Ref(Term.SymbolRef(sym)) => checkSubcapture(sym.tpe.captureSet, cs2)
-        case CaptureRef.CAP() => false
+        case _ => false
     }
 
   def checkSubtype(tp1: Type, tp2: Type)(using Context): Boolean = //trace(s"checkSubtype(${tp1.show}, ${tp2.show})"):

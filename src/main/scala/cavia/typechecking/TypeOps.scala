@@ -115,6 +115,7 @@ object TypePrinter:
   def show(captureRef: CaptureRef)(using TypeChecker.Context): String = captureRef match
     case CaptureRef.Ref(Term.BinderRef(idx)) => TypeChecker.getBinder(idx).name
     case CaptureRef.Ref(Term.SymbolRef(sym)) => sym.name
+    case CaptureRef.CapInst(capId) => s"cap$$$capId"
     case CaptureRef.CAP() => "cap"
 
 extension (tpe: Type)
@@ -254,6 +255,17 @@ extension (tpe: Type)
     val collector = CollectSignature()
     collector(tpe)
     CaptureSet(collector.collected.toList)
+
+class CapInstantiation extends TypeMap:
+  override def apply(tpe: Type): Type = tpe match
+    case Type.TypeArrow(ps, result) => tpe
+    case Type.TermArrow(ps, result) => tpe
+    case _ => mapOver(tpe)
+
+  override def mapCaptureRef(ref: CaptureRef): CaptureRef = ref match
+    case CaptureRef.CAP() => CaptureRef.makeCapInst()
+    case _ => ref
+  
 
 class UniversalConversion extends TypeMap:
   import scala.collection.mutable.Set

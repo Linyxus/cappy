@@ -161,18 +161,14 @@ object TypeChecker:
         getBinder(idx) match
           case Binder.TermBinder(_, tpe) =>
             val elems = tpe.captureSet.elems
-            if elems.contains(CaptureRef.CAP()) then
-              Set(ref)
-            else
-              goRefs(elems)
+            goRefs(elems)
           case _: Binder.CaptureBinder => Set(ref)
           case _ => assert(false, "malformed capture set")
       case CaptureRef.Ref(Term.SymbolRef(sym)) =>
         val refs = sym.tpe.captureSet.elems
-        if refs.contains(CaptureRef.CAP()) then
-          Set(ref)
-        else goRefs(refs)
+        goRefs(refs)
       case CaptureRef.CAP() => Set(ref)
+      case CaptureRef.CapInst(capId) => Set(ref)
     def goRefs(refs: List[CaptureRef]): Set[CaptureRef] =
       refs.flatMap(goRef).toSet
     val elems = goRefs(set.elems)
@@ -259,13 +255,17 @@ object TypeChecker:
           go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
     go(params, Nil)
 
-  def markFree(cs: CaptureSet)(using Context): Unit =
+  def markFree(cs: CaptureSet, srcPos: SourcePos)(using Context): Result[Unit] =
+    hopefully:
     //println(s"markFree $cs")
-    val crefs = cs.elems.flatMap: ref =>
-      ref match
-        case CaptureRef.Ref(ref) => Some(ref)
-        case CaptureRef.CAP() => None
-    crefs.foreach(markFree)
+      val crefs = cs.elems.flatMap: ref =>
+        ref match
+          case CaptureRef.Ref(ref) => Some(ref)
+          case CaptureRef.CapInst(capId) => 
+            sorry(TypeError.GeneralError(s"A `{cap}` that is ambiguous is charged to the environment; consider using explicit capture parameters").withPos(srcPos))
+          case CaptureRef.CAP() =>
+            sorry(TypeError.GeneralError(s"A CAP() template is charged to the environment; consider using explicit capture parameters").withPos(srcPos))
+      crefs.foreach(markFree)
 
   def markFree(ref: VarRef)(using Context): Unit =
     //println(s"markFree $ref")
@@ -340,7 +340,7 @@ object TypeChecker:
                   sorry(TypeError.GeneralError(s"Type argument ${tpe.show} does not conform to the bound ${f.show}").withPosFrom(t))
               case (t: Syntax.CaptureSet, f: CaptureSet) => 
                 val cs1 = checkCaptureSet(t).!!
-                if TypeComparer.checkSubcapture(cs1, f) then
+                if f.elems.contains(CaptureRef.CAP()) || TypeComparer.checkSubcapture(cs1, f) then
                   cs1
                 else sorry(TypeError.GeneralError(s"Capture set argument ${cs1.show} does not conform to the bound ${f.show}").withPosFrom(t))
               case (t, f) => sorry(TypeError.GeneralError("Argument kind mismatch").withPosFrom(t))
@@ -434,17 +434,22 @@ object TypeChecker:
                   val selfBinder = TermBinder(d.name, selfType).withPos(d.pos)
                   ctx.extend(selfBinder)
               val (bd, expr) = checkDef(d.asInstanceOf[Syntax.ValueDef])(using ctx1).!!
+              // Avoid self reference
               val bd1 = 
                 if selfType.isDefined then
                   val tpe1 = avoidSelfType(bd.tpe, d).!!
                   TermBinder(bd.name, tpe1).withPos(bd.pos).asInstanceOf[TermBinder]
                 else bd
+              // Instantiate CAPs in the type
+              val tm = CapInstantiation()
+              val tpe1 = tm.apply(bd1.tpe)
+              val bd2 = TermBinder(bd1.name, tpe1).withPos(bd1.pos).asInstanceOf[TermBinder]
               val expr1 =
                 if selfType.isDefined then
                   val tpe1 = avoidSelfType(expr.tpe, d).!!
                   expr.withTpe(tpe1)
                 else expr
-              (bd1, expr1, selfType.isDefined)
+              (bd2, expr1, selfType.isDefined)
           stmts match
             case Nil => 
               Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType))
@@ -520,7 +525,7 @@ object TypeChecker:
               term1 match
                 case _: VarRef =>
                 case _ =>
-                  markFree(funTpe.captureSet)
+                  markFree(funTpe.captureSet, t.pos)
               val signature = funTpe.signatureCaptureSet
               val todoCaptureSets = signature :: captureArgs
               for i <- 0 until todoCaptureSets.length do
@@ -695,7 +700,7 @@ object TypeChecker:
             case _: VarRef =>
               // Skip, since it will already be marked
             case _ =>
-              markFree(fun1.tpe.captureSet)
+              markFree(fun1.tpe.captureSet, fun.pos)
           for i <- 0 until css.length do
             for j <- i + 1 until css.length do
               if !checkSeparation(css(i), css(j)) then

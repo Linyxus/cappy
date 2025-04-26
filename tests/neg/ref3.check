@@ -1,4 +1,4 @@
-10 |   swap(a, a) // error
-   |   ^^^^^^^^^^
+8 |   swap1(() => () => a, () => () => b)
+  |         ^^^^^^^^^^^^^
 
-     Separation error: {a} and {a} are not separated
+    Type mismatch: expected () -> () ->{cap} Ref^{cap}, but got () ->{} () ->{a} Ref^{a}
