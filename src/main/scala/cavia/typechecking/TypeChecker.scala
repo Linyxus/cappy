@@ -1051,22 +1051,16 @@ object TypeChecker:
         mod.defns = structDefns ++ valueDefns
         mod
 
+  def isStablePath(t: Term): Boolean = t match
+    case Term.Select(base, fieldInfo) => isStablePath(base) && !fieldInfo.mutable
+    case Term.SymbolRef(_) => true
+    case Term.BinderRef(_) => true
+    case _ => false
+
   def checkSelect(base: Syntax.Term, field: String, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
       val base1 = checkTerm(base).!!
       base1.tpe.stripCaptures match
-        // case Type.SymbolRef(classSym) =>
-        //   val fieldInfo = classSym.info.fields.find(_.name == field) match
-        //     case Some(fieldInfo) => fieldInfo
-        //     case None => sorry(TypeError.GeneralError(s"Field $field not found in ${classSym.name}").withPos(srcPos))
-        //   val fieldType = fieldInfo.tpe
-        //   Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldType).withCV(base1.cv)
-        // case Type.AppliedType(Type.SymbolRef(classSym), targs) =>
-        //   val fieldInfo = classSym.info.fields.find(_.name == field) match
-        //     case Some(fieldInfo) => fieldInfo
-        //     case None => sorry(TypeError.GeneralError(s"Field $field not found in ${classSym.name}").withPos(srcPos))
-        //   val fieldType = substituteAllType(fieldInfo.tpe, targs, isParamType = false)
-        //   Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldType).withCV(base1.cv)
         case PrimArrayType(elemType) =>
           field match
             case "size" | "length" =>
@@ -1076,7 +1070,13 @@ object TypeChecker:
         case _ => 
           getFieldInfo(base1.tpe, field) match
             case Some(fieldInfo) =>
-              Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldInfo.tpe).withCV(base1.cv)
+              val outTerm = Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldInfo.tpe).withCV(base1.cv)
+              if isStablePath(outTerm) then
+                //println(s"$outTerm is a stable path!")
+                val singletonSet = (outTerm.asInstanceOf[VarRef]).singletonCaptureSet
+                val narrowedType = Type.Capturing(outTerm.tpe.stripCaptures, singletonSet)
+                outTerm.withTpe(narrowedType).withCV(singletonSet)
+              else outTerm
             case None =>
               sorry(TypeError.TypeMismatch(s"a type with the field $field", base1.tpe.show).withPosFrom(base))
 

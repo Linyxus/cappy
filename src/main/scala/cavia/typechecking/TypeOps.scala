@@ -123,9 +123,14 @@ object TypePrinter:
         s"{$elemsStr}"
       case _: CaptureSet.UniversalSet => "?"
 
+  def showVarRef(ref: VarRef)(using TypeChecker.Context): String = ref match
+    case Term.BinderRef(idx) => TypeChecker.getBinder(idx).name
+    case Term.SymbolRef(sym) => sym.name
+    case Term.Select(base: VarRef, fieldInfo) => s"${showVarRef(base)}.${fieldInfo.name}"
+    case _ => assert(false, s"Not a valid VarRef: $ref")
+
   def show(captureRef: CaptureRef)(using TypeChecker.Context): String = captureRef match
-    case CaptureRef.Ref(Term.BinderRef(idx)) => TypeChecker.getBinder(idx).name
-    case CaptureRef.Ref(Term.SymbolRef(sym)) => sym.name
+    case CaptureRef.Ref(ref) => showVarRef(ref)
     case CaptureRef.CapInst(capId) => s"cap$$$capId"
     case CaptureRef.CAP() => "cap"
 
