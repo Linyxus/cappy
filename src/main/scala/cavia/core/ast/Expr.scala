@@ -66,6 +66,7 @@ object Expr:
     case Ref(ref: VarRef)
     case CAP()
     case CapInst(capId: Int)
+
   object CaptureRef:
     private var nextCapId: Int = 0
 
@@ -434,7 +435,15 @@ object Expr:
         go(params, Nil)
       case Type.AppliedType(constructor, args) =>
         tp.derivedAppliedType(apply(constructor), args.map(mapTypeArg))
-      case _ => tp
+      case Type.RefinedType(base, refinements) =>
+        Type.RefinedType(apply(base), refinements.map(mapRefinement))
+      case Type.Base(_) => tp
+      case Type.BinderRef(_) => tp
+      case Type.SymbolRef(_) => tp
+      case Type.NoType => tp
+
+    def mapRefinement(info: FieldInfo): FieldInfo =
+      FieldInfo(info.name, apply(info.tpe), info.mutable)
 
     def mapTypeArg(arg: Type | CaptureSet): Type | CaptureSet = arg match
       case tpe: Type => apply(tpe)

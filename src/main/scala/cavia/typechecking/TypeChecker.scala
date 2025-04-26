@@ -5,6 +5,7 @@ import core.*
 import ast.*
 import scala.collection.mutable.ArrayBuffer
 import cavia.core.ast.Syntax.PrefixOp
+import reporting.trace
 
 object TypeChecker:
   import Expr.*
@@ -68,10 +69,11 @@ object TypeChecker:
         case Some(sym) => Some(sym)
         case None => None
 
-  def getBinder(idx: Int)(using ctx: Context): Binder =
+  def getBinder(idx: Int)(using ctx: Context): Binder = //trace(s"getBinder $idx"):
     assert(idx >= 0 && idx < ctx.binders.length, s"invalid binder index: $idx")
     val bd = ctx.binders(idx)
-    bd.shift(idx + 1)
+    val res = bd.shift(idx + 1)
+    res
 
   def checkTermParam(param: Syntax.TermParam)(using ctx: Context): Result[TermBinder] =
     checkType(param.tpe).map: tpe =>
@@ -143,25 +145,28 @@ object TypeChecker:
     case _ => None
 
   def computePeak(set: CaptureSet)(using Context): CaptureSet =
-    def goRef(ref: CaptureRef): Set[CaptureRef] = ref match
-      case CaptureRef.Ref(Term.BinderRef(idx)) =>
-        getBinder(idx) match
-          case Binder.TermBinder(_, tpe, _) =>
-            val elems = tpe.captureSet.elems
-            goRefs(elems)
-          case _: Binder.CaptureBinder => Set(ref)
-          case _ => assert(false, "malformed capture set")
-      case CaptureRef.Ref(Term.SymbolRef(sym)) =>
-        val refs = sym.tpe.captureSet.elems
-        goRefs(refs)
-      case CaptureRef.CAP() => Set(ref)
-      case CaptureRef.CapInst(capId) => Set(ref)
+    def goRef(ref: CaptureRef): Set[CaptureRef] = 
+      //println(s"goRef $ref")
+      ref match
+        case CaptureRef.Ref(Term.BinderRef(idx)) =>
+          getBinder(idx) match
+            case Binder.TermBinder(_, tpe, _) =>
+              val elems = tpe.captureSet.elems
+              goRefs(elems)
+            case _: Binder.CaptureBinder => Set(ref)
+            case _ => assert(false, "malformed capture set")
+        case CaptureRef.Ref(Term.SymbolRef(sym)) =>
+          val refs = sym.tpe.captureSet.elems
+          goRefs(refs)
+        case CaptureRef.CAP() => Set(ref)
+        case CaptureRef.CapInst(capId) => Set(ref)
     def goRefs(refs: List[CaptureRef]): Set[CaptureRef] =
+      //println(s"goRefs $refs")
       refs.flatMap(goRef).toSet
     val elems = goRefs(set.elems)
     CaptureSet(elems.toList)
 
-  def checkSeparation(cs1: CaptureSet, cs2: CaptureSet)(using Context): Boolean =
+  def checkSeparation(cs1: CaptureSet, cs2: CaptureSet)(using Context): Boolean = //trace(s"checkSeparation ${cs1.show} ${cs2.show}"):
     val pk1 = computePeak(cs1)
     val pk2 = computePeak(cs2)
     val intersection = pk1.elems.intersect(pk2.elems)
@@ -359,7 +364,7 @@ object TypeChecker:
         (field.name, fieldType, field.mutable)
       val argFormals = fields1.map(_._2)
       val syntheticFunctionType = Type.TermArrow(argFormals.map(tpe => TermBinder("_", tpe)), Type.AppliedType(Type.SymbolRef(classSym), typeArgs))
-      val (termArgs, _) = checkFunctionApply(syntheticFunctionType, args, expected, srcPos).!!
+      val (termArgs, _) = checkFunctionApply(syntheticFunctionType, args, expected, srcPos, isDependent = false).!!
       val classType = 
         if typeArgs.isEmpty then
           Type.SymbolRef(classSym)
@@ -707,7 +712,7 @@ object TypeChecker:
         val primOp = PrimitiveOp.BoolNot
         checkPrimOp(primOp, List(term), expected, srcPos)
   
-  def checkFunctionApply(funType: Type, args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[(List[Term], Type)] =
+  def checkFunctionApply(funType: Type, args: List[Syntax.Term], expected: Type, srcPos: SourcePos, isDependent: Boolean = true)(using Context): Result[(List[Term], Type)] =
     hopefully:
       funType.stripCaptures match
         case Type.TermArrow(formals, resultType) =>
@@ -721,16 +726,22 @@ object TypeChecker:
               val tm = UniversalConversion()
               val formal1 = tm.apply(formal)
               val localSets = tm.createdUniversals
+              //println(s"checkArg $arg, expected = $formal1 (from $formal)")
               val arg1 = checkTerm(arg, expected = formal1).!!
               val css = localSets.map(_.solve())
-              val xs1 = xs.zipWithIndex.map: 
-                case ((arg, formal), idx) =>
-                  (arg, substitute(formal, arg1, idx, isParamType = true).!!)
+              val xs1 = 
+                if isDependent then
+                  xs.zipWithIndex.map: 
+                    case ((arg, formal), idx) =>
+                      (arg, substitute(formal, arg1, idx, isParamType = true).!!)
+                else xs
               go(xs1, arg1 :: acc, css ++ captureSetAcc)
           val (args1, outType, css) = go(args `zip` (formals.map(_.tpe)), Nil, Nil)
           // perform separation check
           val sigCaptures = funType.signatureCaptureSet
           val css1 = sigCaptures :: css
+          println(s"separation todos for $funType:")
+          css1.foreach(cs => println(s"  ${cs.show}"))
           for i <- 0 until css1.length do
             for j <- i + 1 until css1.length do
               if !checkSeparation(css1(i), css1(j)) then
