@@ -1013,7 +1013,7 @@ object TypeChecker:
       lhs1 match
         case lhs1 @ Term.Select(_, fieldInfo) =>
           if fieldInfo.mutable then
-            val rhs1 = checkTerm(rhs, expected = fieldInfo.tpe).!!
+            val rhs1 = checkTerm(rhs, expected = lhs1.tpe).!!
             Term.PrimOp(PrimitiveOp.StructSet, Nil, List(lhs1, rhs1)).withPos(srcPos).withTpe(Definitions.unitType)
           else
             sorry(TypeError.GeneralError(s"Field is not mutable").withPosFrom(lhs))

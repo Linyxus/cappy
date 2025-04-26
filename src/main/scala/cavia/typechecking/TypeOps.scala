@@ -283,3 +283,9 @@ object PrimArrayType:
   def unapply(tpe: Type): Option[Type] = tpe match
     case Type.AppliedType(Type.Base(BaseType.ArrayType), (elemType: Type) :: Nil) => Some(elemType)
     case _ => None
+
+object AppliedStructType:
+  def unapply(tpe: Type): Option[(StructSymbol, List[Type | CaptureSet])] = tpe match
+    case Type.SymbolRef(sym: StructSymbol) => Some((sym, Nil))
+    case Type.AppliedType(Type.SymbolRef(sym: StructSymbol), typeArgs) => Some((sym, typeArgs))
+    case _ => None

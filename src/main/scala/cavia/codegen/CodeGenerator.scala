@@ -18,8 +18,14 @@ object CodeGenerator:
   case class ClosureTypeInfo(funcTypeSym: Symbol, closTypeSym: Symbol)
 
   enum BinderInfo:
+    /** A binder with a symbol in the target language created for it. */
     case Sym(binder: Expr.Binder, sym: Symbol)
+    /** This binder is inaccessible. It may be a variable not accessed by a closure. Or it is a capture binder. */
     case Inaccessible(binder: Expr.Binder)
+    /** This is a type binder specialized to a concrete value type in the target. */
+    case Specialized(binder: Expr.Binder, tpe: ValType)
+    /** This is a type binder that is abstract. */
+    case Abstract(binder: Expr.Binder)
 
     val binder: Expr.Binder
 
@@ -27,8 +33,10 @@ object CodeGenerator:
     case FuncDef(funcSym: Symbol, workerSym: Symbol)
     case GlobalDef(globalSym: Symbol)
 
-  enum TypeInfo:
-    case StructDef(structSym: Symbol, fields: Map[String, Symbol])
+  case class StructInfo(sym: Symbol, nameMap: Map[String, Symbol])
+
+  /** Signature of a specialisation of a struct or a method. */
+  case class SpecSig(targs: List[ValType])
 
   case class Context(
     funcs: ArrayBuffer[Func] = ArrayBuffer.empty,
@@ -42,7 +50,8 @@ object CodeGenerator:
     declares: ArrayBuffer[ElemDeclare] = ArrayBuffer.empty,
     binderInfos: List[BinderInfo] = Nil,
     defInfos: mutable.Map[Expr.DefSymbol, DefInfo] = new IdentityHashMap[Expr.DefSymbol, DefInfo]().asScala,
-    typeInfos: mutable.Map[Expr.StructSymbol, TypeInfo] = new IdentityHashMap[Expr.StructSymbol, TypeInfo]().asScala,
+    typeInfos: mutable.Map[Expr.StructSymbol, mutable.Map[SpecSig, StructInfo]] = 
+      new IdentityHashMap[Expr.StructSymbol, mutable.Map[SpecSig, StructInfo]]().asScala,
     var startFunc: Option[Symbol] = None,
   ):
     def withLocalSym(binder: Expr.Binder, sym: Symbol): Context =
@@ -174,8 +183,8 @@ object CodeGenerator:
       case PrimitiveOp.StructSet =>
         val Expr.Term.Select(base, fieldInfo) :: rhs :: Nil = args: @unchecked
         val rhsInstrs = genTerm(rhs)
-        val Expr.Type.SymbolRef(classSym) = base.tpe.stripCaptures: @unchecked
-        val TypeInfo.StructDef(structSym, fieldMap) = ctx.typeInfos(classSym): @unchecked
+        val AppliedStructType(classSym, typeArgs) = base.tpe.stripCaptures: @unchecked
+        val StructInfo(structSym, fieldMap) = createStructType(classSym, typeArgs)
         val fieldSym = fieldMap(fieldInfo.name)
         val baseInstrs = genTerm(base)
         val setFieldInstrs = List(Instruction.StructSet(structSym, fieldSym))
@@ -274,9 +283,14 @@ object CodeGenerator:
       val arrType = computeArrayType(tpe)
       val arrSym = createArrayType(arrType)
       ValType.TypedRef(arrSym)
-    case Expr.Type.SymbolRef(sym) =>
-      val TypeInfo.StructDef(structSym, _) = ctx.typeInfos(sym): @unchecked
+    case AppliedStructType(sym, targs) =>
+      val StructInfo(structSym, _) = createStructType(sym, targs)
       ValType.TypedRef(structSym)
+    case Expr.Type.BinderRef(idx) =>
+      ctx.binderInfos(idx) match
+        case BinderInfo.Specialized(_, tpe) => tpe
+        case BinderInfo.Abstract(_) => ValType.AnyRef
+        case _ => assert(false, "This is absurd")
     case _ => assert(false, s"Unsupported type: $tpe")
 
   def dropLocalBinders(xs: Set[Int], numLocals: Int): Set[Int] =
@@ -406,6 +420,7 @@ object CodeGenerator:
     ctx.binderInfos(binder) match
       case BinderInfo.Sym(binder, sym) => List(Instruction.LocalGet(sym))
       case BinderInfo.Inaccessible(binder) => assert(false, s"Inaccessible binder: $binder")
+      case _ => assert(false, "absurd binder info")
 
   def genTerm(t: Expr.Term)(using Context): List[Instruction] = t match
     case Term.IntLit(value) => 
@@ -475,22 +490,22 @@ object CodeGenerator:
       val argInstrs = args.flatMap(genTerm)
       val callRefInstrs = List(Instruction.CallRef(info.funcTypeSym))
       funInstrs ++ getSelfArgInstrs ++ argInstrs ++ getWorkerInstrs ++ callRefInstrs
-    case Term.StructInit(classSym, _, args) =>
-      genStructInit(classSym, args)
+    case Term.StructInit(classSym, targs, args) =>
+      genStructInit(classSym, targs, args)
     case Term.Select(base, fieldInfo) =>
       genSelect(base, fieldInfo)
     case _ => assert(false, s"Don't know how to translate this term: $t")
 
-  def genStructInit(classSym: Expr.StructSymbol, args: List[Expr.Term])(using Context): List[Instruction] =
-    val TypeInfo.StructDef(structSym, _) = ctx.typeInfos(classSym): @unchecked
+  def genStructInit(classSym: Expr.StructSymbol, targs: List[Expr.Type | Expr.CaptureSet], args: List[Expr.Term])(using Context): List[Instruction] =
+    val StructInfo(structSym, _) = createStructType(classSym, targs)
     val argInstrs = args.flatMap(genTerm)
     val createStructInstrs = List(Instruction.StructNew(structSym))
     argInstrs ++ createStructInstrs
 
   def genSelect(base: Expr.Term, fieldInfo: Expr.FieldInfo)(using Context): List[Instruction] =
     base.tpe.stripCaptures match
-      case Expr.Type.SymbolRef(classSym) =>
-        val TypeInfo.StructDef(structSym, nameMap) = ctx.typeInfos(classSym): @unchecked
+      case AppliedStructType(classSym, targs) =>
+        val StructInfo(structSym, nameMap) = createStructType(classSym, targs)
         val fieldName = fieldInfo.name
         val fieldSym = nameMap(fieldName)
         val baseInstrs = genTerm(base)
@@ -498,19 +513,59 @@ object CodeGenerator:
         baseInstrs ++ getFieldInstrs
       case _ => assert(false, "impossible, otherwise a bug in the typechecker")
 
-  def genStructDef(sym: Expr.StructSymbol)(using Context): TypeInfo =
-    val structSym = Symbol.fresh(sym.name)
-    val info = sym.info
-    val fields = info.fields.map: field =>
-      val Expr.FieldInfo(name, tpe, mutable) = field
-      val fieldSym = Symbol.fresh(name)
-      val fieldType = translateType(tpe)
-      FieldType(fieldSym, fieldType, mutable)
-    val structType = StructType(fields, subClassOf = None)
-    val typeDef = TypeDef(structSym, structType)
-    val nameMap = Map.from((info.fields `zip` fields).map((s, t) => (s.name, t.sym)))
-    emitType(typeDef)
-    TypeInfo.StructDef(structSym, nameMap)
+  // def genStructDef(sym: Expr.StructSymbol)(using Context): TypeInfo =
+  //   val structSym = Symbol.fresh(sym.name)
+  //   val info = sym.info
+  //   val fields = info.fields.map: field =>
+  //     val Expr.FieldInfo(name, tpe, mutable) = field
+  //     val fieldSym = Symbol.fresh(name)
+  //     val fieldType = translateType(tpe)
+  //     FieldType(fieldSym, fieldType, mutable)
+  //   val structType = StructType(fields, subClassOf = None)
+  //   val typeDef = TypeDef(structSym, structType)
+  //   val nameMap = Map.from((info.fields `zip` fields).map((s, t) => (s.name, t.sym)))
+  //   emitType(typeDef)
+  //   TypeInfo.StructDef(structSym, nameMap)
+
+  def translateTypeArgs(targs: List[Expr.Type | Expr.CaptureSet])(using Context): SpecSig =
+    val valTypes = targs.flatMap:
+      case tpe: Expr.Type => Some(translateType(tpe))
+      case _ => None
+    SpecSig(valTypes)
+
+  def createStructType(classSym: Expr.StructSymbol, targs: List[Expr.Type | Expr.CaptureSet])(using Context): StructInfo =
+    val specSig = translateTypeArgs(targs)
+    val specMap: mutable.Map[SpecSig, StructInfo] =
+      ctx.typeInfos.get(classSym) match
+        case None =>
+          ctx.typeInfos += (classSym -> mutable.Map.empty)
+          ctx.typeInfos.get(classSym).get
+        case Some(m) => m
+    specMap.get(specSig) match
+      case Some(info) => info
+      case None => 
+        val structName = nameEncode(classSym.name ++ specSig.targs.map(vt => "_" ++ vt.show).mkString(""))
+        val structSym = Symbol.fresh(structName)
+        val binders: List[Expr.Binder] = classSym.info.targs
+        val binderInfos = (binders `zip` targs).map:
+          case (bd, tpe: Expr.Type) => 
+            val valType = translateType(tpe)
+            BinderInfo.Specialized(bd, valType)
+          case (bd, tpe: Expr.CaptureSet) => BinderInfo.Inaccessible(bd)
+        val ctx1 = ctx.usingBinderInfos(binderInfos.reverse)
+        val fields: List[(String, FieldType)] = classSym.info.fields.map: field =>
+          val Expr.FieldInfo(fieldName, fieldType, fieldMut) = field
+          val fieldSym = Symbol.fresh(fieldName)
+          val tpe = translateType(fieldType)(using ctx1)
+          val info = FieldType(fieldSym, tpe, mutable = fieldMut)
+          (fieldName, info)
+        val structType = StructType(fields.map(_._2), subClassOf = None)
+        val typeDef = TypeDef(structSym, structType)
+        val nameMap = Map.from(fields.map((n, f) => (n, f.sym)))
+        emitType(typeDef)
+        val structInfo = StructInfo(structSym, nameMap)
+        specMap += (specSig -> structInfo)
+        structInfo
 
   def genModuleFunction(funType: Expr.Type, funSymbol: Symbol, workerSymbol: Symbol, expr: Expr.Term)(using Context): Unit =
     val Term.TermLambda(ps, body) = expr: @unchecked
@@ -594,8 +649,7 @@ object CodeGenerator:
               val globalSym = Symbol.fresh(sym.name)
               ctx.defInfos += (sym -> DefInfo.GlobalDef(globalSym))
         case Definition.StructDef(sym) =>
-          val info = genStructDef(sym)
-          ctx.typeInfos += (sym -> info)
+          ctx.typeInfos += (sym -> mutable.Map.empty)
     // (2) emit func definitions
     m.defns.foreach: defn =>
       defn match
