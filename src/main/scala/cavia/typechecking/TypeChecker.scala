@@ -884,7 +884,9 @@ object TypeChecker:
             (expr1, Some(captureSet))
         case (ps: Syntax.TermParamList) :: pss =>
           checkTermParamList(ps.params).flatMap: params =>
-            go(pss)(using ctx.extend(params)).map: (body1, captureSet) =>
+            val params1 = params.map: param =>
+              instantiateBinderCaps(param)
+            go(pss)(using ctx.extend(params1)).map: (body1, captureSet) =>
               val tpe = Type.TermArrow(params, body1.tpe).withKind(TypeKind.Star)
               val tpe1 = captureSet match
                 case None => tpe
