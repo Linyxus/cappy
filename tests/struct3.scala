@@ -1,6 +1,8 @@
 struct Ref(var data: i32)
-//struct RefPair(x: Ref^, y: Ref^)
+struct Pair(x: Ref^, y: Ref^)
 //def par(op1: () => Unit, op2: () => Unit): Unit = ()
-def foo(f: () => Ref^): Unit = ()
-def main(): Unit = ()
+def main(): Unit =
+  val a = Ref(0)
+  val b = Ref(0)
+  val p = Pair(a, b)
 

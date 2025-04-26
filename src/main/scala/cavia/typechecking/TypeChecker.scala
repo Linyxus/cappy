@@ -361,6 +361,34 @@ object TypeChecker:
     val binder1 = TermBinder(binder.name, tpe1, tm.localCaps)
     binder1.maybeWithPosFrom(binder).asInstanceOf[TermBinder]
 
+  def checkStructInit(classSym: StructSymbol, targs: List[Syntax.Type | Syntax.CaptureSet], args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
+    val tformals = classSym.info.targs
+    val fields = classSym.info.fields
+    hopefully:
+      if targs.length != tformals.length then
+        sorry(TypeError.GeneralError(s"Constructor type argument number mismatch, expected ${tformals.length}, but got ${targs.length}").withPos(srcPos))
+      if args.length != fields.length then
+        sorry(TypeError.GeneralError(s"Constructor argument number mismatch, expected ${fields.length}, but got ${args.length}").withPos(srcPos))
+      val typeArgs = checkTypeArgs(targs, tformals, srcPos).!!
+      // TODO: do separation check
+      val argFormals = fields.map: field =>
+        val tpe = field.tpe
+        substituteAllType(tpe, typeArgs, isParamType = true)
+      val syntheticFunctionType = Type.TermArrow(argFormals.map(tpe => TermBinder("_", tpe)), Type.AppliedType(Type.SymbolRef(classSym), typeArgs))
+      val (termArgs, _) = checkFunctionApply(syntheticFunctionType, args, expected, srcPos).!!
+      // val termArgs = (args `zip` argFormals).map: (arg, formal) =>
+      //   checkTerm(arg, expected = formal).!!
+      val classType = 
+        if typeArgs.isEmpty then
+          Type.SymbolRef(classSym)
+        else
+          Type.AppliedType(Type.SymbolRef(classSym), typeArgs)
+      val termCaptureElems = termArgs.flatMap: arg =>
+        arg.tpe.captureSet.elems
+      val captureSet = CaptureSet(CaptureRef.CAP() :: termCaptureElems)
+      val outType = Type.Capturing(classType, captureSet)
+      Term.StructInit(classSym, typeArgs, termArgs).withPos(srcPos).withTpe(outType)
+
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType)(using Context): Result[Term] = 
     val result: Result[Term] = t match
       case Syntax.Term.Ident(name) => 
@@ -504,34 +532,10 @@ object TypeChecker:
         checkPolyPrimOp(primOp, targs, args, expected, t.pos)
       case Syntax.Term.Apply(Syntax.Term.TypeApply(Syntax.Term.Ident(name), targs), args) if lookupStructSymbol(name).isDefined =>
         val classSym = lookupStructSymbol(name).get
-        val tformals = classSym.info.targs
-        val fields = classSym.info.fields
-        hopefully:
-          if targs.length != tformals.length then
-            sorry(TypeError.GeneralError(s"Constructor type argument number mismatch, expected ${tformals.length}, but got ${targs.length}").withPos(t.pos))
-          if args.length != fields.length then
-            sorry(TypeError.GeneralError(s"Constructor argument number mismatch, expected ${fields.length}, but got ${args.length}").withPos(t.pos))
-          val typeArgs = checkTypeArgs(targs, tformals, t.pos).!!
-          // TODO: do separation check
-          val argFormals = fields.map: field =>
-            val tpe = field.tpe
-            substituteAllType(tpe, typeArgs, isParamType = true)
-          val termArgs = (args `zip` argFormals).map: (arg, formal) =>
-            checkTerm(arg, expected = formal).!!
-          val classType = Type.AppliedType(Type.SymbolRef(classSym), typeArgs)
-          val outType = Type.Capturing(classType, CaptureSet.universal)
-          Term.StructInit(classSym, typeArgs, termArgs).withPosFrom(t).withTpe(outType)
+        checkStructInit(classSym, targs, args, expected, t.pos)
       case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if lookupStructSymbol(name).isDefined =>
         val classSym = lookupStructSymbol(name).get
-        val classType = Type.SymbolRef(classSym)
-        val fields = classSym.info.fields
-        hopefully:
-          if fields.length != args.length then
-            sorry(TypeError.GeneralError(s"Constructor argument number mismatch, expected ${fields.length}, but got ${args.length}").withPos(t.pos))
-          val args1 = (args `zip` fields).map: (arg, field) =>
-            checkTerm(arg, expected = field.tpe).!!
-          val tpe = Type.Capturing(classType, CaptureSet.universal)
-          Term.StructInit(classSym, Nil, args1).withPosFrom(t).withTpe(tpe)
+        checkStructInit(classSym, targs = Nil, args, expected, t.pos)
       case Syntax.Term.Apply(fun, args) => 
         checkApply(fun, args, expected, t.pos)
       case Syntax.Term.TypeApply(term, targs) => 
@@ -560,8 +564,8 @@ object TypeChecker:
 
     result.flatMap: t1 =>
       if !expected.exists || TypeComparer.checkSubtype(t1.tpe, expected) then
-        val t2 = if expected.exists then t1.withTpe(expected) else t1
-        Right(t2)
+        //val t2 = if expected.exists then t1.withTpe(expected) else t1
+        Right(t1)
       else 
         Left(TypeError.TypeMismatch(expected.show, t1.tpe.show).withPos(t.pos))
 
@@ -692,21 +696,17 @@ object TypeChecker:
       case PrefixOp.Not =>
         val primOp = PrimitiveOp.BoolNot
         checkPrimOp(primOp, List(term), expected, srcPos)
-
-  def checkApply(fun: Syntax.Term, args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
+  
+  def checkFunctionApply(funType: Type, args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[(List[Term], Type)] =
     hopefully:
-      val fun1 = checkTerm(fun).!!
-      val funType = fun1.tpe
       funType.stripCaptures match
         case Type.TermArrow(formals, resultType) =>
           if args.length != formals.length then
-            sorry(TypeError.GeneralError(s"Argument number mismatch, expected ${formals.length}, but got ${args.length}").withPos(fun.pos))
-          def go(xs: List[(Syntax.Term, Type)], acc: List[Term], captureSetAcc: List[CaptureSet]): Result[(Term, List[CaptureSet])] = xs match
+            sorry(TypeError.GeneralError(s"Argument number mismatch, expected ${formals.length}, but got ${args.length}").withPos(srcPos))
+          def go(xs: List[(Syntax.Term, Type)], acc: List[Term], captureSetAcc: List[CaptureSet]): (List[Term], Type, List[CaptureSet]) = xs match
             case Nil =>
               val args = acc.reverse
-              substituteAll(resultType, args).map: resultType1 =>
-                val resTerm = Term.Apply(fun1, args).withPos(srcPos).withTpe(resultType1)
-                (resTerm, captureSetAcc)
+              (args, substituteAll(resultType, args).!!, captureSetAcc)
             case (arg, formal) :: xs => 
               val tm = UniversalConversion()
               val formal1 = tm.apply(formal)
@@ -717,16 +717,30 @@ object TypeChecker:
                 case ((arg, formal), idx) =>
                   (arg, substitute(formal, arg1, idx, isParamType = true).!!)
               go(xs1, arg1 :: acc, css ++ captureSetAcc)
-          val (resultTerm, css) = go(args `zip` (formals.map(_.tpe)), Nil, Nil).!!
+          val (args1, outType, css) = go(args `zip` (formals.map(_.tpe)), Nil, Nil)
+          // perform separation check
+          val sigCaptures = funType.signatureCaptureSet
+          val css1 = sigCaptures :: css
+          for i <- 0 until css1.length do
+            for j <- i + 1 until css1.length do
+              if !checkSeparation(css1(i), css1(j)) then
+                sorry(TypeError.SeparationError(css1(i).show, css1(j).show).withPos(srcPos))
+          (args1, outType)
+        case _ => sorry(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(srcPos))
+
+  def checkApply(fun: Syntax.Term, args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
+    hopefully:
+      val fun1 = checkTerm(fun).!!
+      val funType = fun1.tpe
+      funType.stripCaptures match
+        case Type.TermArrow(formals, resultType) =>
+          val (args1, outType) = checkFunctionApply(funType, args, expected, srcPos).!!
+          val resultTerm = Term.Apply(fun1, args1).withPos(srcPos).withTpe(outType)
           fun1 match
             case _: VarRef =>
               // Skip, since it will already be marked
             case _ =>
               markFree(fun1.tpe.captureSet, fun.pos)
-          for i <- 0 until css.length do
-            for j <- i + 1 until css.length do
-              if !checkSeparation(css(i), css(j)) then
-                sorry(TypeError.SeparationError(css(i).show, css(j).show).withPos(srcPos))
           resultTerm
         case PrimArrayType(elemType) =>
           args match

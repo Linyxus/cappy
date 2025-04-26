@@ -90,7 +90,10 @@ object TypePrinter:
         def showTypeArg(arg: Type | CaptureSet): String = arg match
           case tpe: Type => show(tpe)
           case cs: CaptureSet => show(cs)
-        s"${show(constructor)}[${args.map(showTypeArg).mkString(", ")}]"
+        val typeArgsStr = 
+          if args.isEmpty then ""
+          else s"[${args.map(showTypeArg).mkString(", ")}]"
+        s"${show(constructor)}$typeArgsStr"
       case Type.Capturing(inner, captureSet) => 
         inner match
           case Type.TermArrow(params, result) =>
