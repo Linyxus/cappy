@@ -18,7 +18,8 @@ def mapArray(xs: array[i32]^, f: i32 => i32): Unit =
   go(0)
 
 def main(): Unit =
-  val p = Pair[i32, array[i32]^](0, newArray[i32](10, 42))
+  val xs = newArray[i32](10, 42)
+  val p = Pair[i32, array[i32]^](0, xs) // limitation // inlining the definition of `xs` causes an error right now
   p.x = 42
   iterate(p.y.size, (idx: i32) => p.y(idx) = 100)
   showArray(p.y)
