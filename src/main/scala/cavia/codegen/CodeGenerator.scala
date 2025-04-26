@@ -306,7 +306,7 @@ object CodeGenerator:
     case Term.Apply(fun, args) => freeLocalBinders(fun) ++ args.flatMap(freeLocalBinders)
     case Term.TypeApply(term, targs) => freeLocalBinders(term)
     case Term.Select(base, fieldInfo) => freeLocalBinders(base)
-    case Term.StructInit(sym, args) => args.flatMap(freeLocalBinders).toSet
+    case Term.StructInit(sym, _, args) => args.flatMap(freeLocalBinders).toSet
     case Term.If(cond, thenBranch, elseBranch) =>
       freeLocalBinders(cond) ++ freeLocalBinders(thenBranch) ++ freeLocalBinders(elseBranch)
 
@@ -475,7 +475,7 @@ object CodeGenerator:
       val argInstrs = args.flatMap(genTerm)
       val callRefInstrs = List(Instruction.CallRef(info.funcTypeSym))
       funInstrs ++ getSelfArgInstrs ++ argInstrs ++ getWorkerInstrs ++ callRefInstrs
-    case Term.StructInit(classSym, args) =>
+    case Term.StructInit(classSym, _, args) =>
       genStructInit(classSym, args)
     case Term.Select(base, fieldInfo) =>
       genSelect(base, fieldInfo)

@@ -70,8 +70,15 @@ class ExprPrinter extends IndentedPrinter:
           if idx < args.size - 1 then
             print(", ")
         print(")")
-      case Term.StructInit(sym, args) =>
+      case Term.StructInit(sym, targs, args) =>
         print(sym.name)
+        if targs.nonEmpty then
+          print("[")
+          targs.zipWithIndex.foreach: (targ, idx) =>
+            showType(targ)
+            if idx < targs.size - 1 then
+              print(", ")
+          print("]")
         print("(")
         args.zipWithIndex.foreach: (arg, idx) =>
           show(arg)
@@ -110,8 +117,12 @@ class ExprPrinter extends IndentedPrinter:
         newline()
         indented:
           show(elseBranch)
-  def showType(tpe: Type)(using Context): Unit =
-    print(TypePrinter.show(tpe))
+  def showType(tpe: Type | CaptureSet)(using Context): Unit =
+    tpe match
+      case tpe: Type =>
+        print(TypePrinter.show(tpe))
+      case cs: CaptureSet =>
+        print(TypePrinter.show(cs))
 
   def showModule(mod: Module)(using Context): Unit =
     print("module {")

@@ -484,9 +484,16 @@ object TypeChecker:
             sorry(TypeError.GeneralError(s"Constructor type argument number mismatch, expected ${tformals.length}, but got ${targs.length}").withPos(t.pos))
           if args.length != fields.length then
             sorry(TypeError.GeneralError(s"Constructor argument number mismatch, expected ${fields.length}, but got ${args.length}").withPos(t.pos))
-          val targs1 = (targs `zip` tformals).map: (targ, tformal) =>
-            ??? //TODO: check type arguments
-          ???
+          val typeArgs = checkTypeArgs(targs, tformals, t.pos).!!
+          // TODO: do separation check
+          val argFormals = fields.map: field =>
+            val tpe = field.tpe
+            substituteAllType(tpe, typeArgs, isParamType = true)
+          val termArgs = (args `zip` argFormals).map: (arg, formal) =>
+            checkTerm(arg, expected = formal).!!
+          val classType = Type.AppliedType(Type.SymbolRef(classSym), typeArgs)
+          val outType = Type.Capturing(classType, CaptureSet.universal)
+          Term.StructInit(classSym, typeArgs, termArgs).withPosFrom(t).withTpe(outType)
       case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if lookupStructSymbol(name).isDefined =>
         val classSym = lookupStructSymbol(name).get
         val classType = Type.SymbolRef(classSym)
@@ -497,7 +504,7 @@ object TypeChecker:
           val args1 = (args `zip` fields).map: (arg, field) =>
             checkTerm(arg, expected = field.tpe).!!
           val tpe = Type.Capturing(classType, CaptureSet.universal)
-          Term.StructInit(classSym, args1).withPosFrom(t).withTpe(tpe)
+          Term.StructInit(classSym, Nil, args1).withPosFrom(t).withTpe(tpe)
       case Syntax.Term.Apply(fun, args) => 
         checkApply(fun, args, expected, t.pos)
       case Syntax.Term.TypeApply(term, targs) => 
@@ -694,7 +701,7 @@ object TypeChecker:
               if !checkSeparation(css(i), css(j)) then
                 sorry(TypeError.SeparationError(css(i).show, css(j).show).withPos(srcPos))
           resultTerm
-        case Type.AppliedType(Type.Base(BaseType.ArrayType), elemType :: Nil) =>
+        case PrimArrayType(elemType) =>
           args match
             case arg :: Nil =>
               val arg1 = checkTerm(arg, expected = Definitions.i32Type).!!

@@ -87,7 +87,10 @@ object TypePrinter:
       case Type.BinderRef(idx) => TypeChecker.getBinder(idx).name
       case Type.SymbolRef(sym) => sym.name
       case Type.AppliedType(constructor, args) =>
-        s"${show(constructor)}[${args.map(show).mkString(", ")}]"
+        def showTypeArg(arg: Type | CaptureSet): String = arg match
+          case tpe: Type => show(tpe)
+          case cs: CaptureSet => show(cs)
+        s"${show(constructor)}[${args.map(showTypeArg).mkString(", ")}]"
       case Type.Capturing(inner, captureSet) => 
         inner match
           case Type.TermArrow(params, result) =>
@@ -278,5 +281,5 @@ class UniversalConversion extends TypeMap:
 
 object PrimArrayType:
   def unapply(tpe: Type): Option[Type] = tpe match
-    case Type.AppliedType(Type.Base(BaseType.ArrayType), elemType :: Nil) => Some(elemType)
+    case Type.AppliedType(Type.Base(BaseType.ArrayType), (elemType: Type) :: Nil) => Some(elemType)
     case _ => None

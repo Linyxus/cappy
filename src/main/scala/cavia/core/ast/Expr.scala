@@ -136,7 +136,7 @@ object Expr:
     case Capturing(inner: Type, captureSet: CaptureSet)
     case TermArrow(params: List[TermBinder], result: Type)
     case TypeArrow(params: List[TypeBinder | CaptureBinder], result: Type)
-    case AppliedType(constructor: Type, args: List[Type])
+    case AppliedType(constructor: Type, args: List[Type | CaptureSet])
     case NoType
 
     def like(other: Type): this.type =
@@ -287,7 +287,7 @@ object Expr:
     case TypeLambda(params: List[TypeBinder | CaptureBinder], body: Term)
     case Bind(binder: TermBinder, recursive: Boolean, bound: Term, body: Term)
     case PrimOp(op: PrimitiveOp, targs: List[Type], args: List[Term])
-    case StructInit(sym: StructSymbol, args: List[Term])
+    case StructInit(sym: StructSymbol, targs: List[Type | CaptureSet], args: List[Term])
     case Apply(fun: Term, args: List[Term])
     case TypeApply(term: Term, targs: List[Type | CaptureSet])
     case Select(base: Term, fieldInfo: FieldInfo)
