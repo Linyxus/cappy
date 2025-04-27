@@ -1,0 +1,28 @@
+module {
+  struct Ref(var data: i32)
+  struct Pair(x: Ref^{cap}, y: Ref^{cap})
+  val main: () -> Unit = 
+    () => {
+      val a: Ref^{cap$23} = 
+        Ref(0)
+      val b: Ref^{cap$24} = 
+        Ref(0)
+      val p: Pair^{cap$25, a, b} with { x: Ref^{a}; y: Ref^{b} } = 
+        Pair(a, b)
+      val t1: Ref^{p.x} = 
+        p.x
+      val t2: () ->{p.x} Ref^{p.x} = 
+        () => {
+          p.x
+        }
+      val t3: Ref^{a} = 
+        t1
+      val t4: Ref^{p} = 
+        t1
+      val t5: Ref^{b} = 
+        p.y
+      val t6: Ref^{p} = 
+        p.y
+      ()
+    }
+}
