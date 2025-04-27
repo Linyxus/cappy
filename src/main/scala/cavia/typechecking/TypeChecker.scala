@@ -111,8 +111,8 @@ object TypeChecker:
     if ref.name == "cap" then
       Right(CaptureRef.CAP().maybeWithPosFrom(ref))
     else lookupAll(ref.name) match
-      case Some(sym: DefSymbol) => Right(CaptureRef.Ref(Term.SymbolRef(sym)).maybeWithPosFrom(ref))
-      case Some((binder: (Binder.CaptureBinder | Binder.TermBinder), idx)) => Right(CaptureRef.Ref(Term.BinderRef(idx)).maybeWithPosFrom(ref))
+      case Some(sym: DefSymbol) => Right(CaptureRef.Ref(Type.Var(Term.SymbolRef(sym))).maybeWithPosFrom(ref))
+      case Some((binder: (Binder.CaptureBinder | Binder.TermBinder), idx)) => Right(CaptureRef.Ref(Type.Var(Term.BinderRef(idx))).maybeWithPosFrom(ref))
       case Some((binder: Binder.TypeBinder, idx)) => Left(TypeError.UnboundVariable(ref.name, s"I found a type name, but was looking for either a term or capture name").withPos(ref.pos))
       case _ => Left(TypeError.UnboundVariable(ref.name).withPos(ref.pos))
 
@@ -148,17 +148,17 @@ object TypeChecker:
     def goRef(ref: CaptureRef): Set[CaptureRef] = 
       //println(s"goRef $ref")
       ref match
-        case CaptureRef.Ref(Term.BinderRef(idx)) =>
+        case CaptureRef.Ref(Type.Var(Term.BinderRef(idx))) =>
           getBinder(idx) match
             case Binder.TermBinder(_, tpe, _) =>
               val elems = tpe.captureSet.elems
               goRefs(elems)
             case _: Binder.CaptureBinder => Set(ref)
             case _ => assert(false, "malformed capture set")
-        case CaptureRef.Ref(Term.SymbolRef(sym)) =>
+        case CaptureRef.Ref(Type.Var(Term.SymbolRef(sym))) =>
           val refs = sym.tpe.captureSet.elems
           goRefs(refs)
-        case CaptureRef.Ref(Term.Select(base, fieldInfo)) => 
+        case CaptureRef.Ref(Type.Select(base, fieldInfo)) => 
           assert(false, "TODO: implement")
         case CaptureRef.CAP() => Set(ref)
         case CaptureRef.CapInst(capId) => Set(ref)
@@ -307,9 +307,9 @@ object TypeChecker:
     var existsLocalParams = false
     val newCrefs = crefs.flatMap: ref =>
       ref match
-        case CaptureRef.Ref(Term.BinderRef(idx)) =>
+        case CaptureRef.Ref(Type.Var(Term.BinderRef(idx))) =>
           if idx >= numParams then
-            Some(CaptureRef.Ref(Term.BinderRef(idx - numParams)).maybeWithPosFrom(ref))
+            Some(CaptureRef.Ref(Type.Var(Term.BinderRef(idx - numParams))).maybeWithPosFrom(ref))
           else 
             existsLocalParams = true
             None
@@ -321,29 +321,31 @@ object TypeChecker:
       case TypeBinder(name, bound) => bound
       case CaptureBinder(name, bound) => bound
     hopefully:
-      def go(ts: List[Syntax.Type | Syntax.CaptureSet], fs: List[Type | CaptureSet])(using Context): List[Type | CaptureSet] = (ts, fs) match
-        case (Nil, Nil) => Nil
+      def go(ts: List[Syntax.Type | Syntax.CaptureSet], fs: List[Type | CaptureSet], checkedAcc: List[Type | CaptureSet])(using Context): List[Type | CaptureSet] = (ts, fs) match
+        case (Nil, Nil) => checkedAcc.reverse
         case (t :: ts, f :: fs) =>
           val typeArg: (Type | CaptureSet) = 
             (t, f) match
               case (t: Syntax.Type, f: Type) =>
+                val formal1 = substituteType(f, checkedAcc.reverse, isParamType = true)
                 val tpe = checkType(t).!!
-                if TypeComparer.checkSubtype(tpe, f) then
+                if TypeComparer.checkSubtype(tpe, formal1) then
                   tpe
                 else
                   sorry(TypeError.GeneralError(s"Type argument ${tpe.show} does not conform to the bound ${f.show}").withPosFrom(t))
               case (t: Syntax.CaptureSet, f: CaptureSet) => 
+                val f1 = substituteTypeInCaptureSet(f, checkedAcc.reverse, isParamType = true)
                 val cs1 = checkCaptureSet(t).!!
-                if f.elems.contains(CaptureRef.CAP()) || TypeComparer.checkSubcapture(cs1, f) then
+                if f.elems.contains(CaptureRef.CAP()) || TypeComparer.checkSubcapture(cs1, f1) then
                   cs1
                 else sorry(TypeError.GeneralError(s"Capture set argument ${cs1.show} does not conform to the bound ${f.show}").withPosFrom(t))
               case (t, f) => sorry(TypeError.GeneralError("Argument kind mismatch").withPosFrom(t))
-          val fs1 = fs.zipWithIndex.map: (f, i) =>
-            substituteType(f, typeArg, i, isParamType = true)
-          typeArg :: go(ts, fs1)
+          // val fs1 = fs.zipWithIndex.map: (f, i) =>
+          //   substituteType(f, typeArg, i, isParamType = true)
+          go(ts, fs, typeArg :: checkedAcc)
         case _ => 
           sorry(TypeError.GeneralError(s"Type argument number mismatch: expected ${formals.length}, but got ${targs.length}").withPos(srcPos))
-      go(targs, formalTypes)
+      go(targs, formalTypes, Nil)
 
   def instantiateBinderCaps(binder: TermBinder)(using Context): TermBinder =
     val tm = CapInstantiation()
@@ -362,7 +364,7 @@ object TypeChecker:
       val typeArgs = checkTypeArgs(targs, tformals, srcPos).!!
       val fields1: List[(String, Type, Boolean)] = fields.map: field =>
         val tpe = field.tpe
-        val fieldType = substituteAllType(tpe, typeArgs, isParamType = true)
+        val fieldType = substituteType(tpe, typeArgs, isParamType = true)
         (field.name, fieldType, field.mutable)
       val argFormals = fields1.map(_._2)
       val syntheticFunctionType = Type.TermArrow(argFormals.map(tpe => TermBinder("_", tpe)), Type.AppliedType(Type.SymbolRef(classSym), typeArgs))
@@ -386,7 +388,7 @@ object TypeChecker:
         else outType
       Term.StructInit(classSym, typeArgs, termArgs).withPos(srcPos).withTpe(refinedOutType).withCVFrom(termArgs*)
 
-  def checkTerm(t: Syntax.Term, expected: Type = Type.NoType)(using Context): Result[Term] = 
+  def checkTerm(t: Syntax.Term, expected: Type = Type.NoType())(using Context): Result[Term] = 
     val result: Result[Term] = t match
       case Syntax.Term.Ident(name) => 
         hopefully:
@@ -396,8 +398,7 @@ object TypeChecker:
             case Some((binder: Binder, idx)) => sorry(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
             case _ => sorry(TypeError.UnboundVariable(name).withPos(t.pos))
           //if !tpe.isPure then markFree(ref)
-          println(s"check pure $tpe, ${tpe.captureSet}")
-          val cv = if !tpe.isPure then ref.singletonCaptureSet else CaptureSet.empty
+          val cv = if !tpe.isPure then ref.asSingletonType.singletonCaptureSet else CaptureSet.empty
           tpe.stripCaptures match
             case LazyType(resultType) => 
               val t1 = Term.TypeApply(ref, Nil).withPosFrom(t)
@@ -406,7 +407,7 @@ object TypeChecker:
               val tpe1 = 
                 if tpe.isPure then 
                   tpe 
-                else Type.Capturing(tpe.stripCaptures, ref.singletonCaptureSet).withKind(TypeKind.Star)
+                else Type.Capturing(tpe.stripCaptures, ref.asSingletonType.singletonCaptureSet).withKind(TypeKind.Star)
               ref.withPosFrom(t).withTpe(tpe1).withCV(cv)
       case Syntax.Term.StrLit(value) => 
         Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType).withCV(CaptureSet.empty))
@@ -456,7 +457,8 @@ object TypeChecker:
           t1.withTpe(tpe1).withCV(lambdaCV)
       case Syntax.Term.Block(stmts) => 
         def avoidSelfType(tpe: Type, d: Syntax.Definition): Result[Type] =
-          val tm = AvoidLocalBinder(CaptureSet.universal)
+          val approxType = Type.Capturing(tpe.stripCaptures, CaptureSet.universal)
+          val tm = AvoidLocalBinder(approxType)
           val result = tm.apply(tpe)
           //println(s"avoidSelfType $tpe => $result")
           hopefully:
@@ -529,7 +531,8 @@ object TypeChecker:
                     None
                   else Some(cref)
                 val approxCs = CaptureSet(approxElems)
-                val tm = AvoidLocalBinder(approxCs)
+                val approxType = Type.Capturing(resType.stripCaptures, approxCs)
+                val tm = AvoidLocalBinder(approxType)
                 val resType1 = tm.apply(resType)
                 val bodyCV = bodyExpr.cv
                 val outCV = tm.mapCaptureSet(bodyCV) ++ boundExpr1.cv
@@ -559,7 +562,8 @@ object TypeChecker:
               val typeArgs = checkTypeArgs(targs, formals, t.pos).!!
               val captureArgs = typeArgs.collect:
                 case cs: CaptureSet => cs
-              val resultType1 = substituteAllType(resultType, typeArgs)
+              val resultType1 = substituteType(resultType, typeArgs)
+            //println(s"checkTypeApply $resultType --> $resultType1, typeArgs = $typeArgs")
               val resultTerm = Term.TypeApply(term1, typeArgs).withPosFrom(t).withTpe(resultType1)
               // term1 match
               //   case _: VarRef =>
@@ -714,7 +718,7 @@ object TypeChecker:
       case PrefixOp.Not =>
         val primOp = PrimitiveOp.BoolNot
         checkPrimOp(primOp, List(term), expected, srcPos)
-  
+
   def checkFunctionApply(funType: Type, args: List[Syntax.Term], expected: Type, srcPos: SourcePos, isDependent: Boolean = true)(using Context): Result[(List[Term], Type)] =
     hopefully:
       funType.stripCaptures match
@@ -724,21 +728,25 @@ object TypeChecker:
           def go(xs: List[(Syntax.Term, Type)], acc: List[Term], captureSetAcc: List[CaptureSet]): (List[Term], Type, List[CaptureSet]) = xs match
             case Nil =>
               val args = acc.reverse
-              (args, substituteAll(resultType, args).!!, captureSetAcc)
+              (args, substitute(resultType, args), captureSetAcc)
             case (arg, formal) :: xs => 
+              val formal1 =
+                if isDependent then
+                  substitute(formal, acc.reverse, isParamType = true)
+                else formal
               val tm = UniversalConversion()
-              val formal1 = tm.apply(formal)
+              val formal2 = tm.apply(formal1)
               val localSets = tm.createdUniversals
               //println(s"checkArg $arg, expected = $formal1 (from $formal)")
-              val arg1 = checkTerm(arg, expected = formal1).!!
+              val arg1 = checkTerm(arg, expected = formal2).!!
               val css = localSets.map(_.solve())
-              val xs1 = 
-                if isDependent then
-                  xs.zipWithIndex.map: 
-                    case ((arg, formal), idx) =>
-                      (arg, substitute(formal, arg1, idx, isParamType = true).!!)
-                else xs
-              go(xs1, arg1 :: acc, css ++ captureSetAcc)
+              // val xs1 = 
+              //   if isDependent then
+              //     xs.zipWithIndex.map:
+              //       case ((arg, formal), idx) =>
+              //         (arg, substitute(formal, arg1, idx, isParamType = true).!!)
+              // else xs
+              go(xs, arg1 :: acc, css ++ captureSetAcc)
           val (args1, outType, css) = go(args `zip` (formals.map(_.tpe)), Nil, Nil)
           // perform separation check
           val sigCaptures = funType.signatureCaptureSet
@@ -783,49 +791,65 @@ object TypeChecker:
         case _ =>
           sorry(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(fun.pos))
 
-  def substitute(tpe: Type, arg: Term, openingIdx: Int = 0, isParamType: Boolean = false): Result[Type] =
-    val startingVariance = if isParamType then Variance.Contravariant else Variance.Covariant
-    arg match
-      case ref: VarRef =>
-        val ref1: VarRef = ref match
-          case Term.BinderRef(idx) => Term.BinderRef(idx + openingIdx).maybeWithPosFrom(ref).asInstanceOf[VarRef]
-          case Term.SymbolRef(sym) => ref
-          case Term.Select(base, field) => assert(false, "not supported yet")
-        val tm = OpenTermBinderExact(ref1, openingIdx, startingVariance)
-        Right(tm.apply(tpe))
-      case _ => 
-        val argType = arg.tpe.shift(openingIdx)
-        val tm = OpenTermBinder(argType, openingIdx, startingVariance)
-        val result = tm.apply(tpe)
-        if tm.ok then
-          Right(result)
-        else
-          Left(TypeError.GeneralError(s"Cannot substitute $arg into $tpe because the argument occurs in a invariant position").withPos(arg.pos))
+  def substitute(tpe: Type, args: List[Term], isParamType: Boolean = false)(using Context): Type =
+    val argTypes = args.map: arg =>
+      arg.maybeAsSingletonType match
+        case Some(tp) => tp.asInstanceOf[Type]
+        case None => arg.tpe
+    val tm = SubstitutionMap(argTypes, if isParamType then Variance.Contravariant else Variance.Covariant)
+    tm.apply(tpe)
 
-  def substituteType[X <: Type | CaptureSet](tpe: X, arg: (Type | CaptureSet), openingIdx: Int = 0, isParamType: Boolean = false): X = 
-    val tm = arg match
-      case tpe: Type => OpenTypeBinder(tpe.shift(openingIdx), openingIdx)
-      case captureSet: CaptureSet => OpenCaptureBinder(captureSet.shift(openingIdx), openingIdx)
-    tpe match
-      case tpe: Type => tm.apply(tpe).asInstanceOf[X]
-      case captureSet: CaptureSet => tm.mapCaptureSet(captureSet).asInstanceOf[X]
+  def substituteType(tpe: Type, targs: List[Type | CaptureSet], isParamType: Boolean = false)(using Context): Type =
+    val tm = TypeSubstitutionMap(targs, if isParamType then Variance.Contravariant else Variance.Covariant)
+    tm.apply(tpe)
 
-  def substituteAll(tpe: Type, args: List[Term], isParamType: Boolean = false): Result[Type] =
-    args match
-      case Nil => Right(tpe)
-      case arg :: args =>
-        hopefully:
-          val tpe1 = substitute(tpe, arg, openingIdx = args.length, isParamType).!!
-          val tpe2 = substituteAll(tpe1, args, isParamType).!!
-          tpe2
+  def substituteTypeInCaptureSet(cs: CaptureSet, targs: List[Type | CaptureSet], isParamType: Boolean = false)(using Context): CaptureSet =
+    val tm = TypeSubstitutionMap(targs, if isParamType then Variance.Contravariant else Variance.Covariant)
+    tm.mapCaptureSet(cs)
 
-  def substituteAllType(tpe: Type, args: List[(Type | CaptureSet)], isParamType: Boolean = false): Type =
-    args match
-      case Nil => tpe
-      case arg :: args =>
-        val tpe1 = substituteType(tpe, arg, openingIdx = args.length, isParamType)
-        //println(s"open $arg in $tpe (idx=${args.length}) = $tpe1")
-        substituteAllType(tpe1, args, isParamType)
+  // def substitute(tpe: Type, arg: Term, openingIdx: Int = 0, isParamType: Boolean = false): Result[Type] =
+  //   val startingVariance = if isParamType then Variance.Contravariant else Variance.Covariant
+  //   arg match
+  //     case ref: VarRef =>
+  //       val ref1: VarRef = ref match
+  //         case Term.BinderRef(idx) => Term.BinderRef(idx + openingIdx).maybeWithPosFrom(ref).asInstanceOf[VarRef]
+  //         case Term.SymbolRef(sym) => ref
+  //         case Term.Select(base, field) => assert(false, "not supported yet")
+  //       val tm = OpenTermBinderExact(ref1, openingIdx, startingVariance)
+  //       Right(tm.apply(tpe))
+  //     case _ => 
+  //       val argType = arg.tpe.shift(openingIdx)
+  //       val tm = OpenTermBinder(argType, openingIdx, startingVariance)
+  //       val result = tm.apply(tpe)
+  //       if tm.ok then
+  //         Right(result)
+  //       else
+  //         Left(TypeError.GeneralError(s"Cannot substitute $arg into $tpe because the argument occurs in a invariant position").withPos(arg.pos))
+
+  // def substituteType[X <: Type | CaptureSet](tpe: X, arg: (Type | CaptureSet), openingIdx: Int = 0, isParamType: Boolean = false): X = 
+  //   val tm = arg match
+  //     case tpe: Type => OpenTypeBinder(tpe.shift(openingIdx), openingIdx)
+  //     case captureSet: CaptureSet => OpenCaptureBinder(captureSet.shift(openingIdx), openingIdx)
+  //   tpe match
+  //     case tpe: Type => tm.apply(tpe).asInstanceOf[X]
+  //     case captureSet: CaptureSet => tm.mapCaptureSet(captureSet).asInstanceOf[X]
+
+  // def substituteAll(tpe: Type, args: List[Term], isParamType: Boolean = false): Result[Type] =
+  //   args match
+  //     case Nil => Right(tpe)
+  //     case arg :: args =>
+  //       hopefully:
+  //         val tpe1 = substitute(tpe, arg, openingIdx = args.length, isParamType).!!
+  //         val tpe2 = substituteAll(tpe1, args, isParamType).!!
+  //         tpe2
+
+  // def substituteAllType(tpe: Type, args: List[(Type | CaptureSet)], isParamType: Boolean = false): Type =
+  //   args match
+  //     case Nil => tpe
+  //     case arg :: args =>
+  //       val tpe1 = substituteType(tpe, arg, openingIdx = args.length, isParamType)
+  //       //println(s"open $arg in $tpe (idx=${args.length}) = $tpe1")
+  //       substituteAllType(tpe1, args, isParamType)
 
   def checkPrimOpArgs(op: PrimitiveOp, args: List[Syntax.Term], formals: List[BaseType], resType: BaseType, pos: SourcePos)(using Context): Result[Term] = 
     def go(args: List[Syntax.Term], formals: List[BaseType], acc: List[Term]): Result[List[Term]] = (args, formals) match
@@ -907,7 +931,7 @@ object TypeChecker:
     case Syntax.Definition.ValDef(name, tpe, expr) =>
       hopefully:
         val expected1 = tpe match
-          case None => Type.NoType
+          case None => Type.NoType()
           case Some(expected) => checkType(expected).!!
         val expr1 = checkTerm(expr, expected = expected1).!!
         val binderType = if expected1.exists then expected1 else expr1.tpe
@@ -919,7 +943,7 @@ object TypeChecker:
           //val env1 = CaptureEnv.empty(ctx.binders.length)
           hopefully:
             val expected1 = resultType match
-              case None => Type.NoType
+              case None => Type.NoType()
               case Some(expected) => checkType(expected).!!
             //println(s"checkTerm $expr with new env")
             val expr1 = checkTerm(expr, expected = expected1).!!
@@ -1076,7 +1100,7 @@ object TypeChecker:
               val outTerm = Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldInfo.tpe).withCV(base1.cv)
               if isStablePath(outTerm) then
                 //println(s"$outTerm is a stable path!")
-                val singletonSet = (outTerm.asInstanceOf[VarRef]).singletonCaptureSet
+                val singletonSet = (outTerm.asInstanceOf[VarRef]).asSingletonType.singletonCaptureSet
                 val narrowedType = Type.Capturing(outTerm.tpe.stripCaptures, singletonSet)
                 outTerm.withTpe(narrowedType).withCV(singletonSet)
               else outTerm
@@ -1106,7 +1130,7 @@ object TypeChecker:
       tpe match
         case AppliedStructType(classSym, targs) => 
           classSym.info.fields.find(_.name == field).map: fieldInfo =>
-            val fieldType = substituteAllType(fieldInfo.tpe, targs, isParamType = false)
+            val fieldType = substituteType(fieldInfo.tpe, targs, isParamType = false)
             FieldInfo(fieldInfo.name, fieldType, fieldInfo.mutable)
         case Type.Capturing(tpe, _) => go(tpe)
         case Type.RefinedType(core, refinements) =>

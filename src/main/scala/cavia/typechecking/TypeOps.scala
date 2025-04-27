@@ -6,6 +6,177 @@ import ast.*
 import Expr.*
 import scala.collection.mutable.ArrayBuffer
 
+class TypeMap:
+  import Expr.*
+  import Binder.*
+  var localBinders: List[Binder] = Nil
+  var variance: Variance = Variance.Covariant
+
+  def withBinder[T](bd: Binder)(op: => T): T =
+    localBinders = bd :: localBinders
+    try op finally localBinders = localBinders.tail
+
+  def withBinders[T](bds: List[Binder])(op: => T): T =
+    val old = localBinders
+    localBinders = bds.reverse ++ localBinders
+    try op finally localBinders = old
+
+  def withVariance[T](v: Variance)(op: => T): T =
+    val old = variance
+    variance = v
+    try op finally variance = old
+
+  def apply(tp: Type): Type = mapOver(tp)
+
+  def mapBinder(param: Binder): Binder = param match
+    case TermBinder(name, tpe, localCapInsts) => TermBinder(name, apply(tpe), localCapInsts).maybeWithPosFrom(param)
+    case TypeBinder(name, bound) => TypeBinder(name, apply(bound)).maybeWithPosFrom(param)
+    case CaptureBinder(name, bound) => CaptureBinder(name, mapCaptureSet(bound)).maybeWithPosFrom(param)
+
+  def mapCaptureSet(captureSet: CaptureSet): CaptureSet =
+    val csets: List[CaptureSet] = captureSet.elems.map(mapCaptureRef)
+    def allIdentical: Boolean = (captureSet.elems `zip` csets).forall: (ref, cset) =>
+      cset.elems.size == 1 && cset.elems.head == ref
+    if allIdentical then captureSet
+    else csets.reduce(_ ++ _)
+
+  def mapCaptureRef(ref: CaptureRef): CaptureSet = ref match
+    case CaptureRef.Ref(tp) =>
+      apply(tp.asInstanceOf[Type]) match
+        case tp1: SingletonType => CaptureSet(CaptureRef.Ref(tp1) :: Nil)
+        case tp1 =>
+          if variance == Variance.Covariant then
+            tp1.captureSet
+          else if variance == Variance.Contravariant then
+            CaptureSet.empty
+          else 
+            assert(false, "Don't know how to handle a widened capture ref at invariant occurrence")
+    case CaptureRef.CAP() => CaptureSet(ref :: Nil)
+    case CaptureRef.CapInst(capId) => CaptureSet(ref :: Nil)
+
+  def mapBaseType(base: Type.Base): Type = base
+
+  def mapBinderRef(ref: Type.BinderRef): Type = ref
+
+  def mapSymbolRef(ref: Type.SymbolRef): Type = ref
+
+  def mapNoType(noType: Type.NoType): Type = noType
+
+  def mapCapturing(ct: Type.Capturing): Type =
+    ct.derivedCapturing(apply(ct.inner), mapCaptureSet(ct.captureSet))
+
+  def mapTermArrow(ta: Type.TermArrow): Type =
+    def go(ps: List[TermBinder], bs: List[Binder]): Type =
+      ps match
+        case Nil => ta.derivedTermArrow(bs.reverse, apply(ta.result))
+        case p :: ps =>
+          val p1 = withVariance(variance.negate):
+            mapBinder(p)
+          withBinder(p1):
+            go(ps, p1 :: bs)
+    go(ta.params, Nil)
+
+  def mapTypeArrow(ta: Type.TypeArrow): Type =
+    def go(ps: List[TypeBinder | CaptureBinder], bs: List[Binder]): Type =
+      ps match
+        case Nil => ta.derivedTypeArrow(bs.reverse, apply(ta.result))
+        case p :: ps =>
+          val p1 = withVariance(variance.negate):
+            mapBinder(p)
+          withBinder(p1):
+            go(ps, p1 :: bs)
+    go(ta.params, Nil)
+
+  def mapAppliedType(tp: Type.AppliedType): Type =
+    tp.derivedAppliedType(apply(tp.constructor), tp.args.map(mapTypeArg))
+
+  def mapRefinedType(tp: Type.RefinedType): Type =
+    tp.derivedRefinedType(apply(tp.base), tp.refinements.map(mapFieldInfo))
+
+  def mapVar(tp: Type.Var): Type = tp
+
+  def mapSelect(tp: Type.Select): Type =
+    apply(tp.base.asInstanceOf[Type]) match
+      case base1: SingletonType => 
+        tp.derivedSelect(base1, mapFieldInfo(tp.fieldInfo))
+      case baseTp => assert(false, s"Base type mapped to a non-singleton type in a select")
+
+  def mapOver(tp: Type): Type = tp match
+    case tp: Type.Capturing => mapCapturing(tp)
+    case tp: Type.TermArrow => mapTermArrow(tp)
+    case tp: Type.TypeArrow => mapTypeArrow(tp)
+    case tp: Type.AppliedType => mapAppliedType(tp)
+    case tp: Type.RefinedType => mapRefinedType(tp)
+    case tp: Type.Base => mapBaseType(tp)
+    case tp: Type.BinderRef => mapBinderRef(tp)
+    case tp: Type.SymbolRef => mapSymbolRef(tp)
+    case tp: Type.NoType => mapNoType(tp)
+    case tp: Type.Var => mapVar(tp)
+    case tp: Type.Select => mapSelect(tp)
+
+  def mapFieldInfo(info: FieldInfo): FieldInfo =
+    FieldInfo(info.name, apply(info.tpe), info.mutable)
+
+  def mapTypeArg(arg: Type | CaptureSet): Type | CaptureSet = arg match
+    case tpe: Type => apply(tpe)
+    case cs: CaptureSet => mapCaptureSet(cs)
+
+class ShiftType(amount: Int) extends TypeMap:
+  // override def mapCaptureRef(ref: CaptureRef): CaptureRef = ref match
+  //   case CaptureRef.Ref(Term.BinderRef(idx)) if idx >= localBinders.size =>
+  //     CaptureRef.Ref(Term.BinderRef(idx + amount)).maybeWithPosFrom(ref)
+  //   case ref => ref
+
+  override def mapVar(tp: Type.Var): Type = tp.ref match
+    case Term.BinderRef(idx) if idx >= localBinders.size => 
+      Type.Var(Term.BinderRef(idx + amount)).like(tp)
+    case _ => tp
+
+  override def apply(tp: Type): Type =
+    tp match
+      case Type.BinderRef(idx) if idx >= localBinders.size =>
+        Type.BinderRef(idx + amount).like(tp)
+      case _ => mapOver(tp)
+    
+extension (tpe: Type)
+  def shift(amount: Int): Type =
+    val shift = ShiftType(amount)
+    val result = shift(tpe)
+    //assert(result.hasPos == tpe.hasPos && result.hasKind)
+    assert(result.hasKind)
+    result
+
+extension (captureSet: CaptureSet)
+  def shift(amount: Int): CaptureSet =
+    val shifter = ShiftType(amount)
+    val result = shifter.mapCaptureSet(captureSet)
+    //assert(result.hasPos == captureSet.hasPos)
+    result
+
+extension (captureRef: CaptureRef)
+  def shift(amount: Int): CaptureRef =
+    val shifter = ShiftType(amount)
+    val result = shifter.mapCaptureRef(captureRef)
+    //assert(result.hasPos == captureRef.hasPos)
+    assert(result.elems.size == 1)
+    result.elems.head
+
+extension (binder: Binder)
+  def shift(amount: Int): Binder =
+    binder match
+      case Binder.TermBinder(name, tpe, localCapInsts) => Binder.TermBinder(name, tpe.shift(amount), localCapInsts).maybeWithPosFrom(binder)
+      case Binder.TypeBinder(name, bound) => Binder.TypeBinder(name, bound.shift(amount)).maybeWithPosFrom(binder)
+      case Binder.CaptureBinder(name, bound) => Binder.CaptureBinder(name, bound.shift(amount)).maybeWithPosFrom(binder)
+
+extension (tpe: Type)
+  def isIntegralType: Boolean = tpe match
+    case Type.Base(base) => base.isIntegralType
+    case _ => false
+
+  def isFloatingType: Boolean = tpe match
+    case Type.Base(base) => base.isFloatingType
+    case _ => false
+
 extension (tpe: Type)
   def captureSet: CaptureSet = tpe match
     case Type.Base(base) => CaptureSet.empty
@@ -16,7 +187,8 @@ extension (tpe: Type)
     case Type.TypeArrow(params, result) => CaptureSet.empty
     case Type.AppliedType(constructor, args) => CaptureSet.empty
     case Type.RefinedType(base, _) => base.captureSet
-    case Type.NoType => assert(false, "computing capture set from no type")
+    case tp: SingletonType => tp.singletonCaptureSet
+    case Type.NoType() => assert(false, "computing capture set from no type")
 
   def stripCaptures: Type = tpe match
     case Type.Capturing(inner, captureSet) => inner.stripCaptures
@@ -25,43 +197,73 @@ extension (tpe: Type)
   def isPure(using TypeChecker.Context): Boolean =
     TypeComparer.checkSubcapture(tpe.captureSet, CaptureSet.empty)
 
-extension (ref: VarRef)
-  def asCaptureRef: CaptureRef = CaptureRef.Ref(ref).maybeWithPosFrom(ref)
-  def singletonCaptureSet: CaptureSet = CaptureSet(List(ref.asCaptureRef))
+extension (t: Term)
+  def asSingletonType: SingletonType = t match
+    case ref: VarRef => Type.Var(ref)
+    case Term.Select(base, fieldInfo) =>
+      Type.Select(base.asSingletonType, fieldInfo)
+    case _ => assert(false, s"Term cannot be converted to a singleton type")
 
-// object CapturePathOfRoot:
-//   def unapply(ref: CaptureRef): Option[Int] = ref match
-//     case CaptureRef.Ref(ref) =>
-//       getRoot(ref) match
-//         case Term.BinderRef(idx) => Some(idx)
-//         case _ => None
-//     case _ => None
-// TODO: fix this
-// Maybe the thing is that: we should include TermRef in Types
+  def maybeAsSingletonType: Option[SingletonType] = t match
+    case ref: VarRef => Some(Type.Var(ref))
+    case Term.Select(base, fieldInfo) =>
+      base.maybeAsSingletonType.map(Type.Select(_, fieldInfo))
+    case _ => None
 
-class AvoidLocalBinder(approx: CaptureSet) extends TypeMap:
+extension (ref: SingletonType)
+  def asCaptureRef: CaptureRef = CaptureRef.Ref(ref)
+  def singletonCaptureSet: CaptureSet = CaptureSet(List(asCaptureRef))
+
+/** A type map that approximates selections. 
+ * Given p.a.type, if f(p) is not a singleton type, 
+ * it looks up `a` in f(p) as the output type instead of erroring out. */
+class ApproxTypeMap(using ctx: TypeChecker.Context) extends TypeMap:
+  override def mapSelect(tp: Type.Select): Type =
+    val base1 = apply(tp.base.asInstanceOf[Type])
+    base1 match
+      case base1: SingletonType => Type.Select(base1, mapFieldInfo(tp.fieldInfo))
+      case base1 => 
+        val ctx1 = ctx.extend(localBinders.reverse)
+        val fieldInfo1 = TypeChecker.getFieldInfo(base1, tp.fieldInfo.name)(using ctx1).get
+        fieldInfo1.tpe
+
+class AvoidLocalBinder(tpe: Type)(using ctx: TypeChecker.Context) extends TypeMap:
   var ok: Boolean = true
-  override def mapCaptureSet(captureSet: CaptureSet): CaptureSet = 
-    val elems1 = captureSet.elems.flatMap: ref =>
-      ref match
-        case CapturePathOfRoot(idx) if idx == localBinders.size =>
-          if variance == Variance.Covariant then
-            approx.elems
-          else if variance == Variance.Contravariant then
-            Nil
-          else
-            ok = false
-            ref :: Nil
-        case ref @ CapturePathOfRoot(idx) if idx > localBinders.size =>
-          CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref) :: Nil
-        case ref => ref :: Nil
-    CaptureSet(elems1).maybeWithPosFrom(captureSet)
-  
-  override def apply(tpe: Type): Type = tpe match
-    case Type.BinderRef(idx) if idx >= localBinders.size =>
-      Type.BinderRef(idx - 1).like(tpe)
-    case _ => mapOver(tpe)
-  
+
+  // override def mapCaptureSet(captureSet: CaptureSet): CaptureSet = 
+  //   val elems1 = captureSet.elems.flatMap: ref =>
+  //     ref match
+  //       case CapturePathOfRoot(idx) if idx == localBinders.size =>
+  //         if variance == Variance.Covariant then
+  //           approx.elems
+  //         else if variance == Variance.Contravariant then
+  //           Nil
+  //         else
+  //           ok = false
+  //           ref :: Nil
+  //       case ref @ CapturePathOfRoot(idx) if idx > localBinders.size =>
+  //         CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref) :: Nil
+  //       case ref => ref :: Nil
+  //   CaptureSet(elems1).maybeWithPosFrom(captureSet)
+
+  // override def apply(tpe: Type): Type = tpe match
+  //   case Type.BinderRef(idx) if idx >= localBinders.size =>
+  //     Type.BinderRef(idx - 1).like(tpe)
+  //   case _ => mapOver(tpe)
+
+  override def mapBinderRef(ref: Type.BinderRef): Type =
+    if ref.idx >= localBinders.size then
+      Type.BinderRef(ref.idx - 1).like(ref)
+    else
+      ref
+
+  override def mapVar(tp: Type.Var): Type =
+    tp match
+      case Type.Var(Term.BinderRef(idx)) if idx > localBinders.size =>
+        Type.Var(Term.BinderRef(idx - 1)).like(tp)
+      case Type.Var(Term.BinderRef(idx)) if idx == localBinders.size => 
+        tpe.shift(localBinders.size)
+      case _ => tp
 
 object TypePrinter:
   def show(base: BaseType): String = base match
@@ -94,7 +296,7 @@ object TypePrinter:
   def show(tpe: Type)(using ctx: TypeChecker.Context): String = 
     //println(s"show $tpe")
     tpe match
-      case Type.NoType => "<no type>"
+      case Type.NoType() => "<no type>"
       case Type.Base(base) => show(base)
       case Type.BinderRef(idx) => TypeChecker.getBinder(idx).name
       case Type.SymbolRef(sym) => sym.name
@@ -121,6 +323,7 @@ object TypePrinter:
         val baseStr = show(base)
         val refinementsStr = refinements.map(refinement => s"${refinement.name}: ${show(refinement.tpe)}").mkString("; ")
         s"$baseStr with { $refinementsStr }"
+      case tp: SingletonType => showSingletonType(tp) + ".type"
 
   def show(binder: Binder)(using TypeChecker.Context): String = binder match
     case Binder.TermBinder(name, tpe, localCapInsts) => s"$name: ${show(tpe)}"
@@ -137,11 +340,14 @@ object TypePrinter:
   def showVarRef(ref: VarRef)(using TypeChecker.Context): String = ref match
     case Term.BinderRef(idx) => TypeChecker.getBinder(idx).name
     case Term.SymbolRef(sym) => sym.name
-    case Term.Select(base: VarRef, fieldInfo) => s"${showVarRef(base)}.${fieldInfo.name}"
-    case _ => assert(false, s"Not a valid VarRef: $ref")
+    //case _ => assert(false, s"Not a valid VarRef: $ref")
+
+  def showSingletonType(ref: SingletonType)(using TypeChecker.Context): String = ref match
+    case Type.Var(ref) => showVarRef(ref)
+    case Type.Select(base, fieldInfo) => s"${showSingletonType(base)}.${fieldInfo.name}"
 
   def show(captureRef: CaptureRef)(using TypeChecker.Context): String = captureRef match
-    case CaptureRef.Ref(ref) => showVarRef(ref)
+    case CaptureRef.Ref(ref) => showSingletonType(ref)
     case CaptureRef.CapInst(capId) => s"cap$$$capId"
     case CaptureRef.CAP() => "cap"
 
@@ -154,94 +360,147 @@ extension (cs: CaptureSet)
 extension (ref: CaptureRef)
   def show(using TypeChecker.Context): String = TypePrinter.show(ref)
 
-class OpenTermBinder(tpe: Type, openingIdx: Int = 0, startingVariance: Variance = Variance.Covariant) extends TypeMap:
+class SubstitutionMap(args: List[Type], startingVariance: Variance = Variance.Covariant)(using TypeChecker.Context) extends ApproxTypeMap:
   var ok: Boolean = true
-
   variance = startingVariance
 
-  override def mapCaptureSet(captureSet: CaptureSet): CaptureSet =
-    val elems1 = captureSet.elems.flatMap: ref =>
-      ref match
-        case CaptureRef.Ref(Term.BinderRef(idx)) if idx >= localBinders.size + openingIdx => 
-          if idx > localBinders.size + openingIdx then
-            CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref) :: Nil
-          else
-            if variance == Variance.Covariant then
-              tpe.captureSet.shift(localBinders.size).elems
-            else if variance == Variance.Contravariant then
-              Nil
-            else
-              ok = false
-              ref :: Nil
-        case _ => ref :: Nil
-    CaptureSet(elems1).maybeWithPosFrom(captureSet)
+  val ctxArgs = args.reverse  // args in the order they will be in the context
 
-  override def apply(tp: Type): Type =
-    tp match
-      case Type.BinderRef(idx) if idx >= localBinders.size + openingIdx =>
-        if idx > localBinders.size + openingIdx then
-          Type.BinderRef(idx - 1).like(tp)
-        else assert(false, "openning term binder, but found it as type")
-      case _ => mapOver(tp)
+  override def mapVar(tp: Type.Var): Type = tp match
+    case Type.Var(Term.BinderRef(idx)) if idx >= localBinders.size =>
+      val trueIdx = idx - localBinders.size
+      if trueIdx < ctxArgs.size then
+        ctxArgs(trueIdx).shift(localBinders.size)
+      else
+        Type.Var(Term.BinderRef(idx - ctxArgs.size)).like(tp)
+    case _ => super.mapVar(tp)
 
-class OpenTermBinderExact(argRef: VarRef, openingIdx: Int = 0, startingVariance: Variance = Variance.Covariant) extends TypeMap:
+  override def mapBinderRef(ref: Type.BinderRef): Type =
+    if ref.idx >= localBinders.size then
+      val trueIdx = ref.idx - localBinders.size
+      assert(trueIdx >= ctxArgs.size)
+      Type.BinderRef(trueIdx - ctxArgs.size).like(ref)
+    else ref
+
+// class OpenTermBinder(tpe: Type, openingIdx: Int = 0, startingVariance: Variance = Variance.Covariant) extends TypeMap:
+//   var ok: Boolean = true
+
+//   variance = startingVariance
+
+//   override def mapCaptureSet(captureSet: CaptureSet): CaptureSet =
+//     val elems1 = captureSet.elems.flatMap: ref =>
+//       ref match
+//         case CaptureRef.Ref(Term.BinderRef(idx)) if idx >= localBinders.size + openingIdx => 
+//           if idx > localBinders.size + openingIdx then
+//             CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref) :: Nil
+//           else
+//             if variance == Variance.Covariant then
+//               tpe.captureSet.shift(localBinders.size).elems
+//             else if variance == Variance.Contravariant then
+//               Nil
+//             else
+//               ok = false
+//               ref :: Nil
+//         case _ => ref :: Nil
+//     CaptureSet(elems1).maybeWithPosFrom(captureSet)
+
+//   override def apply(tp: Type): Type =
+//     tp match
+//       case Type.BinderRef(idx) if idx >= localBinders.size + openingIdx =>
+//         if idx > localBinders.size + openingIdx then
+//           Type.BinderRef(idx - 1).like(tp)
+//         else assert(false, "openning term binder, but found it as type")
+//       case _ => mapOver(tp)
+
+// class OpenTermBinderExact(argRef: VarRef, openingIdx: Int = 0, startingVariance: Variance = Variance.Covariant) extends TypeMap:
+//   variance = startingVariance
+
+//   override def mapCaptureRef(ref: CaptureRef): CaptureRef =
+//     ref match
+//       case CaptureRef.Ref(Term.BinderRef(idx)) if idx == localBinders.size + openingIdx =>
+//         argRef.asCaptureRef.shift(localBinders.size)
+//       case CaptureRef.Ref(Term.BinderRef(idx)) if idx > localBinders.size + openingIdx =>
+//         CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref)
+//       case _ => ref
+
+//   override def apply(tp: Type): Type =
+//     tp match
+//       case Type.BinderRef(idx) if idx >= localBinders.size + openingIdx =>
+//         if idx > localBinders.size + openingIdx then
+//           Type.BinderRef(idx - 1).like(tp)
+//         else assert(false, "openning term binder, but found it as type")
+//       case _ => mapOver(tp)
+
+// class OpenCaptureBinder(argSet: CaptureSet, openingIdx: Int = 0) extends TypeMap:
+//   override def mapCaptureSet(captureSet: CaptureSet): CaptureSet =
+//     val elems1 = captureSet.elems.flatMap: ref =>
+//       ref match
+//         case CaptureRef.Ref(Term.BinderRef(idx)) if idx >= localBinders.size + openingIdx =>
+//           if idx > localBinders.size + openingIdx then
+//             CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref) :: Nil
+//           else
+//             // println(s"Num local binders = ${localBinders.size}")
+//             // println(s"openingIdx = $openingIdx")
+//             // println(s"argSet = $argSet")
+//             argSet.shift(localBinders.size).elems
+//         case _ => ref :: Nil
+//     CaptureSet(elems1).maybeWithPosFrom(captureSet)
+
+//   override def apply(tp: Type): Type =
+//     tp match
+//       case Type.BinderRef(idx) if idx >= localBinders.size + openingIdx =>
+//         if idx > localBinders.size + openingIdx then
+//           Type.BinderRef(idx - 1).like(tp)
+//         else assert(false, "opening capture binder, but found it as type")
+//       case _ => mapOver(tp)
+
+class TypeSubstitutionMap(targs: List[Type | CaptureSet], startingVariance: Variance = Variance.Covariant)(using TypeChecker.Context) extends ApproxTypeMap:
   variance = startingVariance
+  val ctxArgs = targs.reverse  // args in the order they will be in the context
 
-  override def mapCaptureRef(ref: CaptureRef): CaptureRef =
-    ref match
-      case CaptureRef.Ref(Term.BinderRef(idx)) if idx == localBinders.size + openingIdx =>
-        argRef.asCaptureRef.shift(localBinders.size)
-      case CaptureRef.Ref(Term.BinderRef(idx)) if idx > localBinders.size + openingIdx =>
-        CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref)
-      case _ => ref
+  override def mapCaptureRef(ref: CaptureRef): CaptureSet = ref match
+    case CaptureRef.Ref(Type.Var(Term.BinderRef(idx))) if idx >= localBinders.size =>
+      val trueIdx = idx - localBinders.size
+      if trueIdx < ctxArgs.size then
+        val arg = ctxArgs(trueIdx).asInstanceOf[CaptureSet]  
+          // must be a capture set, otherwise the substitution is malformed
+        arg.shift(localBinders.size)
+      else
+        Type.Var(Term.BinderRef(idx - ctxArgs.size)).asInstanceOf[CaptureSet]
+    case _ => super.mapCaptureRef(ref)
 
-  override def apply(tp: Type): Type =
-    tp match
-      case Type.BinderRef(idx) if idx >= localBinders.size + openingIdx =>
-        if idx > localBinders.size + openingIdx then
-          Type.BinderRef(idx - 1).like(tp)
-        else assert(false, "openning term binder, but found it as type")
-      case _ => mapOver(tp)
+  override def mapVar(tp: Type.Var): Type = tp match
+    case Type.Var(Term.BinderRef(idx)) if idx >= localBinders.size =>
+      val trueIdx = idx - localBinders.size
+      assert(trueIdx >= ctxArgs.size)  // must not be a capture argument
+      Type.Var(Term.BinderRef(idx - ctxArgs.size)).like(tp)
+    case _ => super.mapVar(tp)
 
-class OpenCaptureBinder(argSet: CaptureSet, openingIdx: Int = 0) extends TypeMap:
-  override def mapCaptureSet(captureSet: CaptureSet): CaptureSet =
-    val elems1 = captureSet.elems.flatMap: ref =>
-      ref match
-        case CaptureRef.Ref(Term.BinderRef(idx)) if idx >= localBinders.size + openingIdx =>
-          if idx > localBinders.size + openingIdx then
-            CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref) :: Nil
-          else
-            // println(s"Num local binders = ${localBinders.size}")
-            // println(s"openingIdx = $openingIdx")
-            // println(s"argSet = $argSet")
-            argSet.shift(localBinders.size).elems
-        case _ => ref :: Nil
-    CaptureSet(elems1).maybeWithPosFrom(captureSet)
+  override def mapBinderRef(ref: Type.BinderRef): Type =
+    if ref.idx >= localBinders.size then
+      val trueIdx = ref.idx - localBinders.size
+      if trueIdx < ctxArgs.size then
+        ctxArgs(trueIdx).asInstanceOf[Type]  // must be a type
+      else
+        Type.BinderRef(ref.idx - ctxArgs.size).like(ref)
+    else ref
 
-  override def apply(tp: Type): Type =
-    tp match
-      case Type.BinderRef(idx) if idx >= localBinders.size + openingIdx =>
-        if idx > localBinders.size + openingIdx then
-          Type.BinderRef(idx - 1).like(tp)
-        else assert(false, "opening capture binder, but found it as type")
-      case _ => mapOver(tp)
+// class OpenTypeBinder(argType: Type, openingIdx: Int = 0) extends TypeMap:
+//   override def apply(tp: Type): Type =
+//     tp match
+//       case Type.BinderRef(idx) if idx >= localBinders.size + openingIdx =>
+//         if idx > localBinders.size + openingIdx then
+//           Type.BinderRef(idx - 1).like(tp)
+//         else argType.shift(localBinders.size)
+//       case _ => mapOver(tp)
 
-class OpenTypeBinder(argType: Type, openingIdx: Int = 0) extends TypeMap:
-  override def apply(tp: Type): Type =
-    tp match
-      case Type.BinderRef(idx) if idx >= localBinders.size + openingIdx =>
-        if idx > localBinders.size + openingIdx then
-          Type.BinderRef(idx - 1).like(tp)
-        else argType.shift(localBinders.size)
-      case _ => mapOver(tp)
-
-  override def mapCaptureRef(ref: CaptureRef): CaptureRef =
-    ref match
-      case CaptureRef.Ref(Term.BinderRef(idx)) if idx > localBinders.size + openingIdx =>
-        CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref)
-      case CaptureRef.Ref(Term.BinderRef(idx)) if idx == localBinders.size + openingIdx =>
-        assert(false, "opening type binder, but found it as term/capture binder")
-      case _ => ref
+//   override def mapCaptureRef(ref: CaptureRef): CaptureRef =
+//     ref match
+//       case CaptureRef.Ref(Term.BinderRef(idx)) if idx > localBinders.size + openingIdx =>
+//         CaptureRef.Ref(Term.BinderRef(idx - 1)).maybeWithPosFrom(ref)
+//       case CaptureRef.Ref(Term.BinderRef(idx)) if idx == localBinders.size + openingIdx =>
+//         assert(false, "opening type binder, but found it as term/capture binder")
+//       case _ => ref
 
 object LazyType:
   def unapply(tpe: Type): Option[Type] = tpe match
@@ -250,16 +509,24 @@ object LazyType:
 
   def apply(tpe: Type): Type = Type.TypeArrow(Nil, tpe)
 
+def getRoot(x: SingletonType): VarRef = x match
+  case Type.Select(base, _) => getRoot(base)
+  case Type.Var(ref) => ref
+
 class CollectSignature extends TypeMap:
   val collected: ArrayBuffer[CaptureRef] = ArrayBuffer.empty
 
-  override def mapCaptureRef(ref: CaptureRef): CaptureRef = 
+  override def mapCaptureRef(ref: CaptureRef): CaptureSet = 
     ref match
-      case CaptureRef.Ref(Term.BinderRef(idx)) if idx < localBinders.size =>
-      case CaptureRef.Ref(Term.BinderRef(idx)) if idx >= localBinders.size =>
-        collected += CaptureRef.Ref(Term.BinderRef(idx - localBinders.size))
+      // case CaptureRef.Ref(Term.BinderRef(idx)) if idx < localBinders.size =>
+      // case CaptureRef.Ref(Term.BinderRef(idx)) if idx >= localBinders.size =>
+      //   collected += CaptureRef.Ref(Term.BinderRef(idx - localBinders.size))
+      case CaptureRef.Ref(path) =>
+        getRoot(path) match
+          case Term.BinderRef(idx) if idx < localBinders.size =>
+          case root => collected += CaptureRef.Ref(Type.Var(root))
       case _ => collected += ref
-    ref
+    CaptureSet(ref :: Nil)
 
   override def apply(tpe: Type): Type = tpe match
     case Type.TypeArrow(ps, result) =>
@@ -291,13 +558,12 @@ class CapInstantiation extends TypeMap:
     case Type.TermArrow(ps, result) => tpe
     case _ => mapOver(tpe)
 
-  override def mapCaptureRef(ref: CaptureRef): CaptureRef = ref match
+  override def mapCaptureRef(ref: CaptureRef): CaptureSet = ref match
     case CaptureRef.CAP() => 
       val inst: CaptureRef.CapInst = CaptureRef.makeCapInst()
       localCaps = inst :: localCaps
-      inst
-    case _ => ref
-  
+      CaptureSet(inst :: Nil)
+    case _ => CaptureSet(ref :: Nil)
 
 class UniversalConversion extends TypeMap:
   import scala.collection.mutable.Set

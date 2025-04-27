@@ -1,0 +1,25 @@
+module {
+  struct Ref()
+  val test: (a: Ref^{cap}, b: Ref^{cap}) -> Unit = 
+    (a: Ref^{cap}, b: Ref^{cap}) => {
+      val f1: (x: Ref^{cap}, y: Ref^{x}) ->{} Unit = 
+        (x: Ref^{cap}, y: Ref^{x}) => {
+          ()
+        }
+      val _$2: Unit = 
+        f1(a, a)
+      val f2: (x: Ref^{cap}, y: Ref^{x}, z: Ref^{x}) ->{} Unit = 
+        (x: Ref^{cap}, y: Ref^{x}, z: Ref^{x}) => {
+          ()
+        }
+      val _$3: Unit = 
+        f2(a, a, a)
+      val f3: (x: Ref^{cap}, y: Ref^{cap}) ->{} Unit = 
+        (x: Ref^{cap}, y: Ref^{cap}) => {
+          ()
+        }
+      val f4: Ref^{cap$9} = 
+        Ref()
+      ()
+    }
+}

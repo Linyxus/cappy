@@ -6,19 +6,19 @@ module {
           sorry()
         val t1: () ->{} Unit = 
           () => {
-            val _$4: () ->{a} () ->{b} Unit = 
+            val _$6: () ->{a} () ->{b} Unit = 
               f()
             ()
           }
         val t2: () ->{a} Unit = 
           () => {
-            val _$5: () ->{b} Unit = 
+            val _$7: () ->{b} Unit = 
               f()()
             ()
           }
         val t3: () ->{a, b} Unit = 
           () => {
-            val _$6: Unit = 
+            val _$8: Unit = 
               f()()()
             ()
           }

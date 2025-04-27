@@ -7,7 +7,7 @@ import scala.collection.mutable.Set
 object Expr:
   /** A trait for expressions that have a type */
   trait Typed:
-    private var myTpe: Type = Type.NoType
+    private var myTpe: Type = Type.NoType()
     private var myCaptured: CaptureSet | Null = null
 
     /** The type of the expression, assuming it is typed */
@@ -36,7 +36,11 @@ object Expr:
       this
 
     def withCVFrom(other: Typed*): this.type =
-      val cv = other.map(_.cv).reduce(_ ++ _)
+      val cv = 
+        if other.isEmpty then
+          CaptureSet.empty
+        else
+          other.map(_.cv).reduce(_ ++ _)
       withCV(cv)
 
     def withMoreCV(more: CaptureSet): this.type =
@@ -63,7 +67,7 @@ object Expr:
       case _ => false
 
   enum CaptureRef extends Positioned:
-    case Ref(ref: VarRef)
+    case Ref(tp: SingletonType)
     case CAP()
     case CapInst(capId: Int)
 
@@ -157,16 +161,32 @@ object Expr:
 
   import Binder.*
 
+  // Marker trait for singleton (or, path) types
+  sealed trait SingletonType
+
   enum Type extends Positioned, HasKind:
+    /** Base types */
     case Base(base: BaseType)
+    /** Reference to a bound type variable */
     case BinderRef(idx: Int)
+    /** Reference to a struct symbol */
     case SymbolRef(sym: StructSymbol)
+    /** A capturing type, S^C */
     case Capturing(inner: Type, captureSet: CaptureSet)
+    /** Function type (z: T1) -> T2 */
     case TermArrow(params: List[TermBinder], result: Type)
+    /** Type function type [X, cap C, ...] -> T */
     case TypeArrow(params: List[TypeBinder | CaptureBinder], result: Type)
+    /** Applied type constructors */
     case AppliedType(constructor: Type, args: List[Type | CaptureSet])
+    /** Refined type T with { ... } */
     case RefinedType(base: Type, refinements: List[FieldInfo])
-    case NoType
+    /** A singleton type for a variable, x.type */
+    case Var(ref: VarRef) extends Type, SingletonType
+    /** A path singleton type, e.g. p.a.type */
+    case Select(base: SingletonType, fieldInfo: FieldInfo) extends Type, SingletonType
+    /** <notype>, a placeholder type in the implementation */
+    case NoType()
 
     def like(other: Type): this.type =
       assert(other.hasKind, s"Type $other (id=${other.id}) does not have a kind when calling like")
@@ -180,8 +200,13 @@ object Expr:
       Type.nextId
 
     def exists: Boolean = this match
-      case NoType => false
+      case NoType() => false
       case _ => true
+
+    def derivedCapturing(inner1: Type, captureSet1: CaptureSet): Type =
+      this match
+        case Type.Capturing(inner, captureSet) if (inner eq inner1) && (captureSet eq captureSet1) => this
+        case _ => Type.Capturing(inner1, captureSet1).like(this)
 
     def derivedTermArrow(params1: List[Binder], result1: Type): Type =
       this match
@@ -197,6 +222,16 @@ object Expr:
       this match
         case Type.AppliedType(constructor, args) if (constructor eq constructor1) && (args eq args1) => this
         case _ => Type.AppliedType(constructor1, args1).like(this)
+
+    def derivedRefinedType(base1: Type, refinements1: List[FieldInfo]): Type =
+      this match
+        case Type.RefinedType(base, refinements) if (base eq base1) && (refinements eq refinements1) => this
+        case _ => Type.RefinedType(base1, refinements1).like(this)
+
+    def derivedSelect(base1: SingletonType, fieldInfo1: FieldInfo): Type =
+      this match
+        case Type.Select(base, fieldInfo) if (base eq base1) && (fieldInfo eq fieldInfo1) => this
+        case _ => Type.Select(base1, fieldInfo1).like(this)
   
   object Type:
     private var nextId: Int = 0
@@ -337,7 +372,7 @@ object Expr:
     case If(cond: Term, thenBranch: Term, elseBranch: Term)
 
   /** Reference to a variable, either a binder or a symbol */
-  type VarRef = Term.BinderRef | Term.SymbolRef | Term.Select
+  type VarRef = Term.BinderRef | Term.SymbolRef
 
   sealed trait Symbol extends Positioned:
     val name: String
@@ -379,121 +414,3 @@ object Expr:
       case Covariant => Contravariant
       case Contravariant => Covariant
       case Invariant => Invariant
-
-  class TypeMap:
-    var localBinders: List[Binder] = Nil
-    var variance: Variance = Variance.Covariant
-
-    def withBinder[T](bd: Binder)(op: => T): T =
-      localBinders = bd :: localBinders
-      try op finally localBinders = localBinders.tail
-
-    def withBinders[T](bds: List[Binder])(op: => T): T =
-      val old = localBinders
-      localBinders = bds.reverse ++ localBinders
-      try op finally localBinders = old
-
-    def withVariance[T](v: Variance)(op: => T): T =
-      val old = variance
-      variance = v
-      try op finally variance = old
-
-    def apply(tp: Type): Type = mapOver(tp)
-
-    def mapBinder(param: Binder): Binder = param match
-      case TermBinder(name, tpe, localCapInsts) => TermBinder(name, apply(tpe), localCapInsts).maybeWithPosFrom(param)
-      case TypeBinder(name, bound) => TypeBinder(name, apply(bound)).maybeWithPosFrom(param)
-      case CaptureBinder(name, bound) => CaptureBinder(name, mapCaptureSet(bound)).maybeWithPosFrom(param)
-
-    def mapCaptureSet(captureSet: CaptureSet): CaptureSet =
-      CaptureSet(captureSet.elems.map(mapCaptureRef)).maybeWithPosFrom(captureSet)
-
-    def mapCaptureRef(ref: CaptureRef): CaptureRef = ref
-
-    def mapOver(tp: Type): Type = tp match
-      case Type.Capturing(inner, captureSet) =>
-        Type.Capturing(apply(inner), mapCaptureSet(captureSet)).like(tp)
-      case Type.TermArrow(params, result) => 
-        def go(ps: List[TermBinder], bs: List[Binder]): Type =
-          ps match
-            case Nil => tp.derivedTermArrow(bs.reverse, apply(result))
-            case p :: ps =>
-              val p1 = withVariance(variance.negate):
-                mapBinder(p)
-              withBinder(p1):
-                go(ps, p1 :: bs)
-        go(params, Nil)
-      case Type.TypeArrow(params, result) =>
-        def go(ps: List[TypeBinder | CaptureBinder], bs: List[Binder]): Type =
-          ps match
-            case Nil => tp.derivedTypeArrow(bs.reverse, apply(result))
-            case p :: ps =>
-              val p1 = withVariance(variance.negate):
-                mapBinder(p)
-              withBinder(p1):
-                go(ps, p1 :: bs)
-        go(params, Nil)
-      case Type.AppliedType(constructor, args) =>
-        tp.derivedAppliedType(apply(constructor), args.map(mapTypeArg))
-      case Type.RefinedType(base, refinements) =>
-        Type.RefinedType(apply(base), refinements.map(mapRefinement))
-      case Type.Base(_) => tp
-      case Type.BinderRef(_) => tp
-      case Type.SymbolRef(_) => tp
-      case Type.NoType => tp
-
-    def mapRefinement(info: FieldInfo): FieldInfo =
-      FieldInfo(info.name, apply(info.tpe), info.mutable)
-
-    def mapTypeArg(arg: Type | CaptureSet): Type | CaptureSet = arg match
-      case tpe: Type => apply(tpe)
-      case cs: CaptureSet => mapCaptureSet(cs)
-
-  class ShiftType(amount: Int) extends TypeMap:
-    override def mapCaptureRef(ref: CaptureRef): CaptureRef = ref match
-      case CaptureRef.Ref(Term.BinderRef(idx)) if idx >= localBinders.size =>
-        CaptureRef.Ref(Term.BinderRef(idx + amount)).maybeWithPosFrom(ref)
-      case ref => ref
-
-    override def apply(tp: Type): Type =
-      tp match
-        case Type.BinderRef(idx) if idx >= localBinders.size =>
-          Type.BinderRef(idx + amount).like(tp)
-        case _ => mapOver(tp)
-      
-  extension (tpe: Type)
-    def shift(amount: Int): Type =
-      val shift = ShiftType(amount)
-      val result = shift(tpe)
-      assert(result.hasPos == tpe.hasPos && result.hasKind)
-      result
-
-  extension (captureSet: CaptureSet)
-    def shift(amount: Int): CaptureSet =
-      val shifter = ShiftType(amount)
-      val result = shifter.mapCaptureSet(captureSet)
-      assert(result.hasPos == captureSet.hasPos)
-      result
-
-  extension (captureRef: CaptureRef)
-    def shift(amount: Int): CaptureRef =
-      val shifter = ShiftType(amount)
-      val result = shifter.mapCaptureRef(captureRef)
-      assert(result.hasPos == captureRef.hasPos)
-      result
-
-  extension (binder: Binder)
-    def shift(amount: Int): Binder =
-      binder match
-        case TermBinder(name, tpe, localCapInsts) => TermBinder(name, tpe.shift(amount), localCapInsts).maybeWithPosFrom(binder)
-        case TypeBinder(name, bound) => TypeBinder(name, bound.shift(amount)).maybeWithPosFrom(binder)
-        case CaptureBinder(name, bound) => CaptureBinder(name, bound.shift(amount)).maybeWithPosFrom(binder)
-
-  extension (tpe: Type)
-    def isIntegralType: Boolean = tpe match
-      case Type.Base(base) => base.isIntegralType
-      case _ => false
-
-    def isFloatingType: Boolean = tpe match
-      case Type.Base(base) => base.isFloatingType
-      case _ => false
