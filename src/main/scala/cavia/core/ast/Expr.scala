@@ -69,13 +69,13 @@ object Expr:
   enum CaptureRef extends Positioned:
     case Ref(tp: SingletonType)
     case CAP()
-    case CapInst(capId: Int)
+    case CapInst(capId: Int, fromInst: Option[Int] = None)
 
   object CaptureRef:
     private var nextCapId: Int = 0
 
-    def makeCapInst(): CaptureRef.CapInst =
-      val result: CaptureRef.CapInst = CaptureRef.CapInst(nextCapId)
+    def makeCapInst(fromInst: Option[Int] = None): CaptureRef.CapInst =
+      val result: CaptureRef.CapInst = CaptureRef.CapInst(nextCapId, fromInst)
       nextCapId += 1
       result
 

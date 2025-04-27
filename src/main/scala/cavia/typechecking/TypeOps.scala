@@ -52,7 +52,7 @@ class TypeMap:
           else 
             assert(false, "Don't know how to handle a widened capture ref at invariant occurrence")
     case CaptureRef.CAP() => CaptureSet(ref :: Nil)
-    case CaptureRef.CapInst(capId) => CaptureSet(ref :: Nil)
+    case CaptureRef.CapInst(capId, fromInst) => CaptureSet(ref :: Nil)
 
   def mapBaseType(base: Type.Base): Type = base
 
@@ -351,7 +351,11 @@ object TypePrinter:
 
   def show(captureRef: CaptureRef)(using TypeChecker.Context): String = captureRef match
     case CaptureRef.Ref(ref) => showSingletonType(ref)
-    case CaptureRef.CapInst(capId) => s"cap$$$capId"
+    case CaptureRef.CapInst(capId, fromInst) => 
+      def fromText = fromInst match
+        case Some(fromInst) => s"(from cap$$$fromInst)"
+        case None => ""
+      s"cap$$$capId$fromText"
     case CaptureRef.CAP() => "cap"
 
 extension (tpe: Type)
@@ -553,7 +557,7 @@ extension (tpe: Type)
     collector(tpe)
     CaptureSet(collector.collected.toList)
 
-class CapInstantiation extends TypeMap:
+class CapInstantiation(from: Option[Int] = None) extends TypeMap:
   var localCaps: List[CaptureRef.CapInst] = Nil
 
   override def apply(tpe: Type): Type = tpe match
@@ -563,7 +567,7 @@ class CapInstantiation extends TypeMap:
 
   override def mapCaptureRef(ref: CaptureRef): CaptureSet = ref match
     case CaptureRef.CAP() => 
-      val inst: CaptureRef.CapInst = CaptureRef.makeCapInst()
+      val inst: CaptureRef.CapInst = CaptureRef.makeCapInst(from)
       localCaps = inst :: localCaps
       CaptureSet(inst :: Nil)
     case _ => CaptureSet(ref :: Nil)

@@ -49,6 +49,7 @@ object TypeComparer:
     (tp1, tp2) match
       case (_, Type.Base(BaseType.AnyType)) => true
       case _ if tp1 == tp2 => true
+      case (Type.RefinedType(base1, refinements1), tp2) => checkSubtype(base1, tp2)
       case (Type.Capturing(inner, captureSet), tp2) =>
         checkSubcapture(captureSet, tp2.captureSet) && checkSubtype(inner, tp2)
       case (tp1, Type.Capturing(inner, captureSet)) =>

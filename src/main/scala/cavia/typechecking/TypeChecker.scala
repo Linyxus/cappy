@@ -6,6 +6,7 @@ import ast.*
 import scala.collection.mutable.ArrayBuffer
 import cavia.core.ast.Syntax.PrefixOp
 import reporting.trace
+import scala.util.boundary, scala.util.boundary.break
 
 object TypeChecker:
   import Expr.*
@@ -159,9 +160,10 @@ object TypeChecker:
           val refs = sym.tpe.captureSet.elems
           goRefs(refs)
         case CaptureRef.Ref(Type.Select(base, fieldInfo)) => 
-          assert(false, "TODO: implement")
+          val elems = fieldInfo.tpe.captureSet.elems
+          goRefs(elems)
         case CaptureRef.CAP() => Set(ref)
-        case CaptureRef.CapInst(capId) => Set(ref)
+        case CaptureRef.CapInst(_, _) => Set(ref)
     def goRefs(refs: List[CaptureRef]): Set[CaptureRef] =
       //println(s"goRefs $refs")
       refs.flatMap(goRef).toSet
@@ -169,10 +171,24 @@ object TypeChecker:
     CaptureSet(elems.toList)
 
   def checkSeparation(cs1: CaptureSet, cs2: CaptureSet)(using Context): Boolean = //trace(s"checkSeparation ${cs1.show} ${cs2.show}"):
-    val pk1 = computePeak(cs1)
-    val pk2 = computePeak(cs2)
-    val intersection = pk1.elems.intersect(pk2.elems)
-    intersection.isEmpty
+    boundary:
+      val pk1 = computePeak(cs1).elems
+      val pk2 = computePeak(cs2).elems
+      for i <- 0 until pk1.length do
+        for j <- 0 until pk2.length do
+          if !checkSeparation(pk1(i), pk2(j)) then
+            break(false)
+      true
+
+  def checkSeparation(ref1: CaptureRef, ref2: CaptureRef)(using Context): Boolean =
+    def derivesFrom(ref1: CaptureRef, ref2: CaptureRef): Boolean =
+      (ref1, ref2) match
+        case (CaptureRef.CapInst(id1, from1), CaptureRef.CapInst(id2, from2)) => from1 == Some(id2)
+        case _ => false
+    val result = ref1 != ref2 && !derivesFrom(ref1, ref2) && !derivesFrom(ref2, ref1)
+    // if !result then
+    //   println(s"checkSeparation: $ref1 and $ref2 overlaps")
+    result
 
   def checkTypeArg(targ: (Syntax.Type | Syntax.CaptureSet))(using Context): Result[Type | CaptureSet] = targ match
     case targ: Syntax.Type => checkType(targ)
@@ -354,7 +370,35 @@ object TypeChecker:
   def instantiateBinderCaps(binder: TermBinder)(using Context): TermBinder =
     val tm = CapInstantiation()
     val tpe1 = tm.apply(binder.tpe)
-    val binder1 = TermBinder(binder.name, tpe1, tm.localCaps)
+    //println(s"instantiate: ${binder.tpe.show} --> ${tpe1.show}")
+    val rootCapInst = tpe1.captureSet match
+      case CaptureSet.Const((c: CaptureRef.CapInst) :: Nil) if tm.localCaps.contains(c) => Some(c)
+      case _ => None
+    val fieldNames = allFieldNames(tpe1)
+    val fieldInfos: List[Option[(FieldInfo, List[CaptureRef.CapInst])]] = 
+      rootCapInst match
+        case None => Nil
+        case Some(rootCap) =>
+          fieldNames.map: fieldName =>
+            val fieldInfo = getFieldInfo(tpe1, fieldName).get
+            val tm = CapInstantiation(from = Some(rootCap.capId))
+            val fieldType = tm.apply(fieldInfo.tpe)
+            if tm.localCaps.isEmpty then
+              None
+            else
+              val info = FieldInfo(fieldName, fieldType, fieldInfo.mutable)
+              val capInsts = tm.localCaps
+              //println(s"refined field $fieldName from ${fieldInfo.tpe.show} to ${fieldType.show}")
+              Some((info, capInsts))
+    val refinements = fieldInfos.collect:
+      case Some((info, capInsts)) => info
+    val localCapInsts = fieldInfos.flatMap:
+      case Some((_, capInsts)) => capInsts
+      case None => Nil
+    val tpe2 =
+      if refinements.isEmpty then tpe1
+      else Type.RefinedType(tpe1, refinements)
+    val binder1 = TermBinder(binder.name, tpe2, localCapInsts ++ tm.localCaps)
     binder1.maybeWithPosFrom(binder).asInstanceOf[TermBinder]
 
   def checkStructInit(classSym: StructSymbol, targs: List[Syntax.Type | Syntax.CaptureSet], args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
@@ -461,7 +505,6 @@ object TypeChecker:
           t1.withTpe(tpe1).withCV(lambdaCV)
       case Syntax.Term.Block(stmts) => 
         def avoidSelfType(tpe: Type, d: Syntax.Definition): Result[Type] =
-          println(s"avoidSelfType $tpe in $d")
           val approxType = Type.Capturing(tpe.stripCaptures, CaptureSet.universal)
           val tm = AvoidLocalBinder(approxType)
           val result = tm.apply(tpe)
@@ -755,7 +798,7 @@ object TypeChecker:
           val (args1, outType, css) = go(args `zip` (formals.map(_.tpe)), Nil, Nil)
           // perform separation check
           val sigCaptures = funType.signatureCaptureSet
-          val css1 = sigCaptures :: css
+          val css1 = css ++ (sigCaptures :: Nil)
           for i <- 0 until css1.length do
             for j <- i + 1 until css1.length do
               if !checkSeparation(css1(i), css1(j)) then
@@ -1142,3 +1185,16 @@ object TypeChecker:
           refinements.find(_.name == field).orElse(go(core))
         case _ => None
     go(tpe)
+
+  def allFieldNames(tp: Type)(using Context): List[String] = tp match
+    //case Type.BinderRef(idx) => allFieldNames(getBinder(idx).asInstanceOf[TypeBinder].bound)
+    case Type.Capturing(inner, captureSet) => allFieldNames(inner)
+    case AppliedStructType(classSym, targs) => 
+      val fieldNames = classSym.info.fields.map(_.name)
+      fieldNames
+    case Type.RefinedType(base, refinements) =>
+      allFieldNames(base) ++ refinements.map(_.name)
+    case Type.Var(ref) => allFieldNames(ref.tpe)
+    case Type.Select(base, fieldInfo) => allFieldNames(fieldInfo.tpe)
+    case _ => Nil
+  
