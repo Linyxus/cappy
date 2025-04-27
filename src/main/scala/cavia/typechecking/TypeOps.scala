@@ -99,7 +99,9 @@ class TypeMap:
     apply(tp.base.asInstanceOf[Type]) match
       case base1: SingletonType => 
         tp.derivedSelect(base1, mapFieldInfo(tp.fieldInfo))
-      case baseTp => assert(false, s"Base type mapped to a non-singleton type in a select")
+      case baseTp => 
+        //println(s"select type: $tp, baseTp = $baseTp")
+        assert(false, s"Base type mapped to a non-singleton type in a select")
 
   def mapOver(tp: Type): Type = tp match
     case tp: Type.Capturing => mapCapturing(tp)
@@ -227,7 +229,7 @@ class ApproxTypeMap(using ctx: TypeChecker.Context) extends TypeMap:
         val fieldInfo1 = TypeChecker.getFieldInfo(base1, tp.fieldInfo.name)(using ctx1).get
         fieldInfo1.tpe
 
-class AvoidLocalBinder(tpe: Type)(using ctx: TypeChecker.Context) extends TypeMap:
+class AvoidLocalBinder(tpe: Type)(using ctx: TypeChecker.Context) extends ApproxTypeMap:
   var ok: Boolean = true
 
   // override def mapCaptureSet(captureSet: CaptureSet): CaptureSet = 

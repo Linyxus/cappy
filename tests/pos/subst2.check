@@ -1,0 +1,20 @@
+module {
+  struct Ref()
+  struct Pair(fst: Ref^{cap}, snd: Ref^{cap})
+  val main: () -> Unit = 
+    () => {
+      val a: Ref^{cap$11} = 
+        Ref()
+      val b: Ref^{cap$12} = 
+        Ref()
+      val p: Pair^{cap$13, a, b} with { fst: Ref^{a}; snd: Ref^{b} } = 
+        Pair(a, b)
+      val t1: Ref^{p.fst} = 
+        p.fst
+      val t2: Ref^{a} = 
+        t1
+      val t3: Ref^{p} = 
+        t1
+      ()
+    }
+}

@@ -36,12 +36,12 @@ object TypeComparer:
           case Binder.CaptureBinder(name, bound) => checkSubcapture(bound, cs2)
           case _: Binder.TypeBinder => assert(false, "binder kind is absurd")
         case CaptureRef.Ref(Type.Var(Term.SymbolRef(sym))) => checkSubcapture(sym.tpe.captureSet, cs2)
-        // case CaptureRef.Ref(Term.Select(base: VarRef, fieldInfo)) =>
-        //   def tryWiden: Boolean =
-        //     checkSubcapture(fieldInfo.tpe.captureSet, cs2)
-        //   def tryParent: Boolean =
-        //     checkSubcapture(base.singletonCaptureSet, cs2)
-        //   tryWiden || tryParent
+        case CaptureRef.Ref(Type.Select(base: SingletonType, fieldInfo)) =>
+          def tryWiden: Boolean =
+            checkSubcapture(fieldInfo.tpe.captureSet, cs2)
+          def tryParent: Boolean =
+            checkSubcapture(base.singletonCaptureSet, cs2)
+          tryWiden || tryParent
         case _ => false
     }
 

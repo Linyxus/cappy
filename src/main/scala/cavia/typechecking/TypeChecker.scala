@@ -531,7 +531,7 @@ object TypeChecker:
                     None
                   else Some(cref)
                 val approxCs = CaptureSet(approxElems)
-                val approxType = Type.Capturing(resType.stripCaptures, approxCs)
+                val approxType = Type.Capturing(boundExpr1.tpe.stripCaptures, approxCs)
                 val tm = AvoidLocalBinder(approxType)
                 val resType1 = tm.apply(resType)
                 val bodyCV = bodyExpr.cv
