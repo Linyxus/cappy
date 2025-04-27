@@ -226,6 +226,7 @@ class ApproxTypeMap(using ctx: TypeChecker.Context) extends TypeMap:
       case base1: SingletonType => Type.Select(base1, mapFieldInfo(tp.fieldInfo))
       case base1 => 
         val ctx1 = ctx.extend(localBinders.reverse)
+        //println(s"lookupinfo in $base1, tp = $tp")
         val fieldInfo1 = TypeChecker.getFieldInfo(base1, tp.fieldInfo.name)(using ctx1).get
         fieldInfo1.tpe
 

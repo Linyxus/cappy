@@ -307,12 +307,16 @@ object TypeChecker:
     var existsLocalParams = false
     val newCrefs = crefs.flatMap: ref =>
       ref match
-        case CaptureRef.Ref(Type.Var(Term.BinderRef(idx))) =>
-          if idx >= numParams then
-            Some(CaptureRef.Ref(Type.Var(Term.BinderRef(idx - numParams))).maybeWithPosFrom(ref))
-          else 
-            existsLocalParams = true
-            None
+        case CaptureRef.Ref(singleton) =>
+          val root = getRoot(singleton)
+          root match
+            case Term.BinderRef(idx) =>
+              if idx >= numParams then
+                Some(CaptureRef.Ref(Type.Var(Term.BinderRef(idx - numParams))).maybeWithPosFrom(ref))
+              else 
+                existsLocalParams = true
+                None
+            case _ => Some(ref)
         case _ => Some(ref)
     (existsLocalParams, newCrefs)
 
@@ -457,6 +461,7 @@ object TypeChecker:
           t1.withTpe(tpe1).withCV(lambdaCV)
       case Syntax.Term.Block(stmts) => 
         def avoidSelfType(tpe: Type, d: Syntax.Definition): Result[Type] =
+          println(s"avoidSelfType $tpe in $d")
           val approxType = Type.Capturing(tpe.stripCaptures, CaptureSet.universal)
           val tm = AvoidLocalBinder(approxType)
           val result = tm.apply(tpe)
