@@ -45,9 +45,14 @@ object Syntax:
   case class FieldDef(name: String, isVar: Boolean, tpe: Type) extends Positioned
 
   enum Definition extends Positioned:
+    /** A value definition, like val x: T = ... */
     case ValDef(name: String, tpe: Option[Type], expr: Term)
+    /** A function definition, like def f[T](x: T): U = ... */
     case DefDef(name: String, captureSet: Option[CaptureSet], paramss: List[TypeParamList | TermParamList], resultType: Option[Type], expr: Term)
+    /** A struct definition, like struct P(x: i32, y: i32) */
     case StructDef(name: String, targs: List[TypeParam | CaptureParam], fields: List[FieldDef])
+    /** An extension definition */
+    case ExtensionDef(name: String, typeArgs: List[TypeParam | CaptureParam], selfArg: TermParam, methods: List[DefDef])
 
     val name: String
   import Definition.*

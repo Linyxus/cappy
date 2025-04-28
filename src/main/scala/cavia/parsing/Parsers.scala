@@ -72,6 +72,26 @@ object Parsers:
       Definition.DefDef(tk.name, None, paramss, maybeTpe, body)
     p.positioned.withWhat("a function definition")
 
+  private var nextExtensionNameId = 0
+  def getExtensionName: String =
+    val name = s"$$ext${nextExtensionNameId}"
+    nextExtensionNameId += 1
+    name
+
+  def extensionDefP: Parser[Definition] =
+    val selfArgP = termParamP.surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
+    val defGroupP = defDefP.sepBy(tokenP[Token.NEWLINE]).asInstanceOf[Parser[List[Definition.DefDef]]]
+    val defGroupP1 = defGroupP.surroundedBy(tokenP[Token.INDENT], tokenP[Token.DEDENT].optional)
+    val p = 
+      (keywordP("extension"), typeParamListP.optional, selfArgP, defGroupP1).p.map: 
+        case (_, typeArgs, selfArg, defs) =>
+          val extName = getExtensionName
+          val ps = typeArgs match
+            case Some(p) => p.params
+            case None => Nil
+          Definition.ExtensionDef(extName, ps, selfArg, defs)
+    p.positioned.withWhat("an extension definition")
+
   def fieldDefP: Parser[FieldDef] =
     val varP = keywordP("var")
     val p = (varP.tryIt, tokenP[Token.IDENT], tokenP[Token.COLON], typeP).p.map: (varTk, nameTk, _, tpe) =>
@@ -88,7 +108,7 @@ object Parsers:
     p.positioned.withWhat("a struct definition")
 
   def definitionP: Parser[Definition] = 
-    valDefP `or` defDefP `or` structP
+    valDefP `or` defDefP `or` structP `or` extensionDefP
 
   def programP: Parser[List[Definition]] =
     (tokenP[Token.NEWLINE].optional, definitionP.sepBy(tokenP[Token.NEWLINE]), wsUntilEndP).p.map((_, defs, _) => defs)

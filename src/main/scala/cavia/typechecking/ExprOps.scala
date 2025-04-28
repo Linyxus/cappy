@@ -164,6 +164,31 @@ class ExprPrinter extends IndentedPrinter:
             print(", ")
         print(")")
         newline()
+      case Definition.ExtensionDef(sym) =>
+        print("extension ")
+        print(sym.name)
+        val info = sym.info
+        if info.typeParams.nonEmpty then
+          print("[")
+          print(info.typeParams.map(TypePrinter.show).mkString(", "))
+          print("]")
+        print("(?: ")
+        print(TypePrinter.show(info.selfArgType))
+        print(") {")
+        newline()
+        indented:
+          info.methods.foreach: method =>
+            print("val ")
+            print(method.name)
+            print(": ")
+            showType(method.tpe)
+            print(" = ")
+            newline()
+            indented:
+              show(method.body)
+            newline()
+        newline()
+        print("}")
 
 object ExprPrinter:
   def show(t: Expr.Term)(using Context): String =

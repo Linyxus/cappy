@@ -1078,11 +1078,16 @@ object TypeChecker:
         // Create symbols for all definitions
         val syms = defns.map: defn =>
           defn match
-            case _: (Syntax.Definition.ValDef | Syntax.Definition.DefDef) => 
+            case defn: (Syntax.Definition.ValDef | Syntax.Definition.DefDef) => 
+              //val tpe = extractDefnType(defn).!!
               DefSymbol(defn.name, Definitions.anyType, mod).withPosFrom(defn)
             case sd: Syntax.Definition.StructDef =>
               val tparams = checkTypeParamList(sd.targs).!!
               StructSymbol(defn.name, StructInfo(tparams, Nil), mod).withPosFrom(defn)
+            case ed: Syntax.Definition.ExtensionDef =>
+              val tparams = checkTypeParamList(ed.typeArgs).!!
+              val info = ExtensionInfo(tparams, Definitions.anyType, Nil)
+              ExtensionSymbol(defn.name, info, mod).withPosFrom(ed)
         def checkDefns(defns: List[(DefSymbol, Syntax.ValueDef)]): Result[List[Expr.Definition]] = defns match
           case Nil => Right(Nil)
           case (sym, defn) :: defns =>
@@ -1096,7 +1101,17 @@ object TypeChecker:
               checkDefns(defns).map: defns1 =>
                 val d = Definition.ValDef(sym, expr)
                 d :: defns1
-
+        def checkExtensionDef(extSym: ExtensionSymbol, extDefn: Syntax.Definition.ExtensionDef)(using Context): Result[Definition.ExtensionDef] =
+          hopefully:
+            val ctx1 = ctx.addSymbols(syms).extend(extSym.info.typeParams)
+            val methodInfos = extDefn.methods.map: method =>
+              val method1 = 
+                method.copy(paramss = Syntax.TermParamList(List(extDefn.selfArg)) :: method.paramss).withPosFrom(method)
+              val (bd, expr) = checkDef(method1)(using ctx1).!!
+              ExtensionMethod(method.name, bd.tpe, expr)
+            val newInfo = extSym.info.copy(methods = methodInfos)
+            extSym.info = newInfo
+            Definition.ExtensionDef(extSym)
         // Typecheck struct definitions
         val structDefTodos: List[(StructSymbol, Syntax.Definition.StructDef)] = (syms `zip` defns).flatMap:
           case (sym: StructSymbol, defn: Syntax.Definition.StructDef) => Some((sym, defn))
@@ -1108,7 +1123,7 @@ object TypeChecker:
           Definition.StructDef(sym)
         val allClassSyms = structDefns.map(_.sym)
         val ctxWithClasses = ctx.addSymbols(allClassSyms)
-        // Assign declared types to value definitions
+        // Assign declared types to value definitions and extension definitions
         for ((sym, defn) <- syms `zip` defns) do
           (sym, defn) match
             case (sym: DefSymbol, defn: Syntax.Definition.ValDef) =>
@@ -1117,14 +1132,28 @@ object TypeChecker:
             case (sym: DefSymbol, defn: Syntax.Definition.DefDef) =>
               val defnType = extractDefnType(defn)(using ctxWithClasses).!!
               sym.tpe = defnType
+            case (sym: ExtensionSymbol, extDefn: Syntax.Definition.ExtensionDef) =>
+              val typeArgs = sym.info.typeParams
+              val selfArgBinder = checkTermParam(extDefn.selfArg)(using ctxWithClasses.extend(typeArgs)).!!
+              val extMethods = extDefn.methods.map: defn =>
+                val rawMethodType = extractDefnType(defn)(using ctxWithClasses).!!
+                val extendedMethodType = Type.TermArrow(selfArgBinder :: Nil, rawMethodType)
+                ExtensionMethod(defn.name, extendedMethodType, body = null)
+              sym.info = ExtensionInfo(typeArgs, selfArgBinder.tpe, extMethods)
             case _ =>
+        // Typecheck extension definitions
+        val extensionDefTodos: List[(ExtensionSymbol, Syntax.Definition.ExtensionDef)] = (syms `zip` defns).flatMap:
+          case (sym: ExtensionSymbol, defn: Syntax.Definition.ExtensionDef) => Some((sym, defn))
+          case _ => None
+        val extensionDefns = extensionDefTodos.map: (sym, defn) =>
+          checkExtensionDef(sym, defn)(using ctxWithClasses).!!
         // Typecheck value definitions
         val valueDefTodos: List[(DefSymbol, Syntax.ValueDef)] = (syms `zip` defns).flatMap:
           case (sym: DefSymbol, defn: Syntax.ValueDef) => Some((sym, defn))
           case _ => None
         val valueDefns = checkDefns(valueDefTodos).!!
         // Done
-        mod.defns = structDefns ++ valueDefns
+        mod.defns = structDefns ++ extensionDefns ++ valueDefns
         mod
 
   def isStablePath(t: Term): Boolean = t match

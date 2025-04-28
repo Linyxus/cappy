@@ -1,0 +1,11 @@
+struct Ref()
+struct Pair1(a: Ref^, b: Ref^)
+struct Pair2(p1: Pair1^, p2: Pair1^)
+def main(): Unit =
+  val a = Ref()
+  val b = Ref()
+  val c = Ref()
+  val d = Ref()
+  val p1 = Pair1(a, b)
+  val p2 = Pair1(c, d)
+  val p = Pair2(p1, p2)
