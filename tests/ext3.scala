@@ -1,5 +1,8 @@
 extension [T](x: array[T])
   def show: Unit = ()
 def main(): Unit =
-  val xs = newArray(256, false)
+  val BUF_SIZE: i32 = 256
+  val xs = newArray(BUF_SIZE, false)
+  val ys = newArray(BUF_SIZE, 0)
+  val zs = newArray(BUF_SIZE, ys)
   ()

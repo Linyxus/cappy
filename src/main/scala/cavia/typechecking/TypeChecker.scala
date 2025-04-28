@@ -912,17 +912,22 @@ object TypeChecker:
         hopefully:
           given ctx1: Context = ctx.newInferenceScope
           val tv = Inference.createTypeVar
-          val arrConsFunction = Type.TermArrow(
-            List(
-              TermBinder("size", Definitions.i32Type),
-              TermBinder("elemType", tv), 
-            ),
-            Type.Capturing(Type.Base(BaseType.ArrayType), CaptureSet.universal)
-          )
-          val (args1, outType) = checkFunctionApply(arrConsFunction, args, pos, isDependent = false).!!
+          val resultTerm = checkArrayInit(tv, args, pos).!!
           Inference.solveTypeVars()
-          Term.PrimOp(PrimitiveOp.ArrayNew, tv :: Nil, args1).withPos(pos).withTpe(outType).withCVFrom(args1*)
+          resultTerm
       case _ => assert(false, s"Unsupported primitive operation: $op")
+
+  def checkArrayInit(elemType: Type, args: List[Syntax.Term], pos: SourcePos)(using Context): Result[Term] =
+    hopefully:
+      val arrConsFunction = Type.TermArrow(
+        List(
+          TermBinder("size", Definitions.i32Type),
+          TermBinder("elemType", elemType), 
+        ),
+        Type.Capturing(Type.Base(BaseType.ArrayType), CaptureSet.universal)
+      )
+      val (args1, outType) = checkFunctionApply(arrConsFunction, args, pos, isDependent = false).!!
+      Term.PrimOp(PrimitiveOp.ArrayNew, elemType :: Nil, args1).withPos(pos).withTpe(outType).withCVFrom(args1*)
       
   def checkPolyPrimOp(op: PrimitiveOp, targs: List[Syntax.Type | Syntax.CaptureSet], args: List[Syntax.Term], expected: Type, pos: SourcePos)(using Context): Result[Term] =
     hopefully:
@@ -931,10 +936,7 @@ object TypeChecker:
           (targs, args) match
             case ((elemType : Syntax.Type) :: Nil, arg1 :: arg2 :: Nil) =>
               val elemType1 = checkType(elemType).!!
-              val arrayLength = checkTerm(arg1, expected = Definitions.i32Type).!!
-              val arrayInit = checkTerm(arg2, expected = elemType1).!!
-              val tpe = Type.Capturing(Definitions.arrayType(elemType1), CaptureSet.universal)
-              Term.PrimOp(PrimitiveOp.ArrayNew, elemType1 :: Nil, arrayLength :: arrayInit :: Nil).withPos(pos).withTpe(tpe).withCVFrom(arrayLength, arrayInit)
+              checkArrayInit(elemType1, args, pos).!!
             case _ => sorry(TypeError.GeneralError(s"Argument number mismatch, `newArray` expects one type argument and two term arguments"))
         case _ => sorry(TypeError.GeneralError(s"Primitive operation $op cannot be applied to type arguments").withPos(pos))
 
