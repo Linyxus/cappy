@@ -911,7 +911,7 @@ object TypeChecker:
       case PrimitiveOp.ArrayNew =>
         hopefully:
           given ctx1: Context = ctx.newInferenceScope
-          val tv = Inference.createTypeVar
+          val tv = Inference.createTypeVar()
           val resultTerm = checkArrayInit(tv, args, pos).!!
           Inference.solveTypeVars()
           resultTerm

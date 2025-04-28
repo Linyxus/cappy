@@ -34,9 +34,11 @@ object Inference:
 
   def state(using Context): InferenceState = ctx.inferenceState
 
-  def createTypeVar(using Context): Type.TypeVar =
+  def createTypeVar(upperBound: Type = Type.NoType())(using Context): Type.TypeVar =
     val tvar: Type.TypeVar = Type.TypeVar()
     ctx.inferenceState.localVars += tvar
+    if upperBound.exists then
+      recordBound(tvar, upperBound, isUpper = true)
     tvar
 
   def recordBound(tvar: Type.TypeVar, bound: Type, isUpper: Boolean)(using Context): Boolean = boundary:
