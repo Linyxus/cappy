@@ -196,6 +196,16 @@ extension (tpe: Type)
     case Type.Capturing(inner, captureSet) => inner.stripCaptures
     case _ => tpe
 
+  def stripRefinements: Type = tpe match
+    case Type.RefinedType(base, refinements) => base.stripRefinements
+    case _ => tpe
+
+  def strip: Type = tpe match
+    case Type.Capturing(inner, _) => inner.strip
+    case Type.RefinedType(base, _) => base.strip
+    case _ => tpe
+  
+
   def isPure(using TypeChecker.Context): Boolean =
     TypeComparer.checkSubcapture(tpe.captureSet, CaptureSet.empty)
 

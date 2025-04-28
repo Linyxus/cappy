@@ -291,6 +291,7 @@ object CodeGenerator:
         case BinderInfo.Specialized(_, tpe) => tpe
         case BinderInfo.Abstract(_) => ValType.AnyRef
         case _ => assert(false, "This is absurd")
+    case Expr.Type.RefinedType(base, _) => translateType(base)
     case _ => assert(false, s"Unsupported type: $tpe")
 
   def dropLocalBinders(xs: Set[Int], numLocals: Int): Set[Int] =
@@ -503,7 +504,7 @@ object CodeGenerator:
     argInstrs ++ createStructInstrs
 
   def genSelect(base: Expr.Term, fieldInfo: Expr.FieldInfo)(using Context): List[Instruction] =
-    base.tpe.stripCaptures match
+    base.tpe.strip match
       case AppliedStructType(classSym, targs) =>
         val StructInfo(structSym, nameMap) = createStructType(classSym, targs)
         val fieldName = fieldInfo.name
@@ -546,6 +547,7 @@ object CodeGenerator:
       case None => 
         val structName = nameEncode(classSym.name ++ specSig.targs.map(vt => "_" ++ vt.show).mkString(""))
         val structSym = Symbol.fresh(structName)
+        specMap += (specSig -> StructInfo(structSym, Map.empty)) // first, put a placeholder
         val binders: List[Expr.Binder] = classSym.info.targs
         val binderInfos = (binders `zip` targs).map:
           case (bd, tpe: Expr.Type) => 

@@ -1075,28 +1075,29 @@ object TypeChecker:
     if hasDuplicatedName then
       Left(TypeError.GeneralError("Duplicated definition name").withPos(defns.head.pos))
     else
-      // Create symbols for all definitions
-      val syms = defns.map: defn =>
-        defn match
-          case _: (Syntax.Definition.ValDef | Syntax.Definition.DefDef) => 
-            DefSymbol(defn.name, Definitions.anyType, mod).withPosFrom(defn)
-          case _: Syntax.Definition.StructDef =>
-            StructSymbol(defn.name, StructInfo(Nil, Nil), mod).withPosFrom(defn)
-      def checkDefns(defns: List[(DefSymbol, Syntax.ValueDef)]): Result[List[Expr.Definition]] = defns match
-        case Nil => Right(Nil)
-        case (sym, defn) :: defns =>
-          val ctx1 = 
-            if defn.isInstanceOf[Syntax.Definition.ValDef] then
-              // val defs may only depend on previous definitions
-              ctx.addSymbols(syms.takeWhile(_.name != defn.name))
-            else
-              ctx.addSymbols(syms)
-          checkDef(defn)(using ctx1).flatMap: (bd, expr) =>
-            checkDefns(defns).map: defns1 =>
-              val d = Definition.ValDef(sym, expr)
-              d :: defns1
-
       hopefully:
+        // Create symbols for all definitions
+        val syms = defns.map: defn =>
+          defn match
+            case _: (Syntax.Definition.ValDef | Syntax.Definition.DefDef) => 
+              DefSymbol(defn.name, Definitions.anyType, mod).withPosFrom(defn)
+            case sd: Syntax.Definition.StructDef =>
+              val tparams = checkTypeParamList(sd.targs).!!
+              StructSymbol(defn.name, StructInfo(tparams, Nil), mod).withPosFrom(defn)
+        def checkDefns(defns: List[(DefSymbol, Syntax.ValueDef)]): Result[List[Expr.Definition]] = defns match
+          case Nil => Right(Nil)
+          case (sym, defn) :: defns =>
+            val ctx1 = 
+              if defn.isInstanceOf[Syntax.Definition.ValDef] then
+                // val defs may only depend on previous definitions
+                ctx.addSymbols(syms.takeWhile(_.name != defn.name))
+              else
+                ctx.addSymbols(syms)
+            checkDef(defn)(using ctx1).flatMap: (bd, expr) =>
+              checkDefns(defns).map: defns1 =>
+                val d = Definition.ValDef(sym, expr)
+                d :: defns1
+
         // Typecheck struct definitions
         val structDefTodos: List[(StructSymbol, Syntax.Definition.StructDef)] = (syms `zip` defns).flatMap:
           case (sym: StructSymbol, defn: Syntax.Definition.StructDef) => Some((sym, defn))

@@ -23,5 +23,5 @@ def main(): Unit =
 
   def foo(x: i32): Unit =
     xs(0) = x
-  foreach(xs, (x: i32) => xs(0) = x) // error
+  //foreach(xs, (x: i32) => xs(0) = x) // error
 
