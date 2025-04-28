@@ -7,7 +7,7 @@ module {
         Ref()
       val b: Ref^{cap$12} = 
         Ref()
-      val p: Pair^{cap$13, a, b} with { fst: Ref^{a}; snd: Ref^{b} } = 
+      val p: Pair with { fst: Ref^{a}; snd: Ref^{b} }^{cap$13, a, b} = 
         Pair(a, b)
       val t1: Ref^{p.fst} = 
         p.fst

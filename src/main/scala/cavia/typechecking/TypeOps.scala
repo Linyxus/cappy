@@ -616,3 +616,11 @@ object AppliedStructType:
     case Type.SymbolRef(sym: StructSymbol) => Some((sym, Nil))
     case Type.AppliedType(Type.SymbolRef(sym: StructSymbol), typeArgs) => Some((sym, typeArgs))
     case _ => None
+
+extension (tpe: Type)
+  def refined(refinements: List[FieldInfo]): Type = 
+    if refinements.isEmpty then tpe
+    else tpe match
+      case Type.Capturing(base, captureSet) =>
+        tpe.derivedCapturing(base.refined(refinements), captureSet)
+      case tpe => tpe.derivedRefinedType(tpe, refinements)

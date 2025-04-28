@@ -7,7 +7,7 @@ module {
         Ref(0)
       val b: Ref^{cap$24} = 
         Ref(0)
-      val p: Pair^{cap$25, a, b} with { x: Ref^{a}; y: Ref^{b} } = 
+      val p: Pair with { x: Ref^{a}; y: Ref^{b} }^{cap$25, a, b} = 
         Pair(a, b)
       val t1: Ref^{p.x} = 
         p.x

@@ -423,17 +423,16 @@ object TypeChecker:
         else
           Type.AppliedType(Type.SymbolRef(classSym), typeArgs)
       val termCaptureElems = termArgs.flatMap: arg =>
-        arg.tpe.captureSet.elems
+        arg.maybeAsSingletonType match
+          case Some(singleton) => singleton.asCaptureRef :: Nil
+          case None => arg.tpe.captureSet.elems
       val refinements: List[FieldInfo] = (fields1 `zip` termArgs).flatMap: 
         case ((name, fieldType, mutable), arg) =>
           if fieldType.isPure then None
           else Some(FieldInfo(name, arg.tpe, mutable))
       val captureSet = CaptureSet(CaptureRef.CAP() :: termCaptureElems)
       val outType = Type.Capturing(classType, captureSet)
-      val refinedOutType =
-        if !refinements.isEmpty then
-          Type.RefinedType(outType, refinements)
-        else outType
+      val refinedOutType = outType.refined(refinements)
       Term.StructInit(classSym, typeArgs, termArgs).withPos(srcPos).withTpe(refinedOutType).withCVFrom(termArgs*)
 
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType())(using Context): Result[Term] = 
