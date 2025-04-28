@@ -28,9 +28,9 @@ This is currently a toy.
 - [x] Support `if` expressions
 - [x] Standardise assignment: translate to primitive ops
 - [x] Support primitive array types
-- [ ] Support generic structs
-- [ ] Instantiate `cap`s
-- [ ] Handle struct captures more precisely
+- [x] Support generic structs
+- [x] Instantiate `cap`s
+- [x] Handle struct captures more precisely
 - [ ] Support extension methods
 - [ ] Add boxed int type
 - [ ] Support array literal
