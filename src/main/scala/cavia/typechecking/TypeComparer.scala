@@ -45,6 +45,18 @@ object TypeComparer:
         case _ => false
     }
 
+  def isSameType(tp1: Type, tp2: Type)(using Context): Boolean = //trace(s"isSameType(${tp1.show}, ${tp2.show})"):
+    checkSubtype(tp1, tp2) && checkSubtype(tp2, tp1)
+
+  def compareTypeArgs(args1: List[Type | CaptureSet], args2: List[Type | CaptureSet])(using Context): Boolean =
+    (args1, args2) match
+      case (Nil, Nil) => true
+      case ((arg1: Type) :: args1, (arg2: Type) :: args2) =>
+        checkSubtype(arg1, arg2) && compareTypeArgs(args1, args2)
+      case ((arg1: CaptureSet) :: args1, (arg2: CaptureSet) :: args2) =>
+        checkSubcapture(arg1, arg2) && compareTypeArgs(args1, args2)
+      case _ => false
+
   def checkSubtype(tp1: Type, tp2: Type)(using Context): Boolean = //trace(s"checkSubtype(${tp1.show}, ${tp2.show})"):
     (tp1.dealiasTypeVar, tp2.dealiasTypeVar) match
       case (_, Type.Base(BaseType.AnyType)) => true
@@ -56,6 +68,8 @@ object TypeComparer:
         Inference.addBound(tp1, tp2, isUpper = true)
       case (tp1, tp2: Type.TypeVar) =>
         Inference.addBound(tp2, tp1, isUpper = false)
+      case (Type.AppliedType(base1, args1), Type.AppliedType(base2, args2)) =>
+        checkSubtype(base1, base2) && compareTypeArgs(args1, args2)
       case (Type.Capturing(inner, captureSet), tp2) =>
         checkSubcapture(captureSet, tp2.captureSet) && checkSubtype(inner, tp2)
       case (tp1, Type.Capturing(inner, captureSet)) =>

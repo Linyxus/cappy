@@ -924,7 +924,7 @@ object TypeChecker:
           TermBinder("size", Definitions.i32Type),
           TermBinder("elemType", elemType), 
         ),
-        Type.Capturing(Type.Base(BaseType.ArrayType), CaptureSet.universal)
+        Type.Capturing(Type.AppliedType(Type.Base(BaseType.ArrayType), List(elemType)), CaptureSet.universal)
       )
       val (args1, outType) = checkFunctionApply(arrConsFunction, args, pos, isDependent = false).!!
       Term.PrimOp(PrimitiveOp.ArrayNew, elemType :: Nil, args1).withPos(pos).withTpe(outType).withCVFrom(args1*)
@@ -1140,13 +1140,24 @@ object TypeChecker:
     case Term.BinderRef(_) => true
     case _ => false
 
-  def searchExtension(baseType: Type, field: String)(using Context): Option[ExtensionSymbol] = boundary:
+  /** Search for extention method who has a field of `field` and is applicable to `baseType` */
+  def searchExtension(baseType: Type, field: String)(using Context): Option[(ExtensionSymbol, List[(Type | CaptureSet)])] = boundary:
+    println(s"searchExtension $field for $baseType")
     ctx.symbols.foreach:
-      case sym: ExtensionSymbol =>
+      case sym: ExtensionSymbol if sym.info.methods.exists(_.name == field) =>
+        println(s"found extension method $sym")
+        given ctx1: Context = ctx.newInferenceScope
+        val typeArgs: List[Type | CaptureSet] = sym.info.typeParams.map:
+          case TypeBinder(name, bound) => createTypeVar(upperBound = bound)
+          case CaptureBinder(name, bound) => CaptureSet.empty
+        val selfArgType = substituteType(sym.info.selfArgType, typeArgs, isParamType = true)
+        println(s"selfArgType = ${selfArgType.show}")
         val tm = UniversalConversion()
-        val formal = tm.apply(sym.info.selfArgType)
+        val formal = tm.apply(selfArgType)
+        println(s"formal = ${formal.show}")
         if TypeComparer.checkSubtype(baseType, formal) then
-          break(Some(sym))
+          solveTypeVars()
+          break(Some((sym, typeArgs)))
       case _ =>
     None
 
@@ -1177,11 +1188,11 @@ object TypeChecker:
       def tryExtension: Result[Term] =
         hopefully:
           searchExtension(base1.tpe, field) match
-            case Some(extSym) =>
+            case Some((extSym, typeArgs)) =>
               val method = extSym.info.methods.find(_.name == field).get
-              val funType = method.tpe
+              val funType = substituteType(method.tpe, typeArgs, isParamType = false)
               val (args, outType) = checkFunctionApply(funType, List(base), srcPos, isDependent = true).!!
-              val resolvedTerm = Term.ResolveExtension(extSym, Nil, method.name).withPos(srcPos).withTpe(funType).withCV(CaptureSet.empty)
+              val resolvedTerm = Term.ResolveExtension(extSym, typeArgs, method.name).withPos(srcPos).withTpe(funType).withCV(CaptureSet.empty)
               val appliedTerm = Term.Apply(resolvedTerm, args).withPos(srcPos).withTpe(outType).withCVFrom(resolvedTerm :: args*)
               appliedTerm
             case None => fail.!!
