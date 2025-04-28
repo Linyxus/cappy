@@ -46,10 +46,16 @@ object TypeComparer:
     }
 
   def checkSubtype(tp1: Type, tp2: Type)(using Context): Boolean = //trace(s"checkSubtype(${tp1.show}, ${tp2.show})"):
-    (tp1, tp2) match
+    (tp1.dealiasTypeVar, tp2.dealiasTypeVar) match
       case (_, Type.Base(BaseType.AnyType)) => true
       case _ if tp1 == tp2 => true
       case (Type.RefinedType(base1, refinements1), tp2) => checkSubtype(base1, tp2)
+      case (tp1: Type.TypeVar, tp2: Type.TypeVar) =>
+        Inference.isLessThan(tp1, tp2) || Inference.addOrder(tp1, tp2)
+      case (tp1: Type.TypeVar, tp2) =>
+        Inference.addBound(tp1, tp2, isUpper = true)
+      case (tp1, tp2: Type.TypeVar) =>
+        Inference.addBound(tp2, tp1, isUpper = false)
       case (Type.Capturing(inner, captureSet), tp2) =>
         checkSubcapture(captureSet, tp2.captureSet) && checkSubtype(inner, tp2)
       case (tp1, Type.Capturing(inner, captureSet)) =>

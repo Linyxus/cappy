@@ -188,6 +188,7 @@ object Expr:
     case Select(base: SingletonType, fieldInfo: FieldInfo) extends Type, SingletonType
     /** <notype>, a placeholder type in the implementation */
     case NoType()
+    case TypeVar(var instance: Type = NoType())
 
     def like(other: Type): this.type =
       assert(other.hasKind, s"Type $other (id=${other.id}) does not have a kind when calling like")

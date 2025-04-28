@@ -103,7 +103,9 @@ class TypeMap:
         //println(s"select type: $tp, baseTp = $baseTp")
         assert(false, s"Base type mapped to a non-singleton type in a select")
 
-  def mapOver(tp: Type): Type = tp match
+  def mapTypeVar(tp: Type.TypeVar): Type = tp
+
+  def mapOver(tp: Type): Type = tp.dealiasTypeVar match
     case tp: Type.Capturing => mapCapturing(tp)
     case tp: Type.TermArrow => mapTermArrow(tp)
     case tp: Type.TypeArrow => mapTypeArrow(tp)
@@ -115,6 +117,7 @@ class TypeMap:
     case tp: Type.NoType => mapNoType(tp)
     case tp: Type.Var => mapVar(tp)
     case tp: Type.Select => mapSelect(tp)
+    case tp: Type.TypeVar => mapTypeVar(tp)
 
   def mapFieldInfo(info: FieldInfo): FieldInfo =
     FieldInfo(info.name, apply(info.tpe), info.mutable)
@@ -190,6 +193,9 @@ extension (tpe: Type)
     case Type.AppliedType(constructor, args) => CaptureSet.empty
     case Type.RefinedType(base, _) => base.captureSet
     case tp: SingletonType => tp.singletonCaptureSet
+    case tvar: Type.TypeVar =>
+      if tvar.instance.exists then tvar.instance.captureSet
+      else CaptureSet.empty
     case Type.NoType() => assert(false, "computing capture set from no type")
 
   def stripCaptures: Type = tpe match
@@ -204,7 +210,11 @@ extension (tpe: Type)
     case Type.Capturing(inner, _) => inner.strip
     case Type.RefinedType(base, _) => base.strip
     case _ => tpe
-  
+
+  /** Dealias a solved type variable. */
+  def dealiasTypeVar: Type = tpe match
+    case Type.TypeVar(inst) if inst.exists => inst
+    case _ => tpe
 
   def isPure(using TypeChecker.Context): Boolean =
     TypeComparer.checkSubcapture(tpe.captureSet, CaptureSet.empty)
@@ -313,6 +323,9 @@ object TypePrinter:
       case Type.Base(base) => show(base)
       case Type.BinderRef(idx) => TypeChecker.getBinder(idx).name
       case Type.SymbolRef(sym) => sym.name
+      case tvar: Type.TypeVar =>
+        if tvar.instance.exists then show(tvar.instance)
+        else s"?X$$${tvar.id}"
       case Type.AppliedType(constructor, args) =>
         def showTypeArg(arg: Type | CaptureSet): String = arg match
           case tpe: Type => show(tpe)

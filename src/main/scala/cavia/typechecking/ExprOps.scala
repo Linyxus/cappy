@@ -179,12 +179,14 @@ class ExprPrinter extends IndentedPrinter:
         print("extension ")
         print(sym.name)
         val info = sym.info
+        val binderStrs = showBinders(info.typeParams)
         if info.typeParams.nonEmpty then
           print("[")
-          print(info.typeParams.map(TypePrinter.show).mkString(", "))
+          print(binderStrs.mkString(", "))
           print("]")
+        val ctx1 = ctx.extend(info.typeParams)
         print("(?: ")
-        print(TypePrinter.show(info.selfArgType))
+        print(TypePrinter.show(info.selfArgType)(using ctx1))
         print(") {")
         newline()
         indented:
@@ -192,11 +194,11 @@ class ExprPrinter extends IndentedPrinter:
             print("val ")
             print(method.name)
             print(": ")
-            showType(method.tpe)
+            showType(method.tpe)(using ctx1)
             print(" = ")
             newline()
             indented:
-              show(method.body)
+              show(method.body)(using ctx1)
             newline()
         newline()
         print("}")

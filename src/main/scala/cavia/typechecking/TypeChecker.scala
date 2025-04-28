@@ -11,9 +11,10 @@ import scala.util.boundary, scala.util.boundary.break
 object TypeChecker:
   import Expr.*
   import Binder.*
+  import Inference.*
 
   /** Type checking context. */
-  case class Context(binders: List[Binder], symbols: List[Symbol]):
+  case class Context(binders: List[Binder], symbols: List[Symbol], inferenceState: InferenceState):
     /** Extend the context with a list of binders. */
     def extend(bds: List[Binder]): Context =
       if bds.isEmpty then this
@@ -36,7 +37,7 @@ object TypeChecker:
         copy(symbols = newSymbols)
 
   object Context:
-    def empty: Context = Context(Nil, Nil)
+    def empty: Context = Context(Nil, Nil, InferenceState.empty)
 
   enum TypeError extends Positioned:
     case UnboundVariable(name: String, addenda: String = "")
