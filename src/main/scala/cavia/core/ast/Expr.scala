@@ -41,7 +41,8 @@ object Expr:
           CaptureSet.empty
         else
           other.map(_.cv).reduce(_ ++ _)
-      withCV(cv)
+      val cv1 = CaptureSet(cv.elems.distinct)
+      withCV(cv1)
 
     def withMoreCV(more: CaptureSet): this.type =
       withCV(myCaptured ++ more)
@@ -370,6 +371,7 @@ object Expr:
     case TypeApply(term: Term, targs: List[Type | CaptureSet])
     case Select(base: Term, fieldInfo: FieldInfo)
     case If(cond: Term, thenBranch: Term, elseBranch: Term)
+    case ResolveExtension(sym: ExtensionSymbol, targs: List[Type | CaptureSet], methodName: String)
 
   /** Reference to a variable, either a binder or a symbol */
   type VarRef = Term.BinderRef | Term.SymbolRef

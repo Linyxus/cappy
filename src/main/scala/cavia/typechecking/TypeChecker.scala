@@ -416,7 +416,7 @@ object TypeChecker:
         (field.name, fieldType, field.mutable)
       val argFormals = fields1.map(_._2)
       val syntheticFunctionType = Type.TermArrow(argFormals.map(tpe => TermBinder("_", tpe)), Type.AppliedType(Type.SymbolRef(classSym), typeArgs))
-      val (termArgs, _) = checkFunctionApply(syntheticFunctionType, args, expected, srcPos, isDependent = false).!!
+      val (termArgs, _) = checkFunctionApply(syntheticFunctionType, args, srcPos, isDependent = false).!!
       val classType = 
         if typeArgs.isEmpty then
           Type.SymbolRef(classSym)
@@ -518,6 +518,8 @@ object TypeChecker:
                 case d: Syntax.Definition.DefDef => Some(extractDefType(d, requireExplictType = false).!!)
                 case _: Syntax.Definition.StructDef =>
                   sorry(TypeError.GeneralError("structs are not allowed in a block").withPos(d.pos))
+                case d: Syntax.Definition.ExtensionDef =>
+                  sorry(TypeError.GeneralError("extension definitions are not allowed in a block").withPos(d.pos))
               val ctx1 = selfType match
                 case None => ctx
                 case Some(selfType) =>
@@ -766,7 +768,7 @@ object TypeChecker:
         val primOp = PrimitiveOp.BoolNot
         checkPrimOp(primOp, List(term), expected, srcPos)
 
-  def checkFunctionApply(funType: Type, args: List[Syntax.Term], expected: Type, srcPos: SourcePos, isDependent: Boolean = true)(using Context): Result[(List[Term], Type)] =
+  def checkFunctionApply(funType: Type, args: List[Syntax.Term], srcPos: SourcePos, isDependent: Boolean = true)(using Context): Result[(List[Term], Type)] =
     hopefully:
       funType.stripCaptures match
         case Type.TermArrow(formals, resultType) =>
@@ -811,7 +813,7 @@ object TypeChecker:
       val funType = fun1.tpe
       funType.stripCaptures match
         case Type.TermArrow(formals, resultType) =>
-          val (args1, outType) = checkFunctionApply(funType, args, expected, srcPos).!!
+          val (args1, outType) = checkFunctionApply(funType, args, srcPos).!!
           val resultTerm = Term.Apply(fun1, args1).withPos(srcPos).withTpe(outType)
           // fun1 match
           //   case _: VarRef =>
@@ -853,50 +855,6 @@ object TypeChecker:
   def substituteTypeInCaptureSet(cs: CaptureSet, targs: List[Type | CaptureSet], isParamType: Boolean = false)(using Context): CaptureSet =
     val tm = TypeSubstitutionMap(targs, if isParamType then Variance.Contravariant else Variance.Covariant)
     tm.mapCaptureSet(cs)
-
-  // def substitute(tpe: Type, arg: Term, openingIdx: Int = 0, isParamType: Boolean = false): Result[Type] =
-  //   val startingVariance = if isParamType then Variance.Contravariant else Variance.Covariant
-  //   arg match
-  //     case ref: VarRef =>
-  //       val ref1: VarRef = ref match
-  //         case Term.BinderRef(idx) => Term.BinderRef(idx + openingIdx).maybeWithPosFrom(ref).asInstanceOf[VarRef]
-  //         case Term.SymbolRef(sym) => ref
-  //         case Term.Select(base, field) => assert(false, "not supported yet")
-  //       val tm = OpenTermBinderExact(ref1, openingIdx, startingVariance)
-  //       Right(tm.apply(tpe))
-  //     case _ => 
-  //       val argType = arg.tpe.shift(openingIdx)
-  //       val tm = OpenTermBinder(argType, openingIdx, startingVariance)
-  //       val result = tm.apply(tpe)
-  //       if tm.ok then
-  //         Right(result)
-  //       else
-  //         Left(TypeError.GeneralError(s"Cannot substitute $arg into $tpe because the argument occurs in a invariant position").withPos(arg.pos))
-
-  // def substituteType[X <: Type | CaptureSet](tpe: X, arg: (Type | CaptureSet), openingIdx: Int = 0, isParamType: Boolean = false): X = 
-  //   val tm = arg match
-  //     case tpe: Type => OpenTypeBinder(tpe.shift(openingIdx), openingIdx)
-  //     case captureSet: CaptureSet => OpenCaptureBinder(captureSet.shift(openingIdx), openingIdx)
-  //   tpe match
-  //     case tpe: Type => tm.apply(tpe).asInstanceOf[X]
-  //     case captureSet: CaptureSet => tm.mapCaptureSet(captureSet).asInstanceOf[X]
-
-  // def substituteAll(tpe: Type, args: List[Term], isParamType: Boolean = false): Result[Type] =
-  //   args match
-  //     case Nil => Right(tpe)
-  //     case arg :: args =>
-  //       hopefully:
-  //         val tpe1 = substitute(tpe, arg, openingIdx = args.length, isParamType).!!
-  //         val tpe2 = substituteAll(tpe1, args, isParamType).!!
-  //         tpe2
-
-  // def substituteAllType(tpe: Type, args: List[(Type | CaptureSet)], isParamType: Boolean = false): Type =
-  //   args match
-  //     case Nil => tpe
-  //     case arg :: args =>
-  //       val tpe1 = substituteType(tpe, arg, openingIdx = args.length, isParamType)
-  //       //println(s"open $arg in $tpe (idx=${args.length}) = $tpe1")
-  //       substituteAllType(tpe1, args, isParamType)
 
   def checkPrimOpArgs(op: PrimitiveOp, args: List[Syntax.Term], formals: List[BaseType], resType: BaseType, pos: SourcePos)(using Context): Result[Term] = 
     def go(args: List[Syntax.Term], formals: List[BaseType], acc: List[Term]): Result[List[Term]] = (args, formals) match
@@ -1162,28 +1120,52 @@ object TypeChecker:
     case Term.BinderRef(_) => true
     case _ => false
 
+  def searchExtension(baseType: Type, field: String)(using Context): Option[ExtensionSymbol] = boundary:
+    ctx.symbols.foreach:
+      case sym: ExtensionSymbol =>
+        val tm = UniversalConversion()
+        val formal = tm.apply(sym.info.selfArgType)
+        if TypeComparer.checkSubtype(baseType, formal) then
+          break(Some(sym))
+      case _ =>
+    None
+
   def checkSelect(base: Syntax.Term, field: String, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
       val base1 = checkTerm(base).!!
-      base1.tpe.stripCaptures match
-        case PrimArrayType(elemType) =>
-          field match
-            case "size" | "length" =>
-              Term.PrimOp(PrimitiveOp.ArrayLen, Nil, List(base1)).withPos(srcPos).withTpe(Definitions.i32Type).withCV(base1.cv)
-            case _ => 
-              sorry(TypeError.GeneralError(s"Field $field not found in `array`").withPos(srcPos))
-        case _ => 
+      def fail: Result[Nothing] = Left(TypeError.TypeMismatch(s"a type with the field $field", base1.tpe.show).withPosFrom(base))
+      def tryPrimArray: Result[Term] =
+        hopefully:
+          base1.tpe.stripCaptures match
+            case PrimArrayType(elemType) =>
+              field match
+                case "size" | "length" =>
+                  Term.PrimOp(PrimitiveOp.ArrayLen, Nil, List(base1)).withPos(srcPos).withTpe(Definitions.i32Type).withCV(base1.cv)
+                case _ => fail.!!
+            case _ => fail.!!
+      def tryStruct: Result[Term] =
+        hopefully:
           getFieldInfo(base1.tpe, field) match
             case Some(fieldInfo) =>
               val outTerm = Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldInfo.tpe).withCV(base1.cv)
               if isStablePath(outTerm) then
-                //println(s"$outTerm is a stable path!")
                 val singletonSet = (outTerm.asInstanceOf[VarRef]).asSingletonType.singletonCaptureSet
                 val narrowedType = Type.Capturing(outTerm.tpe.stripCaptures, singletonSet)
                 outTerm.withTpe(narrowedType).withCV(singletonSet)
               else outTerm
-            case None =>
-              sorry(TypeError.TypeMismatch(s"a type with the field $field", base1.tpe.show).withPosFrom(base))
+            case _ => fail.!!
+      def tryExtension: Result[Term] =
+        hopefully:
+          searchExtension(base1.tpe, field) match
+            case Some(extSym) =>
+              val method = extSym.info.methods.find(_.name == field).get
+              val funType = method.tpe
+              val (args, outType) = checkFunctionApply(funType, List(base), srcPos, isDependent = true).!!
+              val resolvedTerm = Term.ResolveExtension(extSym, Nil, method.name).withPos(srcPos).withTpe(funType).withCV(CaptureSet.empty)
+              val appliedTerm = Term.Apply(resolvedTerm, args).withPos(srcPos).withTpe(outType).withCVFrom(resolvedTerm :: args*)
+              appliedTerm
+            case None => fail.!!
+      (tryPrimArray || tryStruct || tryExtension).!!
 
   def checkAssign(lhs: Syntax.Term, rhs: Syntax.Term, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:

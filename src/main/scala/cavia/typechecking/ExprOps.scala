@@ -117,6 +117,17 @@ class ExprPrinter extends IndentedPrinter:
         newline()
         indented:
           show(elseBranch)
+      case Term.ResolveExtension(sym, targs, methodName) =>
+        print(s"extension(${sym.name})")
+        if targs.nonEmpty then
+          print("[")
+          targs.zipWithIndex.foreach: (targ, idx) =>
+            showType(targ)
+            if idx < targs.size - 1 then
+              print(", ")
+          print("]")
+        print(".")
+        print(methodName)
   def showType(tpe: Type | CaptureSet)(using Context): Unit =
     tpe match
       case tpe: Type =>
@@ -189,6 +200,7 @@ class ExprPrinter extends IndentedPrinter:
             newline()
         newline()
         print("}")
+        newline()
 
 object ExprPrinter:
   def show(t: Expr.Term)(using Context): String =
