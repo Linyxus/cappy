@@ -31,7 +31,7 @@ This is currently a toy.
 - [x] Support generic structs
 - [x] Instantiate `cap`s
 - [x] Handle struct captures more precisely
-- [ ] Support extension methods
+- [x] Support extension methods
 - [ ] Add boxed int type
 - [ ] Support array literal
 - [ ] Support `char`

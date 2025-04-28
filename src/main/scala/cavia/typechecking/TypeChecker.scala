@@ -1147,7 +1147,8 @@ object TypeChecker:
         given ctx1: Context = ctx.newInferenceScope
         val typeArgs: List[Type | CaptureSet] = sym.info.typeParams.map:
           case TypeBinder(name, bound) => createTypeVar(upperBound = bound)
-          case CaptureBinder(name, bound) => CaptureSet.empty
+          case CaptureBinder(name, bound) => 
+            CaptureSet.empty // for now, capture set inference is not supported for extension search
         val selfArgType = substituteType(sym.info.selfArgType, typeArgs, isParamType = true)
         val tm = UniversalConversion()
         val formal = tm.apply(selfArgType)
