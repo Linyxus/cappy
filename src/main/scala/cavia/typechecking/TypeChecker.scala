@@ -834,7 +834,7 @@ object TypeChecker:
                 PrimitiveOp.ArrayGet,
                 targs = Nil,
                 args = List(fun1, arg1),
-              ).withPos(srcPos).withTpe(elemType).withCV(CaptureSet.empty)
+              ).withPos(srcPos).withTpe(elemType).withCVFrom(fun1, arg1)
             case _ => sorry(TypeError.GeneralError(s"Expect exact one array index, but got ${args.length}").withPos(srcPos))
         case _ =>
           sorry(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(fun.pos))
@@ -996,6 +996,7 @@ object TypeChecker:
             //println(s"checkTerm $expr with new env")
             val expr1 = checkTerm(expr, expected = expected1).!!
             val captureSet = expr1.cv
+            //println(s"capture set of def = $captureSet")
             (expr1, Some(captureSet))
         case (ps: Syntax.TermParamList) :: pss =>
           checkTermParamList(ps.params).flatMap: params =>
