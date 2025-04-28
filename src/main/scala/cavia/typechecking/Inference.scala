@@ -123,7 +123,7 @@ object Inference:
   def upperBoundOf(tvar: Type.TypeVar)(using Context): Type =
     ctx.inferenceState.upperBounds.getOrElse(tvar.id, Type.NoType())
 
-  def solveTypeVars(using Context): Unit =
+  def solveTypeVars()(using Context): Unit =
     state.localVars.foreach: tv =>
       val lb = lowerBoundOf(tv)
       val ub = upperBoundOf(tv)

@@ -36,6 +36,9 @@ object TypeChecker:
           newSymbols = sym :: newSymbols
         copy(symbols = newSymbols)
 
+    def newInferenceScope: Context =
+      copy(inferenceState = InferenceState.empty)
+
   object Context:
     def empty: Context = Context(Nil, Nil, InferenceState.empty)
 
@@ -905,6 +908,20 @@ object TypeChecker:
           if expected.exists then
             Term.PrimOp(PrimitiveOp.Sorry, Nil, Nil).withPos(pos).withTpe(expected).withCV(CaptureSet.empty)
           else sorry(TypeError.GeneralError("no expected type for sorry").withPos(pos))
+      case PrimitiveOp.ArrayNew =>
+        hopefully:
+          given ctx1: Context = ctx.newInferenceScope
+          val tv = Inference.createTypeVar
+          val arrConsFunction = Type.TermArrow(
+            List(
+              TermBinder("size", Definitions.i32Type),
+              TermBinder("elemType", tv), 
+            ),
+            Type.Capturing(Type.Base(BaseType.ArrayType), CaptureSet.universal)
+          )
+          val (args1, outType) = checkFunctionApply(arrConsFunction, args, pos, isDependent = false).!!
+          Inference.solveTypeVars()
+          Term.PrimOp(PrimitiveOp.ArrayNew, tv :: Nil, args1).withPos(pos).withTpe(outType).withCVFrom(args1*)
       case _ => assert(false, s"Unsupported primitive operation: $op")
       
   def checkPolyPrimOp(op: PrimitiveOp, targs: List[Syntax.Type | Syntax.CaptureSet], args: List[Syntax.Term], expected: Type, pos: SourcePos)(using Context): Result[Term] =
