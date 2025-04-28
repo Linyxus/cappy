@@ -10,7 +10,7 @@ module {
           }
         val f2: () ->{a} Unit = 
           () => {
-            val _$4: IO^{a} = 
+            val _$8: IO^{a} = 
               a
             ()
           }
@@ -18,7 +18,7 @@ module {
           f1[{a}](f2)
         val f4: () ->{b} Unit = 
           () => {
-            val _$5: IO^{b} = 
+            val _$9: IO^{b} = 
               b
             ()
           }

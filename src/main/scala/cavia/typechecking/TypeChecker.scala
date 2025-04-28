@@ -1142,19 +1142,15 @@ object TypeChecker:
 
   /** Search for extention method who has a field of `field` and is applicable to `baseType` */
   def searchExtension(baseType: Type, field: String)(using Context): Option[(ExtensionSymbol, List[(Type | CaptureSet)])] = boundary:
-    println(s"searchExtension $field for $baseType")
     ctx.symbols.foreach:
       case sym: ExtensionSymbol if sym.info.methods.exists(_.name == field) =>
-        println(s"found extension method $sym")
         given ctx1: Context = ctx.newInferenceScope
         val typeArgs: List[Type | CaptureSet] = sym.info.typeParams.map:
           case TypeBinder(name, bound) => createTypeVar(upperBound = bound)
           case CaptureBinder(name, bound) => CaptureSet.empty
         val selfArgType = substituteType(sym.info.selfArgType, typeArgs, isParamType = true)
-        println(s"selfArgType = ${selfArgType.show}")
         val tm = UniversalConversion()
         val formal = tm.apply(selfArgType)
-        println(s"formal = ${formal.show}")
         if TypeComparer.checkSubtype(baseType, formal) then
           solveTypeVars()
           break(Some((sym, typeArgs)))

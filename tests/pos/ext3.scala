@@ -8,4 +8,3 @@ def main(): Unit =
   xs.show
   ys.show
   zs.show
-  ()

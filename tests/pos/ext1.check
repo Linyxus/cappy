@@ -1,0 +1,23 @@
+module {
+  struct Ref(var data: i32)
+  extension $ext1(?: Ref^{cap}) {
+    val inc: (self: Ref^{cap}) -> () ->{self} Unit = 
+      (self: Ref^{cap}) => {
+        () => {
+          #structset(self.data, #i32add(self.data, 1))
+        }
+      }
+    val dec: (self: Ref^{cap}) -> () ->{self} Unit = 
+      (self: Ref^{cap}) => {
+        () => {
+          #structset(self.data, #i32sub(self.data, 1))
+        }
+      }
+  }
+  val main: () -> Unit = 
+    () => {
+      val x: Ref^{cap$20} = 
+        Ref(0)
+      extension($ext1).inc(x)()
+    }
+}

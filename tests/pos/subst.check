@@ -6,19 +6,19 @@ module {
         (x: Ref^{cap}, y: Ref^{x}) => {
           ()
         }
-      val _$2: Unit = 
+      val _$4: Unit = 
         f1(a, a)
       val f2: (x: Ref^{cap}, y: Ref^{x}, z: Ref^{x}) ->{} Unit = 
         (x: Ref^{cap}, y: Ref^{x}, z: Ref^{x}) => {
           ()
         }
-      val _$3: Unit = 
+      val _$5: Unit = 
         f2(a, a, a)
       val f3: (x: Ref^{cap}, y: Ref^{cap}) ->{} Unit = 
         (x: Ref^{cap}, y: Ref^{cap}) => {
           ()
         }
-      val f4: Ref^{cap$9} = 
+      val f4: Ref^{cap$13} = 
         Ref()
       ()
     }

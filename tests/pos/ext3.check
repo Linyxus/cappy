@@ -1,0 +1,24 @@
+module {
+  extension $ext2[T <: Any](?: array[T]^{cap}) {
+    val show: (x: array[T]^{cap}) ->{} Unit = 
+      (x: array[T]^{cap}) => {
+        ()
+      }
+  }
+  val main: () -> Unit = 
+    () => {
+      val BUF_SIZE: i32 = 
+        256
+      val xs: array[bool]^{cap$22} = 
+        #arraynew[bool](BUF_SIZE, false)
+      val ys: array[i32]^{cap$23} = 
+        #arraynew[i32](BUF_SIZE, 0)
+      val zs: array[array[i32]^{ys}]^{cap$24} = 
+        #arraynew[array[i32]^{ys}](BUF_SIZE, ys)
+      val _$6: Unit = 
+        extension($ext2)[bool].show(xs)
+      val _$7: Unit = 
+        extension($ext2)[i32].show(ys)
+      extension($ext2)[array[i32]^{ys}].show(zs)
+    }
+}
