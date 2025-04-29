@@ -379,6 +379,20 @@ object TypeChecker:
       val refinedOutType = outType.refined(refinements)
       Term.StructInit(classSym, typeArgs, termArgs).withPos(srcPos).withTpe(refinedOutType).withCVFrom(termArgs*)
 
+  def dropLocalFreshCaps(crefs: List[CaptureRef], srcPos: SourcePos)(using Context): Result[List[CaptureRef]] =
+    hopefully:
+      val outerLevel = ctx.binders.size
+      crefs.filter: cref =>
+        cref match
+          case CaptureRef.CapInst(capId, CapKind.Fresh(level), fromInst) =>
+            level <= outerLevel
+          case CaptureRef.CapInst(capId, CapKind.Sep(level), fromInst) =>
+            if level > outerLevel then
+              sorry(TypeError.GeneralError(s"A local `cap` instance is leaked into the body of a lambda").withPos(srcPos))
+            true
+          case _ => true
+      
+
   def checkTermAbstraction(params: List[TermBinder], checkBody: Context ?=> Result[Term], srcPos: SourcePos)(using Context): Result[Term] = 
     hopefully:
       val params1 = params.map(instantiateBinderCaps)
@@ -388,8 +402,9 @@ object TypeChecker:
       if bodyCV.elems.contains(CaptureRef.CAP()) then
         sorry(TypeError.GeneralError("A `cap` that is not nameable is captured by the body of this lambda; try naming `cap`s explicitly with capture parameters").withPos(srcPos))
       val (_, outCV) = dropLocalParams(bodyCV.elems.toList, params.length)
+      val outCV1 = dropLocalFreshCaps(outCV, srcPos).!!
       val outTerm = Term.TermLambda(params, body1).withPos(srcPos)
-      val outType = Type.Capturing(Type.TermArrow(params, body1.tpe), CaptureSet(outCV))
+      val outType = Type.Capturing(Type.TermArrow(params, body1.tpe), CaptureSet(outCV1))
       outTerm.withTpe(outType).withCV(CaptureSet.empty)
 
   def checkTypeAbstraction(params: List[TypeBinder | CaptureBinder], checkBody: Context ?=> Result[Term], srcPos: SourcePos)(using Context): Result[Term] =
@@ -402,8 +417,9 @@ object TypeChecker:
       val (existsLocalParams, outCV) = dropLocalParams(bodyCV.elems.toList, params.length)
       if existsLocalParams then
         sorry(TypeError.GeneralError("local capture parameters captured by the body of a the lambda"))
+      val outCV1 = dropLocalFreshCaps(outCV, srcPos).!!
       val outTerm = Term.TypeLambda(params, body1).withPos(srcPos)
-      val outType = Type.Capturing(Type.TypeArrow(params, body1.tpe), CaptureSet(outCV))
+      val outType = Type.Capturing(Type.TypeArrow(params, body1.tpe), CaptureSet(outCV1))
       outTerm.withTpe(outType).withCV(CaptureSet.empty)
 
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType())(using Context): Result[Term] = 

@@ -1,4 +1,4 @@
 12 |     sep1(t3, p)
    |     ^^^^^^^^^^^
 
-     Separation error: {p, cap$45} and {t3} are not separated
+     Separation error: {p} and {t3} are not separated

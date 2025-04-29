@@ -11,7 +11,7 @@ module {
         Pair(a, b)
       val t1: Ref^{p.x} = 
         p.x
-      val t2: () ->{p} Ref^{p.x} = 
+      val t2: () ->{p.x} Ref^{p.x} = 
         () => {
           p.x
         }

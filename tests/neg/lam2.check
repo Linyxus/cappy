@@ -1,4 +1,0 @@
-3 |   def foo(f: Box): Unit = f.unbox()()
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-    A `cap` that is not nameable is captured by the body of this lambda; try naming `cap`s explicitly with capture parameters
