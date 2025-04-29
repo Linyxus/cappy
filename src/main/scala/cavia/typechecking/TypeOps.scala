@@ -29,7 +29,7 @@ class TypeMap:
   def apply(tp: Type): Type = mapOver(tp)
 
   def mapBinder(param: Binder): Binder = param match
-    case TermBinder(name, tpe, localCapInsts) => TermBinder(name, apply(tpe), localCapInsts).maybeWithPosFrom(param)
+    case TermBinder(name, tpe) => TermBinder(name, apply(tpe)).maybeWithPosFrom(param)
     case TypeBinder(name, bound) => TypeBinder(name, apply(bound)).maybeWithPosFrom(param)
     case CaptureBinder(name, bound) => CaptureBinder(name, mapCaptureSet(bound)).maybeWithPosFrom(param)
 
@@ -52,7 +52,7 @@ class TypeMap:
           else 
             assert(false, "Don't know how to handle a widened capture ref at invariant occurrence")
     case CaptureRef.CAP() => CaptureSet(ref :: Nil)
-    case CaptureRef.CapInst(capId, fromInst) => CaptureSet(ref :: Nil)
+    case _: CaptureRef.CapInst => CaptureSet(ref :: Nil)
 
   def mapBaseType(base: Type.Base): Type = base
 
@@ -164,7 +164,7 @@ extension (captureRef: CaptureRef)
 extension (binder: Binder)
   def shift(amount: Int): Binder =
     binder match
-      case Binder.TermBinder(name, tpe, localCapInsts) => Binder.TermBinder(name, tpe.shift(amount), localCapInsts).maybeWithPosFrom(binder)
+      case Binder.TermBinder(name, tpe) => Binder.TermBinder(name, tpe.shift(amount)).maybeWithPosFrom(binder)
       case Binder.TypeBinder(name, bound) => Binder.TypeBinder(name, bound.shift(amount)).maybeWithPosFrom(binder)
       case Binder.CaptureBinder(name, bound) => Binder.CaptureBinder(name, bound.shift(amount)).maybeWithPosFrom(binder)
 
@@ -347,7 +347,7 @@ object TypePrinter:
       case tp: SingletonType => showSingletonType(tp) + ".type"
 
   def show(binder: Binder)(using TypeChecker.Context): String = binder match
-    case Binder.TermBinder(name, tpe, localCapInsts) => s"$name: ${show(tpe)}"
+    case Binder.TermBinder(name, tpe) => s"$name: ${show(tpe)}"
     case Binder.TypeBinder(name, tpe) => s"$name <: ${show(tpe)}"
     case Binder.CaptureBinder(name, tpe) => s"$name <: ${show(tpe)}"
 
@@ -369,11 +369,14 @@ object TypePrinter:
 
   def show(captureRef: CaptureRef)(using TypeChecker.Context): String = captureRef match
     case CaptureRef.Ref(ref) => showSingletonType(ref)
-    case CaptureRef.CapInst(capId, fromInst) => 
+    case CaptureRef.CapInst(capId, kind, fromInst) => 
       def fromText = fromInst match
         case Some(fromInst) => s"(from cap$$$fromInst)"
         case None => ""
-      s"cap$$$capId$fromText"
+      def capText = kind match
+        case _: CapKind.Fresh => s"fresh"
+        case _: CapKind.Sep => s"cap"
+      s"$capText$$$capId$fromText"
     case CaptureRef.CAP() => "cap"
 
 extension (tpe: Type)
@@ -535,9 +538,11 @@ object LazyType:
 
   def apply(tpe: Type): Type = Type.TypeArrow(Nil, tpe)
 
-def getRoot(x: SingletonType): VarRef = x match
-  case Type.Select(base, _) => getRoot(base)
-  case Type.Var(ref) => ref
+def getRoot(x: SingletonType): (VarRef, VarRef => SingletonType) = x match
+  case Type.Select(base, fieldInfo) => 
+    val (root1, recover1) = getRoot(base)
+    (root1, (base => Type.Select(recover1(base), fieldInfo)))
+  case Type.Var(ref) => (ref, x => x.asSingletonType)
 
 class CollectSignature extends TypeMap:
   val collected: ArrayBuffer[CaptureRef] = ArrayBuffer.empty
@@ -548,7 +553,8 @@ class CollectSignature extends TypeMap:
       // case CaptureRef.Ref(Term.BinderRef(idx)) if idx >= localBinders.size =>
       //   collected += CaptureRef.Ref(Term.BinderRef(idx - localBinders.size))
       case CaptureRef.Ref(path) =>
-        getRoot(path) match
+        val (root, _) = getRoot(path)
+        root match
           case Term.BinderRef(idx) if idx < localBinders.size =>
           case root => collected += CaptureRef.Ref(Type.Var(root))
       case _ => collected += ref
@@ -576,7 +582,7 @@ extension (tpe: Type)
     collector(tpe)
     CaptureSet(collector.collected.toList)
 
-class CapInstantiation(from: Option[Int] = None) extends TypeMap:
+class CapInstantiation(createCapInst: () => CaptureRef.CapInst) extends TypeMap:
   var localCaps: List[CaptureRef.CapInst] = Nil
 
   override def apply(tpe: Type): Type = tpe match
@@ -586,7 +592,7 @@ class CapInstantiation(from: Option[Int] = None) extends TypeMap:
 
   override def mapCaptureRef(ref: CaptureRef): CaptureSet = ref match
     case CaptureRef.CAP() => 
-      val inst: CaptureRef.CapInst = CaptureRef.makeCapInst(from)
+      val inst: CaptureRef.CapInst = createCapInst()
       localCaps = inst :: localCaps
       CaptureSet(inst :: Nil)
     case _ => CaptureSet(ref :: Nil)

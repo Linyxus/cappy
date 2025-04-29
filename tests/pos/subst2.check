@@ -3,11 +3,11 @@ module {
   struct Pair(fst: Ref^{cap}, snd: Ref^{cap})
   val main: () -> Unit = 
     () => {
-      val a: Ref^{cap$15} = 
+      val a: Ref^{fresh$15} = 
         Ref()
-      val b: Ref^{cap$16} = 
+      val b: Ref^{fresh$16} = 
         Ref()
-      val p: Pair with { fst: Ref^{a}; snd: Ref^{b} }^{cap$17, a, b} = 
+      val p: Pair with { fst: Ref^{a}; snd: Ref^{b} }^{fresh$17, a, b} = 
         Pair(a, b)
       val t1: Ref^{p.fst} = 
         p.fst

@@ -16,7 +16,7 @@ module {
   }
   val main: () -> Unit = 
     () => {
-      val x: Ref^{cap$20} = 
+      val x: Ref^{fresh$20} = 
         Ref(0)
       extension($ext1).inc(x)()
     }

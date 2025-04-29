@@ -9,11 +9,11 @@ module {
     () => {
       val BUF_SIZE: i32 = 
         256
-      val xs: array[bool]^{cap$22} = 
+      val xs: array[bool]^{fresh$22} = 
         #arraynew[bool](BUF_SIZE, false)
-      val ys: array[i32]^{cap$23} = 
+      val ys: array[i32]^{fresh$23} = 
         #arraynew[i32](BUF_SIZE, 0)
-      val zs: array[array[i32]^{ys}]^{cap$24} = 
+      val zs: array[array[i32]^{ys}]^{fresh$24} = 
         #arraynew[array[i32]^{ys}](BUF_SIZE, ys)
       val _$6: Unit = 
         extension($ext2)[bool].show(xs)

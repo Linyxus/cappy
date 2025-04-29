@@ -67,16 +67,25 @@ object Expr:
       case F32 | F64 => true
       case _ => false
 
+  enum CapKind:
+    /** A fresh cap, either coming from a fresh parameter or a fresh application result */
+    case Fresh(level: Int)
+    /** A cap inst that is separate, coming from a normal term parameter */
+    case Sep(level: Int)
+
+    /** The level of the cap instance. */
+    val level: Int
+
   enum CaptureRef extends Positioned:
     case Ref(tp: SingletonType)
     case CAP()
-    case CapInst(capId: Int, fromInst: Option[Int] = None)
+    case CapInst(capId: Int, kind: CapKind, fromInst: Option[Int] = None)
 
   object CaptureRef:
     private var nextCapId: Int = 0
 
-    def makeCapInst(fromInst: Option[Int] = None): CaptureRef.CapInst =
-      val result: CaptureRef.CapInst = CaptureRef.CapInst(nextCapId, fromInst)
+    def makeCapInst(kind: CapKind, fromInst: Option[Int] = None): CaptureRef.CapInst =
+      val result: CaptureRef.CapInst = CaptureRef.CapInst(nextCapId, kind, fromInst)
       nextCapId += 1
       result
 
@@ -149,14 +158,14 @@ object Expr:
       this
 
   enum Binder extends Positioned:
-    case TermBinder(name: String, tpe: Type, localCapInsts: List[CaptureRef.CapInst] = Nil)
+    case TermBinder(name: String, tpe: Type)
     case TypeBinder(name: String, bound: Type)
     case CaptureBinder(name: String, bound: CaptureSet)
 
     val name: String
 
     def kindStr: String = this match
-      case TermBinder(_, _, _) => "term"
+      case TermBinder(_, _) => "term"
       case TypeBinder(_, _) => "type"
       case CaptureBinder(_, _) => "capture"
 

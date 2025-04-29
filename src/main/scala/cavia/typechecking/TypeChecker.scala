@@ -154,7 +154,7 @@ object TypeChecker:
       ref match
         case CaptureRef.Ref(Type.Var(Term.BinderRef(idx))) =>
           getBinder(idx) match
-            case Binder.TermBinder(_, tpe, _) =>
+            case Binder.TermBinder(_, tpe) =>
               val elems = tpe.captureSet.elems
               goRefs(elems)
             case _: Binder.CaptureBinder => Set(ref)
@@ -166,7 +166,7 @@ object TypeChecker:
           val elems = fieldInfo.tpe.captureSet.elems
           goRefs(elems)
         case CaptureRef.CAP() => Set(ref)
-        case CaptureRef.CapInst(_, _) => Set(ref)
+        case CaptureRef.CapInst(_, _, _) => Set(ref)
     def goRefs(refs: List[CaptureRef]): Set[CaptureRef] =
       refs.flatMap(goRef).toSet
     val elems = goRefs(set.elems)
@@ -185,7 +185,7 @@ object TypeChecker:
   def checkSeparation(ref1: CaptureRef, ref2: CaptureRef)(using Context): Boolean =
     def derivesFrom(ref1: CaptureRef, ref2: CaptureRef): Boolean =
       (ref1, ref2) match
-        case (CaptureRef.CapInst(id1, from1), CaptureRef.CapInst(id2, from2)) => from1 == Some(id2)
+        case (CaptureRef.CapInst(id1, _, from1), CaptureRef.CapInst(id2, _, from2)) => from1 == Some(id2)
         case _ => false
     val result = ref1 != ref2 && !derivesFrom(ref1, ref2) && !derivesFrom(ref2, ref1)
     result
@@ -273,11 +273,11 @@ object TypeChecker:
     val newCrefs = crefs.flatMap: ref =>
       ref match
         case CaptureRef.Ref(singleton) =>
-          val root = getRoot(singleton)
+          val (root, recover) = getRoot(singleton)
           root match
             case Term.BinderRef(idx) =>
               if idx >= numParams then
-                Some(CaptureRef.Ref(Type.Var(Term.BinderRef(idx - numParams))).maybeWithPosFrom(ref))
+                Some(CaptureRef.Ref(recover(Term.BinderRef(idx - numParams))).maybeWithPosFrom(ref))
               else 
                 existsLocalParams = true
                 None
@@ -314,38 +314,36 @@ object TypeChecker:
           sorry(TypeError.GeneralError(s"Type argument number mismatch: expected ${formals.length}, but got ${targs.length}").withPos(srcPos))
       go(targs, formalTypes, Nil)
 
-  def instantiateBinderCaps(binder: TermBinder)(using Context): TermBinder =
-    val tm = CapInstantiation()
-    val tpe1 = tm.apply(binder.tpe)
+  def instantiateCaps(tpe: Type, isFresh: Boolean, isParam: Boolean)(using Context): Type =
+    val curLevel = if isParam then ctx.binders.size + 1 else ctx.binders.size
+    val capKind = if isFresh then CapKind.Fresh(curLevel) else CapKind.Sep(curLevel)
+    val tm1 = CapInstantiation(() => CaptureRef.makeCapInst(capKind, fromInst = None))
+    val tpe1 = tm1.apply(tpe)
     val rootCapInst = tpe1.captureSet match
-      case CaptureSet.Const((c: CaptureRef.CapInst) :: Nil) if tm.localCaps.contains(c) => Some(c)
+      case CaptureSet.Const((c: CaptureRef.CapInst) :: Nil) if tm1.localCaps.contains(c) => Some(c)
       case _ => None
     val fieldNames = allFieldNames(tpe1)
-    val fieldInfos: List[Option[(FieldInfo, List[CaptureRef.CapInst])]] = 
+    val fieldInfos: List[FieldInfo] = 
       rootCapInst match
         case None => Nil
         case Some(rootCap) =>
-          fieldNames.map: fieldName =>
+          fieldNames.flatMap: fieldName =>
             val fieldInfo = getFieldInfo(tpe1, fieldName).get
-            val tm = CapInstantiation(from = Some(rootCap.capId))
-            val fieldType = tm.apply(fieldInfo.tpe)
-            if tm.localCaps.isEmpty then
+            val fieldCapKind = capKind  // fields inherit the fresh-ness status from its root cap
+            val tm2 = CapInstantiation(() => CaptureRef.makeCapInst(fieldCapKind, fromInst = Some(rootCap.capId)))
+            val fieldType = tm2.apply(fieldInfo.tpe)
+            if tm2.localCaps.isEmpty then
               None
             else
               val info = FieldInfo(fieldName, fieldType, fieldInfo.mutable)
-              val capInsts = tm.localCaps
-              //println(s"refined field $fieldName from ${fieldInfo.tpe.show} to ${fieldType.show}")
-              Some((info, capInsts))
-    val refinements = fieldInfos.collect:
-      case Some((info, capInsts)) => info
-    val localCapInsts = fieldInfos.flatMap:
-      case Some((_, capInsts)) => capInsts
-      case None => Nil
-    val tpe2 =
-      if refinements.isEmpty then tpe1
-      else Type.RefinedType(tpe1, refinements)
-    val binder1 = TermBinder(binder.name, tpe2, localCapInsts ++ tm.localCaps)
-    binder1.maybeWithPosFrom(binder).asInstanceOf[TermBinder]
+              Some(info)
+    if fieldInfos.isEmpty then tpe1
+    else tpe1.refined(fieldInfos)
+
+  def instantiateBinderCaps(binder: TermBinder)(using Context): TermBinder =
+    val tpe1 = instantiateCaps(binder.tpe, isFresh = false, isParam = true)
+    val binder1 = TermBinder(binder.name, tpe1).maybeWithPosFrom(binder).asInstanceOf[TermBinder]
+    binder1
 
   def checkStructInit(classSym: StructSymbol, targs: List[Syntax.Type | Syntax.CaptureSet], args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     val tformals = classSym.info.targs
@@ -422,7 +420,8 @@ object TypeChecker:
           tpe.stripCaptures match
             case LazyType(resultType) => 
               val t1 = Term.TypeApply(ref, Nil).withPosFrom(t)
-              t1.withTpe(resultType).withCV(cv)
+              val outTerm = t1.withTpe(resultType).withCV(cv)
+              instantiateFresh(outTerm)
             case _ =>
               val tpe1 = 
                 if tpe.isPure then 
@@ -492,14 +491,14 @@ object TypeChecker:
                   TermBinder(bd.name, tpe1).withPos(bd.pos).asInstanceOf[TermBinder]
                 else bd
               // Instantiate CAPs in the type
-              val bd2 = instantiateBinderCaps(bd1)
+              // val bd2 = instantiateBinderCaps(bd1)
               // Avoid self type in the body
               val expr1 =
                 if selfType.isDefined then
                   val tpe1 = avoidSelfType(expr.tpe, d).!!
                   expr.withTpe(tpe1)
                 else expr
-              (bd2, expr1, selfType.isDefined)
+              (bd1, expr1, selfType.isDefined)
           stmts match
             case Nil => 
               Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType).withCV(CaptureSet.empty))
@@ -526,18 +525,19 @@ object TypeChecker:
                 val bodyExpr = go(ds)(using ctx.extend(bd1 :: Nil)).!!
                 // drop local cap instances from the cv of the body
                 // TODO: this is clearly wrong
-                bodyExpr.withCV:
-                  val oldCV = bodyExpr.cv
-                  val newCV = oldCV.elems.filter: cref =>
-                    !bd1.localCapInsts.contains(cref)
-                  CaptureSet(newCV)
+                // bodyExpr.withCV:
+                //   val oldCV = bodyExpr.cv
+                //   val newCV = oldCV.elems.filter: cref =>
+                //     !bd1.localCapInsts.contains(cref)
+                //   CaptureSet(newCV)
 
                 val resType = bodyExpr.tpe
                 val approxElems = bd1.tpe.captureSet.elems.flatMap: cref =>
-                  if bd1.localCapInsts.contains(cref) then 
-                    // drop local cap instances, since they mean "fresh" things
-                    None
-                  else Some(cref)
+                  // if bd1.localCapInsts.contains(cref) then 
+                  //   // drop local cap instances, since they mean "fresh" things
+                  //   None
+                  // else Some(cref)
+                  Some(cref)
                 val approxCs = CaptureSet(approxElems)
                 val approxType = Type.Capturing(boundExpr1.tpe.stripCaptures, approxCs)
                 val tm = AvoidLocalBinder(approxType)
@@ -550,18 +550,18 @@ object TypeChecker:
                   sorry(TypeError.LeakingLocalBinder(resType.show(using ctx.extend(bd1 :: Nil))).withPos(d.pos))
         go(stmts)
       case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if PrimitiveOp.fromName(name).isDefined => 
-        checkPrimOp(PrimitiveOp.fromName(name).get, args, expected, t.pos)
+        checkPrimOp(PrimitiveOp.fromName(name).get, args, expected, t.pos).map(instantiateFresh)
       case Syntax.Term.Apply(Syntax.Term.TypeApply(Syntax.Term.Ident(name), targs), args) if PrimitiveOp.fromName(name).isDefined =>
         val primOp = PrimitiveOp.fromName(name).get
-        checkPolyPrimOp(primOp, targs, args, expected, t.pos)
+        checkPolyPrimOp(primOp, targs, args, expected, t.pos).map(instantiateFresh)
       case Syntax.Term.Apply(Syntax.Term.TypeApply(Syntax.Term.Ident(name), targs), args) if lookupStructSymbol(name).isDefined =>
         val classSym = lookupStructSymbol(name).get
-        checkStructInit(classSym, targs, args, expected, t.pos)
+        checkStructInit(classSym, targs, args, expected, t.pos).map(instantiateFresh)
       case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if lookupStructSymbol(name).isDefined =>
         val classSym = lookupStructSymbol(name).get
-        checkStructInit(classSym, targs = Nil, args, expected, t.pos)
+        checkStructInit(classSym, targs = Nil, args, expected, t.pos).map(instantiateFresh)
       case Syntax.Term.Apply(fun, args) => 
-        checkApply(fun, args, expected, t.pos)
+        checkApply(fun, args, expected, t.pos).map(instantiateFresh)
       case Syntax.Term.TypeApply(term, targs) => 
         hopefully:
           val term1 = checkTerm(term).!!
@@ -584,7 +584,7 @@ object TypeChecker:
                 for j <- i + 1 until todoCaptureSets.length do
                   if !checkSeparation(todoCaptureSets(i), todoCaptureSets(j)) then
                     sorry(TypeError.SeparationError(todoCaptureSets(i).show, todoCaptureSets(j).show).withPos(t.pos))
-              resultTerm
+              instantiateFresh(resultTerm)
             case _ => 
               sorry(TypeError.GeneralError(s"Expected a function, but got $term1.tpe.show").withPos(t.pos))
 
@@ -755,6 +755,13 @@ object TypeChecker:
           (args1, outType)
         case _ => sorry(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(srcPos))
 
+  /** Instantiate fresh capabilities in the result of a function apply. */
+  def instantiateFresh(t: Term)(using Context): Term =
+    val tpe = t.tpe
+    val tpe1 = instantiateCaps(tpe, isFresh = true, isParam = false)
+    val t1 = t.withTpe(tpe1)
+    t1
+
   def checkApply(fun: Syntax.Term, args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
       val fun1 = checkTerm(fun).!!
@@ -908,7 +915,11 @@ object TypeChecker:
             val expectedBodyType = resultType match
               case None => Type.NoType()
               case Some(expected) => checkType(expected).!!
-            checkTerm(expr, expected = expectedBodyType)
+            val outTerm = checkTerm(expr, expected = expectedBodyType)
+            outTerm.foreach: t =>
+              if expectedBodyType.exists then
+                t.setTpe(expectedBodyType)
+            outTerm
           case Syntax.TermParamList(params) :: pss => 
             val params1 = checkTermParamList(params).!!
             def checkBody(using Context): Result[Term] = go(pss)
