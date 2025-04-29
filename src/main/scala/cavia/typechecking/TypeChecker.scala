@@ -269,60 +269,6 @@ object TypeChecker:
           go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
     go(params, Nil)
 
-  // def markFree(cs: CaptureSet, srcPos: SourcePos)(using Context): Result[Unit] =
-  //   hopefully:
-  //   //println(s"markFree $cs")
-  //     val crefs = cs.elems.flatMap: ref =>
-  //       ref match
-  //         case CaptureRef.Ref(ref) => Some(ref)
-  //         case CaptureRef.CapInst(capId) => 
-  //           sorry(TypeError.GeneralError(s"A `{cap}` that is ambiguous is charged to the environment; consider using explicit capture parameters").withPos(srcPos))
-  //         case CaptureRef.CAP() =>
-  //           sorry(TypeError.GeneralError(s"A CAP() template is charged to the environment; consider using explicit capture parameters").withPos(srcPos))
-  //     crefs.foreach(markFree)
-
-  // def markFree(ref: VarRef)(using Context): Unit =
-  //   //println(s"markFree $ref")
-  //   def widenUntilWf(crefs: List[CaptureRef], delta: Int): List[CaptureRef] =
-  //     def allWf(crefs: List[CaptureRef]): Boolean = crefs.forall: ref =>
-  //       ref match
-  //         case CaptureRef.Ref(Term.BinderRef(idx)) => idx >= delta
-  //         case _ => true
-  //     if allWf(crefs) then
-  //       crefs.map: ref =>
-  //         ref match
-  //           case CaptureRef.Ref(Term.BinderRef(idx)) =>
-  //             //assert(idx >= delta)
-  //             CaptureRef.Ref(Term.BinderRef(idx - delta))
-  //           case _ => ref
-  //     else
-  //       val crefs1 = crefs.flatMap: ref =>
-  //         ref match
-  //           case CaptureRef.Ref(Term.BinderRef(idx)) if idx < delta =>
-  //             getBinder(idx) match
-  //               case TermBinder(name, tpe, _) => tpe.captureSet.elems
-  //               case CaptureBinder(name, bound) => bound.elems
-  //               case _ => assert(false)
-  //           case ref => List(ref)
-  //       widenUntilWf(crefs1, delta)
-
-  //   def avoidVarRef(ref: VarRef, delta: Int): List[CaptureRef] = ref match
-  //     case Term.BinderRef(idx) => 
-  //       if idx >= delta then
-  //         List(Term.BinderRef(idx - delta).asCaptureRef)
-  //       else
-  //         //println(s"!!! markFree: dropping local binder $ref")
-  //         widenUntilWf(List(ref.asCaptureRef), delta)
-  //     case Term.SymbolRef(sym) => List(ref.asCaptureRef)
-  //   val level = ctx.captured.level
-  //   val curLevel = ctx.binders.length
-  //   val delta = curLevel - level
-  //   //println(s"level = $level, curLevel = $curLevel, delta = $delta")
-  //   assert(delta >= 0, s"absurd levels")
-  //   val crefs = avoidVarRef(ref, delta)
-  //   //println(s"markFree $ref ==> $crefs")
-  //   ctx.captured.add(crefs.toSet)
-
   private def dropLocalParams(crefs: List[CaptureRef], numParams: Int): (Boolean, List[CaptureRef]) = 
     var existsLocalParams = false
     val newCrefs = crefs.flatMap: ref =>
@@ -364,8 +310,6 @@ object TypeChecker:
                   cs1
                 else sorry(TypeError.GeneralError(s"Capture set argument ${cs1.show} does not conform to the bound ${f.show}").withPosFrom(t))
               case (t, f) => sorry(TypeError.GeneralError("Argument kind mismatch").withPosFrom(t))
-          // val fs1 = fs.zipWithIndex.map: (f, i) =>
-          //   substituteType(f, typeArg, i, isParamType = true)
           go(ts, fs, typeArg :: checkedAcc)
         case _ => 
           sorry(TypeError.GeneralError(s"Type argument number mismatch: expected ${formals.length}, but got ${targs.length}").withPos(srcPos))
@@ -374,7 +318,6 @@ object TypeChecker:
   def instantiateBinderCaps(binder: TermBinder)(using Context): TermBinder =
     val tm = CapInstantiation()
     val tpe1 = tm.apply(binder.tpe)
-    //println(s"instantiate: ${binder.tpe.show} --> ${tpe1.show}")
     val rootCapInst = tpe1.captureSet match
       case CaptureSet.Const((c: CaptureRef.CapInst) :: Nil) if tm.localCaps.contains(c) => Some(c)
       case _ => None
