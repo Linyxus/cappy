@@ -382,6 +382,29 @@ object TypeChecker:
       val refinedOutType = outType.refined(refinements)
       Term.StructInit(classSym, typeArgs, termArgs).withPos(srcPos).withTpe(refinedOutType).withCVFrom(termArgs*)
 
+  def checkTermAbstraction(params: List[TermBinder], checkBody: Context ?=> Result[Term], srcPos: SourcePos)(using Context): Result[Term] = 
+    hopefully:
+      val params1 = params.map(instantiateBinderCaps)
+      val ctx1 = ctx.extend(params1)
+      val body1 = checkBody(using ctx1).!!
+      val bodyCV = body1.cv
+      val (_, outCV) = dropLocalParams(bodyCV.elems.toList, params.length)
+      val outTerm = Term.TermLambda(params, body1).withPos(srcPos)
+      val outType = Type.Capturing(Type.TermArrow(params, body1.tpe), CaptureSet(outCV))
+      outTerm.withTpe(outType).withCV(CaptureSet.empty)
+
+  def checkTypeAbstraction(params: List[TypeBinder | CaptureBinder], checkBody: Context ?=> Result[Term], srcPos: SourcePos)(using Context): Result[Term] =
+    hopefully:
+      val ctx1 = ctx.extend(params)
+      val body1 = checkBody(using ctx1).!!
+      val bodyCV = body1.cv
+      val (existsLocalParams, outCV) = dropLocalParams(bodyCV.elems.toList, params.length)
+      if existsLocalParams then
+        sorry(TypeError.GeneralError("local capture parameters captured by the body of a the lambda"))
+      val outTerm = Term.TypeLambda(params, body1).withPos(srcPos)
+      val outType = Type.Capturing(Type.TypeArrow(params, body1.tpe), CaptureSet(outCV))
+      outTerm.withTpe(outType).withCV(CaptureSet.empty)
+
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType())(using Context): Result[Term] = 
     val result: Result[Term] = t match
       case Syntax.Term.Ident(name) => 
@@ -424,31 +447,17 @@ object TypeChecker:
       case Syntax.Term.If(cond, thenBranch, maybeElseBranch) =>
         checkIf(cond, thenBranch, maybeElseBranch, expected, t.pos)
       case Syntax.Term.Lambda(params, body) => 
-        checkTermParamList(params).flatMap: params =>
-          val params1 = params.map(instantiateBinderCaps)
-          val ctx1 = ctx.extend(params1)
-          checkTerm(body)(using ctx1).map: body1 =>
-            val t1 = Term.TermLambda(params, body1).withPosFrom(t)
-            val cv = body1.cv
-            val (_, cv1) = dropLocalParams(cv.elems.toList, params.length)
-            val tpe = Type.TermArrow(params, body1.tpe).withKind(TypeKind.Star)
-            val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
-            val lambdaCV = CaptureSet.empty  // values in Capybara have an empty cv
-            t1.withTpe(tpe1).withCV(lambdaCV)
+        hopefully:
+          val ps1 = checkTermParamList(params).!!
+          def checkBody(using Context): Result[Term] =
+            checkTerm(body)
+          checkTermAbstraction(ps1, checkBody, t.pos).!!
       case Syntax.Term.TypeLambda(params, body) =>
         hopefully:
           val params1 = checkTypeParamList(params).!!
-          val ctx1 = ctx.extend(params1)
-          val body1 = checkTerm(body)(using ctx1).!!
-          val t1 = Term.TypeLambda(params1, body1).withPosFrom(t)
-          val cv = body1.cv
-          val (existsLocalParams, cv1) = dropLocalParams(cv.elems.toList, params.length)
-          if existsLocalParams then
-            sorry(TypeError.GeneralError("local capture parameters captured by the body of a the lambda"))
-          val tpe = Type.TypeArrow(params1, body1.tpe).withKind(TypeKind.Star)
-          val tpe1 = Type.Capturing(tpe.stripCaptures, CaptureSet(cv1)).withKind(TypeKind.Star)
-          val lambdaCV = CaptureSet.empty  // values in Capybara have an empty cv
-          t1.withTpe(tpe1).withCV(lambdaCV)
+          def checkBody(using Context): Result[Term] =
+            checkTerm(body)
+          checkTypeAbstraction(params1, checkBody, t.pos).!!
       case Syntax.Term.Block(stmts) => 
         def avoidSelfType(tpe: Type, d: Syntax.Definition): Result[Type] =
           val approxType = Type.Capturing(tpe.stripCaptures, CaptureSet.universal)
@@ -906,55 +915,27 @@ object TypeChecker:
         val bd = TermBinder(name, binderType).withPos(d.pos)
         (bd.asInstanceOf[TermBinder], expr1)
     case Syntax.Definition.DefDef(name, _, paramss, resultType, expr) => 
-      def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[(Term, Option[CaptureSet])] = pss match
-        case Nil => 
-          //val env1 = CaptureEnv.empty(ctx.binders.length)
-          hopefully:
-            val expected1 = resultType match
+      hopefully:
+        def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[Term] = pss match
+          case Nil => 
+            val expectedBodyType = resultType match
               case None => Type.NoType()
               case Some(expected) => checkType(expected).!!
-            //println(s"checkTerm $expr with new env")
-            val expr1 = checkTerm(expr, expected = expected1).!!
-            val captureSet = expr1.cv
-            //println(s"capture set of def = $captureSet")
-            (expr1, Some(captureSet))
-        case (ps: Syntax.TermParamList) :: pss =>
-          checkTermParamList(ps.params).flatMap: params =>
-            val params1 = params.map: param =>
-              instantiateBinderCaps(param)
-            go(pss)(using ctx.extend(params1)).map: (body1, captureSet) =>
-              val tpe = Type.TermArrow(params, body1.tpe).withKind(TypeKind.Star)
-              val tpe1 = captureSet match
-                case None => tpe
-                case Some(cs) => 
-                  val (_, cs1) = dropLocalParams(cs.elems, params.length)
-                  Type.Capturing(tpe, CaptureSet(cs1))
-              (Term.TermLambda(params, body1).withPosFrom(d).withTpe(tpe1).withCV(CaptureSet.empty), None)
-        case (ps: Syntax.TypeParamList) :: pss =>
-          checkTypeParamList(ps.params).flatMap: params =>
-            go(pss)(using ctx.extend(params)).flatMap: (body1, captureSet) =>
-              val tpe = Type.TypeArrow(params, body1.tpe).withKind(TypeKind.Star)
-              val computeTpe1: Result[Type] = captureSet match
-                case None => Right(tpe)
-                case Some(cs) => 
-                  val (existsLocalParams, cs1) = dropLocalParams(cs.elems, params.length)
-                  if existsLocalParams then
-                    Left(TypeError.GeneralError("local capture parameters captured by the body of a the lambda"))
-                  else
-                    Right(Type.Capturing(tpe, CaptureSet(cs1)))
-              computeTpe1.map: tpe1 =>
-                (Term.TypeLambda(params, body1).withPosFrom(d).withTpe(tpe1).withCV(CaptureSet.empty), None)
-      go(paramss).flatMap: (expr1, captureSet) =>
-        captureSet match
-          case None =>
-            val bd = TermBinder(name, expr1.tpe).withPos(d.pos)
-            //println(s"final type = ${expr1.tpe}")
-            Right((bd.asInstanceOf[TermBinder], expr1))
-          case Some(cs) =>
-            val tpe1 = Type.Capturing(Type.TypeArrow(Nil, expr1.tpe), cs)
-            val expr2 = Term.TypeLambda(Nil, expr1).withPosFrom(d).withTpe(tpe1).withCV(CaptureSet.empty)
-            val bd = TermBinder(name, tpe1).withPos(d.pos)
-            Right((bd.asInstanceOf[TermBinder], expr2))
+            checkTerm(expr, expected = expectedBodyType)
+          case Syntax.TermParamList(params) :: pss => 
+            val params1 = checkTermParamList(params).!!
+            def checkBody(using Context): Result[Term] = go(pss)
+            checkTermAbstraction(params1, checkBody, srcPos = d.pos)
+          case Syntax.TypeParamList(params) :: pss =>
+            val params1 = checkTypeParamList(params).!!
+            def checkBody(using Context): Result[Term] = go(pss)
+            checkTypeAbstraction(params1, checkBody, srcPos = d.pos)
+        val pss1: List[Syntax.TermParamList | Syntax.TypeParamList] = paramss match
+          case Nil => List(Syntax.TypeParamList(Nil))
+          case pss => pss
+        val expr1 = go(pss1).!!
+        val bd = TermBinder(name, expr1.tpe).withPos(d.pos)
+        (bd.asInstanceOf[TermBinder], expr1)
 
   def extractDefType(d: Syntax.Definition.DefDef, requireExplictType: Boolean = true)(using Context): Result[Type] = 
     def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[Type] = pss match

@@ -1,6 +1,6 @@
 module {
   extension $ext0(?: array[i32]^{cap}) {
-    val show: (xs: array[i32]^{cap}) -> () ->{xs} Unit = 
+    val show: (xs: array[i32]^{cap}) ->{} () ->{xs} Unit = 
       (xs: array[i32]^{cap}) => {
         () => {
           extension($ext0).foreach(xs)((x: i32) => {
@@ -9,7 +9,7 @@ module {
           )
         }
       }
-    val foreach: (xs: array[i32]^{cap}) -> (op: (_: i32) ->{cap} Unit) ->{xs} Unit = 
+    val foreach: (xs: array[i32]^{cap}) ->{} (op: (_: i32) ->{cap} Unit) ->{xs} Unit = 
       (xs: array[i32]^{cap}) => {
         (op: (_: i32) ->{cap} Unit) => {
           val go: (cur: i32) ->{xs, op} Unit = 
