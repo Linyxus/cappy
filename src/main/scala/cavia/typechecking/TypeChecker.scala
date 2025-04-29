@@ -853,7 +853,7 @@ object TypeChecker:
     tm.apply(tpe)
 
   def substituteType(tpe: Type, targs: List[Type | CaptureSet], isParamType: Boolean = false)(using Context): Type =
-    val tm = TypeSubstitutionMap(targs, if isParamType then Variance.Contravariant else Variance.Covariant)
+    val tm = TypeSubstitutionMap(targs, startingVariance = if isParamType then Variance.Contravariant else Variance.Covariant)
     tm.apply(tpe)
 
   def substituteTypeInCaptureSet(cs: CaptureSet, targs: List[Type | CaptureSet], isParamType: Boolean = false)(using Context): CaptureSet =
@@ -1083,7 +1083,7 @@ object TypeChecker:
           hopefully:
             val ctx1 = ctx.addSymbols(syms).extend(extSym.info.typeParams)
             val methodInfos = extDefn.methods.map: method =>
-              val method1 = 
+              val method1 =
                 method.copy(paramss = Syntax.TermParamList(List(extDefn.selfArg)) :: method.paramss).withPosFrom(method)
               val (bd, expr) = checkDef(method1)(using ctx1).!!
               ExtensionMethod(method.name, bd.tpe, expr)
@@ -1112,11 +1112,12 @@ object TypeChecker:
               sym.tpe = defnType
             case (sym: ExtensionSymbol, extDefn: Syntax.Definition.ExtensionDef) =>
               val typeArgs = sym.info.typeParams
-              val selfArgBinder = checkTermParam(extDefn.selfArg)(using ctxWithClasses.extend(typeArgs)).!!
+              val ctx1 = ctxWithClasses.extend(typeArgs)
+              val selfArgBinder = checkTermParam(extDefn.selfArg)(using ctx1).!!
               val extMethods = extDefn.methods.map: defn =>
-                val rawMethodType = extractDefnType(defn)(using ctxWithClasses).!!
-                val extendedMethodType = Type.TermArrow(selfArgBinder :: Nil, rawMethodType)
-                ExtensionMethod(defn.name, extendedMethodType, body = null)
+                val defn1 = defn.copy(paramss = Syntax.TermParamList(List(extDefn.selfArg)) :: defn.paramss).withPosFrom(defn)
+                val methodType = extractDefnType(defn1)(using ctx1).!!
+                ExtensionMethod(defn1.name, methodType, body = null)
               sym.info = ExtensionInfo(typeArgs, selfArgBinder.tpe, extMethods)
             case _ =>
         // Typecheck extension definitions
@@ -1155,6 +1156,7 @@ object TypeChecker:
         if TypeComparer.checkSubtype(baseType, formal) then
           solveTypeVars()
           break(Some((sym, typeArgs)))
+        // SCOPE OF EXTENSION METHDOS ???
       case _ =>
     None
 

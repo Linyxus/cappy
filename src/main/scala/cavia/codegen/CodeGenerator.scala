@@ -8,11 +8,10 @@ import Wasm.*
 import typechecking.*
 import scala.collection.mutable
 import mutable.ArrayBuffer
-import cavia.core.ast.Expr.PrimitiveOp
-import cavia.core.ast.Expr.Definition
+import Expr.{PrimitiveOp, Definition, ArrayPrimitiveOp}
 import java.util.IdentityHashMap
 import scala.jdk.CollectionConverters._
-import cavia.core.ast.Expr.ArrayPrimitiveOp
+import reporting.trace
 
 object CodeGenerator:
   case class ClosureTypeInfo(funcTypeSym: Symbol, closTypeSym: Symbol)
@@ -35,8 +34,13 @@ object CodeGenerator:
 
   case class StructInfo(sym: Symbol, nameMap: Map[String, Symbol])
 
+  case class ExtensionInfo(methodMap: Map[String, MethodInfo])
+  case class MethodInfo(sym: Symbol, tpe: FuncType)
+
   /** Signature of a specialisation of a struct or a method. */
-  case class SpecSig(targs: List[ValType])
+  case class SpecSig(targs: List[ValType]):
+    def encodedName: String =
+      nameEncode(targs.map(_.show).mkString("_"))
 
   case class Context(
     funcs: ArrayBuffer[Func] = ArrayBuffer.empty,
@@ -52,6 +56,8 @@ object CodeGenerator:
     defInfos: mutable.Map[Expr.DefSymbol, DefInfo] = new IdentityHashMap[Expr.DefSymbol, DefInfo]().asScala,
     typeInfos: mutable.Map[Expr.StructSymbol, mutable.Map[SpecSig, StructInfo]] = 
       new IdentityHashMap[Expr.StructSymbol, mutable.Map[SpecSig, StructInfo]]().asScala,
+    extensionInfos: mutable.Map[Expr.ExtensionSymbol, mutable.Map[SpecSig, ExtensionInfo]] =
+      new IdentityHashMap[Expr.ExtensionSymbol, mutable.Map[SpecSig, ExtensionInfo]]().asScala,
     var startFunc: Option[Symbol] = None,
   ):
     def withLocalSym(binder: Expr.Binder, sym: Symbol): Context =
@@ -59,6 +65,9 @@ object CodeGenerator:
     
     def usingBinderInfos(binderInfos: List[BinderInfo]): Context =
       copy(binderInfos = binderInfos)
+
+    def withMoreBinderInfos(binderInfos: List[BinderInfo]): Context =
+      copy(binderInfos = binderInfos.reverse ++ this.binderInfos)
 
   def ctx(using ctx: Context): Context = ctx
 
@@ -210,20 +219,30 @@ object CodeGenerator:
   def nameEncode(name: String): String =
     name.replaceAll(" ", "_").filter(ch => ch != '(' && ch != ')')
 
+  def translateParamTypes(params: List[Expr.Binder.TermBinder])(using Context): List[ValType] =
+    params match
+      case Nil => Nil
+      case p :: ps => 
+        val paramType = translateType(p.tpe)
+        val ctx1 = ctx.withMoreBinderInfos(BinderInfo.Inaccessible(p) :: Nil)
+        paramType :: translateParamTypes(ps)(using ctx1)
+
   def computeFuncType(tpe: Expr.Type, isClosure: Boolean = true)(using Context): FuncType = tpe match
     case Expr.Type.TermArrow(params, result) =>
-      var paramTypes = params.map(binder => translateType(binder.tpe))
+      var paramTypes = translateParamTypes(params)
       if isClosure then
         // the first param is the closure pointer
         paramTypes = ValType.AnyRef :: paramTypes
-      FuncType(paramTypes, Some(translateType(result)))
-    case Expr.Type.Capturing(inner, _) => computeFuncType(inner)
+      val paramBinderInfos = params.map: binder =>
+        BinderInfo.Inaccessible(binder)
+      FuncType(paramTypes, Some(translateType(result)(using ctx.withMoreBinderInfos(paramBinderInfos))))
+    case Expr.Type.Capturing(inner, _) => computeFuncType(inner, isClosure)
     case _ => assert(false, s"Unsupported type for computing func type")
 
   def createFuncParams(params: List[Expr.Binder.TermBinder])(using Context): List[(Symbol, ValType)] =
-    params.map: binder =>
+    val paramTypes = translateParamTypes(params)
+    (params `zip` paramTypes).map: (binder, paramType) =>
       val paramName = binder.name
-      val paramType = translateType(binder.tpe)
       (Symbol.fresh(paramName), paramType)
   
   def newLocalsScope[R](op: Context ?=> R)(using Context): R =
@@ -269,30 +288,32 @@ object CodeGenerator:
     case _ => assert(false, s"Unsupported type: $tpe")
 
   /** What is the WASM type of the WASM representation of a value of this type? */
-  def translateType(tpe: Expr.Type)(using Context): ValType = tpe match
-    case Expr.Type.Base(Expr.BaseType.I64) => ValType.I64
-    case Expr.Type.Base(Expr.BaseType.I32) => ValType.I32
-    case Expr.Type.Base(Expr.BaseType.UnitType) => ValType.I32
-    case Expr.Type.Base(Expr.BaseType.BoolType) => ValType.I32
-    case Expr.Type.Capturing(inner, _) => translateType(inner)
-    case Expr.Type.TermArrow(params, result) =>
-      val funcType = computeFuncType(tpe)
-      val info = createClosureTypes(funcType)
-      ValType.TypedRef(info.closTypeSym)
-    case PrimArrayType(elemType) => 
-      val arrType = computeArrayType(tpe)
-      val arrSym = createArrayType(arrType)
-      ValType.TypedRef(arrSym)
-    case AppliedStructType(sym, targs) =>
-      val StructInfo(structSym, _) = createStructType(sym, targs)
-      ValType.TypedRef(structSym)
-    case Expr.Type.BinderRef(idx) =>
-      ctx.binderInfos(idx) match
-        case BinderInfo.Specialized(_, tpe) => tpe
-        case BinderInfo.Abstract(_) => ValType.AnyRef
-        case _ => assert(false, "This is absurd")
-    case Expr.Type.RefinedType(base, _) => translateType(base)
-    case _ => assert(false, s"Unsupported type: $tpe")
+  def translateType(tpe: Expr.Type)(using Context): ValType = //trace(s"translateType($tpe)"):
+    tpe.dealiasTypeVar match
+      case Expr.Type.Base(Expr.BaseType.I64) => ValType.I64
+      case Expr.Type.Base(Expr.BaseType.I32) => ValType.I32
+      case Expr.Type.Base(Expr.BaseType.UnitType) => ValType.I32
+      case Expr.Type.Base(Expr.BaseType.BoolType) => ValType.I32
+      case Expr.Type.Capturing(inner, _) => translateType(inner)
+      case Expr.Type.TermArrow(params, result) =>
+        val funcType = computeFuncType(tpe)
+        val info = createClosureTypes(funcType)
+        ValType.TypedRef(info.closTypeSym)
+      case PrimArrayType(elemType) => 
+        val arrType = computeArrayType(tpe)
+        val arrSym = createArrayType(arrType)
+        ValType.TypedRef(arrSym)
+      case AppliedStructType(sym, targs) =>
+        val StructInfo(structSym, _) = createStructType(sym, targs)
+        ValType.TypedRef(structSym)
+      case Expr.Type.BinderRef(idx) =>
+        //println(s"translateType: BinderRef($idx), binderInfos = ${ctx.binderInfos}")
+        ctx.binderInfos(idx) match
+          case BinderInfo.Specialized(_, tpe) => tpe
+          case BinderInfo.Abstract(_) => ValType.AnyRef
+          case info => assert(false, s"This is absurd, idx = $idx, binderInfos = ${ctx.binderInfos}, info = $info")
+      case Expr.Type.RefinedType(base, _) => translateType(base)
+      case _ => assert(false, s"Unsupported type: $tpe")
 
   def dropLocalBinders(xs: Set[Int], numLocals: Int): Set[Int] =
     xs.flatMap: idx =>
@@ -324,6 +345,7 @@ object CodeGenerator:
     case Term.StructInit(sym, _, args) => args.flatMap(freeLocalBinders).toSet
     case Term.If(cond, thenBranch, elseBranch) =>
       freeLocalBinders(cond) ++ freeLocalBinders(thenBranch) ++ freeLocalBinders(elseBranch)
+    case Term.ResolveExtension(sym, targs, field) => Set.empty
 
   def translateClosure(
     funType: Expr.Type,   // the type of the source function
@@ -346,7 +368,7 @@ object CodeGenerator:
       depVars.map: idx =>
         val binder = ctx.binderInfos(idx).binder.asInstanceOf[Expr.Binder.TermBinder]
         val sym = Symbol.fresh(binder.name)
-        val tpe = translateType(binder.tpe)
+        val tpe = translateType(binder.tpe.shift(idx + 1))
         (idx, (sym, tpe))
     val fields = 
       FieldType(Symbol.Function, ValType.TypedRef(closureInfo.funcTypeSym), mutable = false) :: depVars.map: idx =>
@@ -381,7 +403,10 @@ object CodeGenerator:
         Instruction.StructGet(exactClosureTypeSym, envMap(idx)._1),
         Instruction.LocalSet(localMap(idx))
       )
-    val workerFunParams = (selfParamSym -> ValType.AnyRef) :: createFuncParams(params)
+    val localCtx = selfBinder match
+      case Some(binder) => ctx.withLocalSym(binder, selfCastedSym)
+      case None => ctx
+    val workerFunParams = (selfParamSym -> ValType.AnyRef) :: createFuncParams(params)(using localCtx)
     val workerFunc: Wasm.Func =
       newLocalsScope:
         emitLocal(selfCastedSym, ValType.TypedRef(exactClosureTypeSym))
@@ -389,7 +414,10 @@ object CodeGenerator:
         val newBinderInfos: List[BinderInfo] = ctx.binderInfos.zipWithIndex.map: (binderInfo, idx) =>
           if depVarsSet `contains` idx then
             BinderInfo.Sym(binderInfo.binder, localMap(idx))
-          else BinderInfo.Inaccessible(binderInfo.binder)
+          else
+            binderInfo match
+              case i: (BinderInfo.Specialized | BinderInfo.Abstract) => i
+              case _ => BinderInfo.Inaccessible(binderInfo.binder)
         var ctx1 = ctx.usingBinderInfos(newBinderInfos)
         selfBinder match
           case Some(binder) =>
@@ -476,6 +504,13 @@ object CodeGenerator:
       val DefInfo.FuncDef(funcSym, _) = ctx.defInfos(sym): @unchecked
       val argInstrs = args.flatMap(genTerm)
       val callInstrs = List(Instruction.Call(funcSym))
+      argInstrs ++ callInstrs
+    case Term.Apply(Term.ResolveExtension(extSym, targs, field), args) =>
+      val ExtensionInfo(methodMap) = createExtensionInfo(extSym, targs)
+      val methodInfo = methodMap(field)
+      val methodSym = methodInfo.sym
+      val argInstrs = args.flatMap(genTerm)
+      val callInstrs = List(Instruction.Call(methodSym))
       argInstrs ++ callInstrs
     case Term.Apply(fun, args) =>
       val localSym = Symbol.fresh("fun")
@@ -569,7 +604,7 @@ object CodeGenerator:
         specMap += (specSig -> structInfo)
         structInfo
 
-  def genModuleFunction(funType: Expr.Type, funSymbol: Symbol, workerSymbol: Symbol, expr: Expr.Term)(using Context): Unit =
+  def genModuleFunction(funType: Expr.Type, funSymbol: Symbol, workerSymbol: Option[Symbol], expr: Expr.Term)(using Context): Unit = //trace(s"genModuleFunction($funType, $funSymbol, $workerSymbol, $expr)"):
     val Term.TermLambda(ps, body) = expr: @unchecked
     val funcType = computeFuncType(funType, isClosure = false)
     val workerType = computeFuncType(funType, isClosure = true)
@@ -581,7 +616,7 @@ object CodeGenerator:
       newLocalsScope:
         val binderInfos = (ps `zip` paramSymbols).map: (bd, sym) =>
           BinderInfo.Sym(bd, sym)
-        val ctx1 = ctx.usingBinderInfos(binderInfos.reverse)
+        val ctx1 = ctx.withMoreBinderInfos(binderInfos)
         val bodyInstrs = genTerm(body)(using ctx1)
         Func(
           funSymbol,
@@ -590,20 +625,53 @@ object CodeGenerator:
           locals = finalizeLocals,
           body = bodyInstrs,
         )
-    val workerFunc =
-      val getParamsInstrs =
-        workerParams.tail.map: (sym, _) =>
-          Instruction.LocalGet(sym)
-      val callFuncInstrs = List(Instruction.Call(funSymbol))
-      Func(
-        workerSymbol,
-        workerParams,
-        funcType.resultType,
-        locals = List(),
-        body = getParamsInstrs ++ callFuncInstrs
-      )
     emitFunc(func)
-    emitFunc(workerFunc)
+    workerSymbol match
+      case Some(workerSym) =>
+        val workerFunc =
+          val getParamsInstrs =
+            workerParams.tail.map: (sym, _) =>
+              Instruction.LocalGet(sym)
+          val callFuncInstrs = List(Instruction.Call(funSymbol))
+          Func(
+            workerSym,
+            workerParams,
+            funcType.resultType,
+            locals = Nil,
+            body = getParamsInstrs ++ callFuncInstrs
+          )
+        emitFunc(workerFunc)
+      case None =>
+
+  def createExtensionInfo(extSym: Expr.ExtensionSymbol, targs: List[Expr.Type | Expr.CaptureSet])(using Context): ExtensionInfo =
+    val specSig = translateTypeArgs(targs)
+    val specMap = ctx.extensionInfos.getOrElseUpdate(extSym, mutable.Map.empty)
+    specMap.get(specSig) match
+      case Some(info) => info
+      case None =>
+        val extInfo = extSym.info
+        val sigName = specSig.encodedName
+        val binderInfos = (extInfo.typeParams `zip` targs).map:
+          case (bd, tpe: Expr.Type) =>
+            BinderInfo.Specialized(bd, translateType(tpe))
+          case (bd, tpe: Expr.CaptureSet) =>
+            BinderInfo.Inaccessible(bd)
+        val ctx1 = ctx.usingBinderInfos(binderInfos.reverse)
+        // Create symbols
+        val methodSyms: List[Symbol] = extInfo.methods.map: method =>
+          val methodName = nameEncode(s"${extSym.name}$$$sigName$$${method.name}")
+          Symbol.fresh(methodName)
+        val methodInfos: List[MethodInfo] = (methodSyms `zip` extInfo.methods).map: (sym, method) =>
+          MethodInfo(sym, computeFuncType(method.tpe, isClosure = false)(using ctx1))
+        val methodMap = Map.from:
+          (extInfo.methods `zip` methodInfos).map: (m, i) =>
+            (m.name -> i)
+        // Put symbols into the context
+        specMap += (specSig -> ExtensionInfo(methodMap))
+        // Generate method definitions
+        (methodInfos `zip` extInfo.methods).foreach: (methodInfo, method) =>
+          genModuleFunction(method.tpe, methodInfo.sym, workerSymbol = None, expr = method.body)(using ctx1)
+        specMap(specSig)
 
   def isValidMain(d: Expr.Definition)(using Context): Boolean = d match
     case Definition.ValDef(sym, body) if sym.name == "main" =>
@@ -652,6 +720,8 @@ object CodeGenerator:
               ctx.defInfos += (sym -> DefInfo.GlobalDef(globalSym))
         case Definition.StructDef(sym) =>
           ctx.typeInfos += (sym -> mutable.Map.empty)
+        case Definition.ExtensionDef(sym) =>
+          ctx.extensionInfos += (sym -> mutable.Map.empty)
     // (2) emit func definitions
     m.defns.foreach: defn =>
       defn match
@@ -659,7 +729,7 @@ object CodeGenerator:
           body match
             case body: Term.TermLambda =>
               val DefInfo.FuncDef(funcSym, workerSym) = ctx.defInfos(sym): @unchecked
-              genModuleFunction(sym.tpe, funcSym, workerSym, body)
+              genModuleFunction(sym.tpe, funcSym, Some(workerSym), body)
             case _ =>
         case _ =>
     // (3) emit global definitions

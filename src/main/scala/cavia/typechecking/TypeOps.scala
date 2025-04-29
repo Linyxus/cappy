@@ -127,21 +127,16 @@ class TypeMap:
     case cs: CaptureSet => mapCaptureSet(cs)
 
 class ShiftType(amount: Int) extends TypeMap:
-  // override def mapCaptureRef(ref: CaptureRef): CaptureRef = ref match
-  //   case CaptureRef.Ref(Term.BinderRef(idx)) if idx >= localBinders.size =>
-  //     CaptureRef.Ref(Term.BinderRef(idx + amount)).maybeWithPosFrom(ref)
-  //   case ref => ref
+  override def mapBinderRef(ref: Type.BinderRef): Type =
+    if ref.idx >= localBinders.size then
+      Type.BinderRef(ref.idx + amount).like(ref)
+    else
+      ref
 
   override def mapVar(tp: Type.Var): Type = tp.ref match
     case Term.BinderRef(idx) if idx >= localBinders.size => 
       Type.Var(Term.BinderRef(idx + amount)).like(tp)
     case _ => tp
-
-  override def apply(tp: Type): Type =
-    tp match
-      case Type.BinderRef(idx) if idx >= localBinders.size =>
-        Type.BinderRef(idx + amount).like(tp)
-      case _ => mapOver(tp)
     
 extension (tpe: Type)
   def shift(amount: Int): Type =
@@ -409,7 +404,7 @@ class SubstitutionMap(args: List[Type], startingVariance: Variance = Variance.Co
     if ref.idx >= localBinders.size then
       val trueIdx = ref.idx - localBinders.size
       assert(trueIdx >= ctxArgs.size)
-      Type.BinderRef(trueIdx - ctxArgs.size).like(ref)
+      Type.BinderRef(ref.idx - ctxArgs.size).like(ref)
     else ref
 
 // class OpenTermBinder(tpe: Type, openingIdx: Int = 0, startingVariance: Variance = Variance.Covariant) extends TypeMap:
@@ -510,7 +505,8 @@ class TypeSubstitutionMap(targs: List[Type | CaptureSet], startingVariance: Vari
     if ref.idx >= localBinders.size then
       val trueIdx = ref.idx - localBinders.size
       if trueIdx < ctxArgs.size then
-        ctxArgs(trueIdx).asInstanceOf[Type]  // must be a type
+        val arg = ctxArgs(trueIdx).asInstanceOf[Type]  // must be a type
+        arg.shift(localBinders.size)
       else
         Type.BinderRef(ref.idx - ctxArgs.size).like(ref)
     else ref
