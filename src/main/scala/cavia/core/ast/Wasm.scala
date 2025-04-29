@@ -13,8 +13,8 @@ object Wasm:
       case ValType.I32 => "i32"
       case ValType.I64 => "i64"
       case ValType.TypedRef(sym, nullable) => 
-        val nullText = if nullable then " null " else ""
-        s"(ref ${nullText} ${sym.show})"
+        val nullText = if nullable then "null " else ""
+        s"(ref $nullText${sym.show})"
       case ValType.AnyRef => "anyref"
 
   enum Instruction:
@@ -148,6 +148,7 @@ object Wasm:
 
   sealed trait CompositeType:
     def show: String
+
   case class FuncType(paramTypes: List[ValType], resultType: Option[ValType]) extends CompositeType:
     def show: String =
       val paramStrs = paramTypes.map(p => s"(param ${p.show})")
