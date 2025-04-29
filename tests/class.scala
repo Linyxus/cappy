@@ -15,7 +15,7 @@ extension (self: Vec^)
   def grow(): Unit =
     val newPoolSize = self.pool.size + CHUNK_SIZE
     val newPool = newArray(newPoolSize, 0)
-    //self.pool = newPool  // error
+    self.pool = sorry()
 
 def main(): Unit =
   ()

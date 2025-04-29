@@ -1,16 +1,17 @@
 package cavia
 package codegen
 
-import core.*
-import ast.{Expr, Wasm}
-import cavia.core.ast.Expr.Term
-import Wasm.*
-import typechecking.*
-import scala.collection.mutable
-import mutable.ArrayBuffer
-import Expr.{PrimitiveOp, Definition, ArrayPrimitiveOp}
 import java.util.IdentityHashMap
 import scala.jdk.CollectionConverters._
+import scala.collection.mutable
+import mutable.ArrayBuffer
+
+import core.*
+import ast.{Expr, Wasm}
+import Expr.Term
+import Wasm.*
+import typechecking.*
+import Expr.{PrimitiveOp, Definition, ArrayPrimitiveOp}
 import reporting.trace
 
 object CodeGenerator:

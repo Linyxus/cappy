@@ -1,12 +1,11 @@
 package cavia
 package typechecking
 
+import scala.collection.mutable.ArrayBuffer
+import scala.util.boundary, boundary.break
 import core.*
 import ast.*
-import scala.collection.mutable.ArrayBuffer
-import cavia.core.ast.Syntax.PrefixOp
 import reporting.trace
-import scala.util.boundary, scala.util.boundary.break
 
 object TypeChecker:
   import Expr.*
@@ -736,13 +735,13 @@ object TypeChecker:
 
   def checkPrefix(op: Syntax.PrefixOp, term: Syntax.Term, expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     op match
-      case PrefixOp.Neg =>
+      case Syntax.PrefixOp.Neg =>
         val primOp = expected match
           case Type.Base(BaseType.I32) => PrimitiveOp.I32Neg
           case Type.Base(BaseType.I64) => PrimitiveOp.I64Neg
           case _ => PrimitiveOp.I32Neg
         checkPrimOp(primOp, List(term), expected, srcPos)
-      case PrefixOp.Not =>
+      case Syntax.PrefixOp.Not =>
         val primOp = PrimitiveOp.BoolNot
         checkPrimOp(primOp, List(term), expected, srcPos)
 
