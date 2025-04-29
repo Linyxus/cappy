@@ -1,0 +1,4 @@
+4 |   def foo: Ref^ = x  // error
+  |                   ^
+
+    Treating capabilities {x} as fresh in the result type but they come from the outside

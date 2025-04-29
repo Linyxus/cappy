@@ -1,0 +1,4 @@
+4 |   def foo(x: Ref^): Ref^ = x  // error
+  |                            ^
+
+    Treating capabilities {x} as fresh in the result type but they are not fresh
