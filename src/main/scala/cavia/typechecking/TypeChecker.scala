@@ -14,7 +14,7 @@ object TypeChecker:
   import Inference.*
 
   /** Type checking context. */
-  case class Context(binders: List[Binder], symbols: List[Symbol], inferenceState: InferenceState):
+  case class Context(binders: List[Binder], symbols: List[Symbol], inferenceState: InferenceState, freshLevel: Int = 0):
     /** Extend the context with a list of binders. */
     def extend(bds: List[Binder]): Context =
       if bds.isEmpty then this
@@ -39,8 +39,11 @@ object TypeChecker:
     def newInferenceScope: Context =
       copy(inferenceState = InferenceState.empty)
 
+    def newFreshLevel: Context =
+      copy(freshLevel = freshLevel + 1)
+
   object Context:
-    def empty: Context = Context(Nil, Nil, InferenceState.empty)
+    def empty: Context = Context(Nil, Nil, InferenceState.empty, 0)
 
   enum TypeError extends Positioned:
     case UnboundVariable(name: String, addenda: String = "")
@@ -314,8 +317,8 @@ object TypeChecker:
           sorry(TypeError.GeneralError(s"Type argument number mismatch: expected ${formals.length}, but got ${targs.length}").withPos(srcPos))
       go(targs, formalTypes, Nil)
 
-  def instantiateCaps(tpe: Type, isFresh: Boolean, isParam: Boolean)(using Context): Type =
-    val curLevel = if isParam then ctx.binders.size + 1 else ctx.binders.size
+  def instantiateCaps(tpe: Type, isFresh: Boolean)(using Context): Type =
+    val curLevel = ctx.freshLevel
     val capKind = if isFresh then CapKind.Fresh(curLevel) else CapKind.Sep(curLevel)
     val tm1 = CapInstantiation(() => CaptureRef.makeCapInst(capKind, fromInst = None))
     val tpe1 = tm1.apply(tpe)
@@ -341,7 +344,7 @@ object TypeChecker:
     else tpe1.refined(fieldInfos)
 
   def instantiateBinderCaps(binder: TermBinder)(using Context): TermBinder =
-    val tpe1 = instantiateCaps(binder.tpe, isFresh = false, isParam = true)
+    val tpe1 = instantiateCaps(binder.tpe, isFresh = false)
     val binder1 = TermBinder(binder.name, tpe1).maybeWithPosFrom(binder).asInstanceOf[TermBinder]
     binder1
 
@@ -391,36 +394,41 @@ object TypeChecker:
               sorry(TypeError.GeneralError(s"A local `cap` instance is leaked into the body of a lambda").withPos(srcPos))
             true
           case _ => true
-      
 
+  def inNewFreshLevel[T](body: Context ?=> T)(using Context): T =
+    val nowCtx = ctx.newFreshLevel
+    body(using nowCtx)
+      
   def checkTermAbstraction(params: List[TermBinder], checkBody: Context ?=> Result[Term], srcPos: SourcePos)(using Context): Result[Term] = 
-    hopefully:
-      val params1 = params.map(instantiateBinderCaps)
-      val ctx1 = ctx.extend(params1)
-      val body1 = checkBody(using ctx1).!!
-      val bodyCV = body1.cv
-      if bodyCV.elems.contains(CaptureRef.CAP()) then
-        sorry(TypeError.GeneralError("A `cap` that is not nameable is captured by the body of this lambda; try naming `cap`s explicitly with capture parameters").withPos(srcPos))
-      val (_, outCV) = dropLocalParams(bodyCV.elems.toList, params.length)
-      val outCV1 = dropLocalFreshCaps(outCV, srcPos).!!
-      val outTerm = Term.TermLambda(params, body1).withPos(srcPos)
-      val outType = Type.Capturing(Type.TermArrow(params, body1.tpe), CaptureSet(outCV1))
-      outTerm.withTpe(outType).withCV(CaptureSet.empty)
+    inNewFreshLevel:
+      hopefully:
+        val params1 = params.map(instantiateBinderCaps)
+        val ctx1 = ctx.extend(params1)
+        val body1 = checkBody(using ctx1).!!
+        val bodyCV = body1.cv
+        if bodyCV.elems.contains(CaptureRef.CAP()) then
+          sorry(TypeError.GeneralError("A `cap` that is not nameable is captured by the body of this lambda; try naming `cap`s explicitly with capture parameters").withPos(srcPos))
+        val (_, outCV) = dropLocalParams(bodyCV.elems.toList, params.length)
+        val outCV1 = dropLocalFreshCaps(outCV, srcPos).!!
+        val outTerm = Term.TermLambda(params, body1).withPos(srcPos)
+        val outType = Type.Capturing(Type.TermArrow(params, body1.tpe), CaptureSet(outCV1))
+        outTerm.withTpe(outType).withCV(CaptureSet.empty)
 
   def checkTypeAbstraction(params: List[TypeBinder | CaptureBinder], checkBody: Context ?=> Result[Term], srcPos: SourcePos)(using Context): Result[Term] =
-    hopefully:
-      val ctx1 = ctx.extend(params)
-      val body1 = checkBody(using ctx1).!!
-      val bodyCV = body1.cv
-      if bodyCV.elems.contains(CaptureRef.CAP()) then
-        sorry(TypeError.GeneralError("A `cap` that is not nameable is captured by the body of this lambda; try naming `cap`s explicitly with capture parameters").withPos(srcPos))
-      val (existsLocalParams, outCV) = dropLocalParams(bodyCV.elems.toList, params.length)
-      if existsLocalParams then
-        sorry(TypeError.GeneralError("local capture parameters captured by the body of a the lambda"))
-      val outCV1 = dropLocalFreshCaps(outCV, srcPos).!!
-      val outTerm = Term.TypeLambda(params, body1).withPos(srcPos)
-      val outType = Type.Capturing(Type.TypeArrow(params, body1.tpe), CaptureSet(outCV1))
-      outTerm.withTpe(outType).withCV(CaptureSet.empty)
+    inNewFreshLevel:
+      hopefully:
+        val ctx1 = ctx.extend(params)
+        val body1 = checkBody(using ctx1).!!
+        val bodyCV = body1.cv
+        if bodyCV.elems.contains(CaptureRef.CAP()) then
+          sorry(TypeError.GeneralError("A `cap` that is not nameable is captured by the body of this lambda; try naming `cap`s explicitly with capture parameters").withPos(srcPos))
+        val (existsLocalParams, outCV) = dropLocalParams(bodyCV.elems.toList, params.length)
+        if existsLocalParams then
+          sorry(TypeError.GeneralError("local capture parameters captured by the body of a the lambda"))
+        val outCV1 = dropLocalFreshCaps(outCV, srcPos).!!
+        val outTerm = Term.TypeLambda(params, body1).withPos(srcPos)
+        val outType = Type.Capturing(Type.TypeArrow(params, body1.tpe), CaptureSet(outCV1))
+        outTerm.withTpe(outType).withCV(CaptureSet.empty)
 
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType())(using Context): Result[Term] = 
     val result: Result[Term] = t match
@@ -774,7 +782,7 @@ object TypeChecker:
   /** Instantiate fresh capabilities in the result of a function apply. */
   def instantiateFresh(t: Term)(using Context): Term =
     val tpe = t.tpe
-    val tpe1 = instantiateCaps(tpe, isFresh = true, isParam = false)
+    val tpe1 = instantiateCaps(tpe, isFresh = true)
     val t1 = t.withTpe(tpe1)
     t1
 
@@ -931,7 +939,30 @@ object TypeChecker:
             val expectedBodyType = resultType match
               case None => Type.NoType()
               case Some(expected) => checkType(expected).!!
-            val outTerm = checkTerm(expr, expected = expectedBodyType)
+            val tm = UniversalConversion()
+            val expected1 = tm.apply(expectedBodyType)
+            val outTerm = checkTerm(expr, expected = expected1)
+            val localSets = tm.createdUniversals
+            val css = localSets.map(_.solve())
+            // Perform separation checking
+            for i <- 0 until css.size do
+              for j <- i + 1 until css.size do
+                val ci = css(i)
+                val cj = css(j)
+                if !checkSeparation(ci, cj) then
+                  sorry(TypeError.GeneralError(s"${ci.show} and ${cj.show} consumes the same capability twice"))
+            // Check the level of fresh caps
+            val curLevel = ctx.freshLevel
+            css.foreach: cs =>
+              val pks = computePeak(cs)
+              pks.elems.foreach: cref =>
+                cref match
+                  case CaptureRef.CapInst(capId, CapKind.Fresh(level), fromInst) =>
+                    if level < curLevel then
+                      sorry(TypeError.GeneralError(s"Treating capabilities ${cs.show} as fresh in the result type but they come from the outside").withPos(expr.pos))
+                  case CaptureRef.CapInst(capId, CapKind.Sep(level), fromInst) =>
+                    sorry(TypeError.GeneralError(s"Treating capabilities ${cs.show} as fresh in the result type but they are not fresh").withPos(expr.pos))
+                  case _ =>
             outTerm.foreach: t =>
               if expectedBodyType.exists then
                 t.setTpe(expectedBodyType)
