@@ -151,7 +151,6 @@ object TypeChecker:
 
   def computePeak(set: CaptureSet)(using Context): CaptureSet =
     def goRef(ref: CaptureRef): Set[CaptureRef] = 
-      //println(s"goRef $ref")
       ref match
         case CaptureRef.Ref(Type.Var(Term.BinderRef(idx))) =>
           getBinder(idx) match
@@ -169,7 +168,6 @@ object TypeChecker:
         case CaptureRef.CAP() => Set(ref)
         case CaptureRef.CapInst(_, _) => Set(ref)
     def goRefs(refs: List[CaptureRef]): Set[CaptureRef] =
-      //println(s"goRefs $refs")
       refs.flatMap(goRef).toSet
     val elems = goRefs(set.elems)
     CaptureSet(elems.toList)
@@ -190,8 +188,6 @@ object TypeChecker:
         case (CaptureRef.CapInst(id1, from1), CaptureRef.CapInst(id2, from2)) => from1 == Some(id2)
         case _ => false
     val result = ref1 != ref2 && !derivesFrom(ref1, ref2) && !derivesFrom(ref2, ref1)
-    // if !result then
-    //   println(s"checkSeparation: $ref1 and $ref2 overlaps")
     result
 
   def checkTypeArg(targ: (Syntax.Type | Syntax.CaptureSet))(using Context): Result[Type | CaptureSet] = targ match
@@ -522,7 +518,7 @@ object TypeChecker:
                 // typecheck the body
                 val bodyExpr = go(ds)(using ctx.extend(bd1 :: Nil)).!!
                 // drop local cap instances from the cv of the body
-                //dropLocalCapInsts(bd1.localCapInsts)
+                // TODO: this is clearly wrong
                 bodyExpr.withCV:
                   val oldCV = bodyExpr.cv
                   val newCV = oldCV.elems.filter: cref =>
@@ -570,10 +566,6 @@ object TypeChecker:
               val resultType1 = substituteType(resultType, typeArgs)
             //println(s"checkTypeApply $resultType --> $resultType1, typeArgs = $typeArgs")
               val resultTerm = Term.TypeApply(term1, typeArgs).withPosFrom(t).withTpe(resultType1)
-              // term1 match
-              //   case _: VarRef =>
-              //   case _ =>
-              //     markFree(funTpe.captureSet, t.pos)
               resultTerm.withCVFrom(term1)
               term1 match
                 case _: VarRef =>
@@ -591,7 +583,6 @@ object TypeChecker:
 
     result.flatMap: t1 =>
       if !expected.exists || TypeComparer.checkSubtype(t1.tpe, expected) then
-        //val t2 = if expected.exists then t1.withTpe(expected) else t1
         Right(t1)
       else 
         Left(TypeError.TypeMismatch(expected.show, t1.tpe.show).withPos(t.pos))
@@ -745,12 +736,6 @@ object TypeChecker:
               //println(s"checkArg $arg, expected = $formal1 (from $formal)")
               val arg1 = checkTerm(arg, expected = formal2).!!
               val css = localSets.map(_.solve())
-              // val xs1 = 
-              //   if isDependent then
-              //     xs.zipWithIndex.map:
-              //       case ((arg, formal), idx) =>
-              //         (arg, substitute(formal, arg1, idx, isParamType = true).!!)
-              // else xs
               go(xs, arg1 :: acc, css ++ captureSetAcc)
           val (args1, outType, css) = go(args `zip` (formals.map(_.tpe)), Nil, Nil)
           // perform separation check
@@ -771,11 +756,6 @@ object TypeChecker:
         case Type.TermArrow(formals, resultType) =>
           val (args1, outType) = checkFunctionApply(funType, args, srcPos).!!
           val resultTerm = Term.Apply(fun1, args1).withPos(srcPos).withTpe(outType)
-          // fun1 match
-          //   case _: VarRef =>
-          //     // Skip, since it will already be marked
-          //   case _ =>
-          //     markFree(fun1.tpe.captureSet, fun.pos)
           resultTerm.withCVFrom(fun1 :: args1*)
           fun1 match
             case _: VarRef =>
@@ -1153,7 +1133,7 @@ object TypeChecker:
     go(tpe)
 
   def allFieldNames(tp: Type)(using Context): List[String] = tp match
-    //case Type.BinderRef(idx) => allFieldNames(getBinder(idx).asInstanceOf[TypeBinder].bound)
+    // case Type.BinderRef(idx) => allFieldNames(getBinder(idx).asInstanceOf[TypeBinder].bound) // TODO: fix this case
     case Type.Capturing(inner, captureSet) => allFieldNames(inner)
     case AppliedStructType(classSym, targs) => 
       val fieldNames = classSym.info.fields.map(_.name)
