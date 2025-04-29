@@ -363,8 +363,8 @@ object Parsers:
   def typeIdentP: Parser[Type] = tokenP[Token.IDENT].map(t => Type.Ident(t.name)).positioned
 
   def appliedTypeP: Parser[Type] =
-    val paramsP = lazyP:
-      typeP.sepBy1(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
+    val paramsP: Parser[List[Type | CaptureSet]] = lazyP:
+      (captureSetP `or` typeP: Parser[Type | CaptureSet]).sepBy1(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
     val p = (typeAtomP, paramsP.tryIt).p.map:
       case (tycon, Some(params)) => Type.AppliedType(tycon, params)
       case (tycon, None) => tycon

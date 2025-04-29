@@ -4,7 +4,4 @@ def main(): Unit =
   val t1 = () => () => a
   def t2 = 1
   def t3 = a
-  def t4[T](x: T): T =
-    a
-    x
   ()

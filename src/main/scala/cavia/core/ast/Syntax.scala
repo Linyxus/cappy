@@ -65,5 +65,5 @@ object Syntax:
     case TypeArrow(params: List[TypeParam | CaptureParam], result: Type)
     //case CaptureArrow(params: List[CaptureParam], result: Type)
     case Capturing(inner: Type, captureSet: CaptureSet)
-    case AppliedType(tycon: Type, args: List[Type])
+    case AppliedType(tycon: Type, args: List[Type | CaptureSet])
   import Type.*

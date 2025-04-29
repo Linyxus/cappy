@@ -26,3 +26,4 @@ def main(): Unit =
   val arr1 = arr.clone()
   arr1.foreach((x: i32) => #i32println(x))
   ()
+

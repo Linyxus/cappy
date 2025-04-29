@@ -243,7 +243,10 @@ object TypeChecker:
           case TypeKind.Arrow(arity, resKind) =>
             if arity != args.length then
               sorry(TypeError.GeneralError(s"Number of type arguments mismatch: expected $arity, but got ${args.length}").withPos(tpe.pos))
-            val targs1 = args.map(arg => checkType(arg).!!)
+            val targs1: List[Type | CaptureSet] = args.map: arg =>
+              arg match
+                case arg: Syntax.Type => checkType(arg).!!
+                case arg: Syntax.CaptureSet => checkCaptureSet(arg).!!
             Type.AppliedType(tycon1, targs1).maybeWithPosFrom(tpe).withKind(resKind)
           case _ => sorry(TypeError.GeneralError("This is not a type constructor").withPos(tycon.pos))
 
@@ -384,6 +387,8 @@ object TypeChecker:
       val ctx1 = ctx.extend(params1)
       val body1 = checkBody(using ctx1).!!
       val bodyCV = body1.cv
+      if bodyCV.elems.contains(CaptureRef.CAP()) then
+        sorry(TypeError.GeneralError("A `cap` that is not nameable is captured by the body of this lambda; try naming `cap`s explicitly with capture parameters").withPos(srcPos))
       val (_, outCV) = dropLocalParams(bodyCV.elems.toList, params.length)
       val outTerm = Term.TermLambda(params, body1).withPos(srcPos)
       val outType = Type.Capturing(Type.TermArrow(params, body1.tpe), CaptureSet(outCV))
@@ -394,6 +399,8 @@ object TypeChecker:
       val ctx1 = ctx.extend(params)
       val body1 = checkBody(using ctx1).!!
       val bodyCV = body1.cv
+      if bodyCV.elems.contains(CaptureRef.CAP()) then
+        sorry(TypeError.GeneralError("A `cap` that is not nameable is captured by the body of this lambda; try naming `cap`s explicitly with capture parameters").withPos(srcPos))
       val (existsLocalParams, outCV) = dropLocalParams(bodyCV.elems.toList, params.length)
       if existsLocalParams then
         sorry(TypeError.GeneralError("local capture parameters captured by the body of a the lambda"))
