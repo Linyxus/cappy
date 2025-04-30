@@ -50,6 +50,8 @@ def debug(): Unit =
 def main(): Unit =
   val ptr1 = alloc(256)
   val ptr2 = alloc(32)
+  val ptr3 = alloc(1024)
   free(ptr1)
+  free(ptr2)
   debug()
 
