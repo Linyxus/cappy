@@ -61,6 +61,7 @@ object TypeChecker:
     case TypeMismatch(expected: String, actual: String)
     case LeakingLocalBinder(tp: String)
     case SeparationError(cs1: EntityWithProvenance, cs2: EntityWithProvenance)
+    case ConsumedError(cs: String, consumedPos: Option[SourcePos])
     case GeneralError(msg: String)
 
     def show: String = this match
@@ -69,6 +70,7 @@ object TypeChecker:
       case LeakingLocalBinder(tp) => s"Leaking local binder: $tp"
       case SeparationError(cs1, cs2) => s"Separation error: $cs1 and $cs2 are not separated"
       case GeneralError(msg) => msg
+      case ConsumedError(cs, consumedPos) => s"This uses a consumed capability: $cs"
 
     def asMessage: Message = this match
       case SeparationError(entity1, entity2) =>
@@ -77,6 +79,12 @@ object TypeChecker:
           MessagePart(List(s"${entity1.entity} comes from ${entity1.provenance}"), entity1.provenancePos),
           MessagePart(List(s"and ${entity2.entity} comes from ${entity2.provenance}"), entity2.provenancePos),
         )
+        Message(parts)
+      case ConsumedError(cs, consumedPos) =>
+        val parts = List(
+          MessagePart(List(s"This uses a consumed capability $cs"), pos),
+        ) ++ consumedPos.map: pos =>
+          MessagePart(List("... which was consumed here"), pos)
         Message(parts)
       case _ => Message.simple(show, pos)
     
@@ -492,8 +500,14 @@ object TypeChecker:
         hopefully:
           val outTerm = checkIdent(t).!!
           val cv = outTerm.cv
-          if !checkSeparation(cv, ctx.consumedPeaks) then
-            sorry(TypeError.GeneralError(s"This uses a consumed capability").withPos(t.pos))
+          // println("----")
+          // ctx.consumedPeaks.elems.foreach: cref =>
+          //   println(s"consumed $cref, hasPos = ${cref.hasPos}")
+          // println("----")
+          ctx.consumedPeaks.elems.foreach: cref =>
+            if !checkSeparation(cv, CaptureSet(cref :: Nil)) then
+              val consumedPos = if cref.hasPos then Some(cref.pos) else None
+              sorry(TypeError.ConsumedError(cv.show, consumedPos).withPos(t.pos))
           outTerm
       case Syntax.Term.StrLit(value) => 
         Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType).withCV(CaptureSet.empty))
@@ -802,12 +816,16 @@ object TypeChecker:
       consumedSet
 
   def consumedPeaks(cv: CaptureSet)(using Context): CaptureSet =
-    val pks = computePeak(cv)
-    val elems1 = pks.elems.filter: cref =>
+    val pkElems = cv.elems.flatMap: cref =>
+      val pks = computePeak(CaptureSet(cref :: Nil)).elems
+      pks.foreach: pk =>
+        pk.maybeWithPosFrom(cref)
+      pks
+    val pkElems1 = pkElems.filter: cref =>
       cref match
         case QualifiedRef(AccessMode.Consume(), core) => true
         case _ => false
-    CaptureSet(elems1)
+    CaptureSet(pkElems1)
 
   /** Check a function apply.
    * Returns the arguments, the result type, and the consumed capabilities in this apply.
@@ -848,6 +866,8 @@ object TypeChecker:
                 sorry(TypeError.SeparationError(hint1, hint2).withPos(srcPos))
           val toConsume = css.filter(_._1).map(_._2).reduceLeftOption(_ ++ _).getOrElse(CaptureSet.empty)
           val consumedSet = tryConsume(toConsume, srcPos).!!
+          consumedSet.elems.foreach: cref =>
+            cref.setPos(srcPos)
           (args1, outType, consumedSet)
         case _ => sorry(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(srcPos))
 
@@ -865,7 +885,6 @@ object TypeChecker:
       funType.stripCaptures match
         case Type.TermArrow(formals, resultType) =>
           val (args1, outType, consumedSet) = checkFunctionApply(funType, args, srcPos).!!
-          //println(s"consumed set = ${consumedSet.show}")
           val resultTerm = Term.Apply(fun1, args1).withPos(srcPos).withTpe(outType)
           resultTerm.withCVFrom(fun1 :: args1*).withMoreCV(consumedSet)
           fun1 match

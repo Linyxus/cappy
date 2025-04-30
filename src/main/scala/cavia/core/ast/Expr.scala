@@ -109,7 +109,7 @@ object Expr:
       case _ => qualifyUnchecked(mode)
 
     def qualifyUnchecked(mode: Syntax.AccessMode): CaptureSet =
-      val elems1 = elems.map(ref => QualifiedRef(mode, ref.core))
+      val elems1 = elems.map(ref => QualifiedRef(mode, ref.core).maybeWithPosFrom(ref))
       Const(elems1)
 
   object CaptureSet:
