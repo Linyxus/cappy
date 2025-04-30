@@ -262,6 +262,7 @@ object Expr:
   // marker trait for primitive ops that are related to arrays
   trait ArrayPrimitiveOp
 
+  /** Language primitive operations */
   enum PrimitiveOp extends Positioned:
     case I32Add
     case I32Mul
@@ -294,11 +295,14 @@ object Expr:
     case BoolOr
     case I32Neg
     case I64Neg
+    /** Setting a field of a struct */
     case StructSet
+    /** Array ops */
     case ArrayNew extends PrimitiveOp, ArrayPrimitiveOp
     case ArraySet extends PrimitiveOp, ArrayPrimitiveOp
     case ArrayGet extends PrimitiveOp, ArrayPrimitiveOp
     case ArrayLen extends PrimitiveOp, ArrayPrimitiveOp
+    /** A primitive in the very virtue of Lean */
     case Sorry
 
     override def toString: String = this match
