@@ -22,6 +22,7 @@ class WasmPrinter extends IndentedPrinter:
     case i: ImportFunc => printImportFunc(i)
     case g: Global => printGlobal(g)
     case s: Start => printStart(s)
+    case m: Memory => printMemory(m)
 
   def printInstruction(instruction: Instruction): Unit =
     instruction.showIfSimple match
@@ -77,6 +78,9 @@ class WasmPrinter extends IndentedPrinter:
 
   def printTypeDef(t: TypeDef): Unit =
     print(s"(type ${t.ident.show} ${t.tpe.show})")
+
+  def printMemory(m: Memory): Unit =
+    print(s"(memory ${m.ident.show} ${m.size})")
 
   def printElemDeclare(e: ElemDeclare): Unit =
     print(s"(elem declare ${e.kind.show} ${e.sym.show})")

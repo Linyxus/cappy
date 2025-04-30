@@ -46,6 +46,7 @@ object CodeGenerator:
   case class Context(
     funcs: ArrayBuffer[Func] = ArrayBuffer.empty,
     globals: ArrayBuffer[Global] = ArrayBuffer.empty,
+    memories: ArrayBuffer[Memory] = ArrayBuffer.empty,
     exports: ArrayBuffer[Export] = ArrayBuffer.empty,
     imports: ArrayBuffer[ImportFunc] = ArrayBuffer.empty,
     locals: ArrayBuffer[(Symbol, ValType)] = ArrayBuffer.empty,
@@ -78,6 +79,9 @@ object CodeGenerator:
   def emitExport(e: Export)(using Context): Unit =
     ctx.exports += e
 
+  def emitMemory(m: Memory)(using Context): Unit =
+    ctx.memories += m
+
   def emitGlobal(g: Global)(using Context): Unit =
     ctx.globals += g
 
@@ -101,6 +105,25 @@ object CodeGenerator:
     val result = ctx.locals.toList
     ctx.locals.clear()
     result
+
+  def translateMemoryOp(op: Expr.ArrayPrimitiveOp, args: List[Expr.Term])(using Context): List[Instruction] =
+    op match
+      case PrimitiveOp.ArrayGet => 
+        val memSym :: idx :: Nil = args: @unchecked
+        val idxInstrs = genTerm(idx)
+        val loadInstrs = List(Instruction.I32Load(Symbol.Memory))
+        idxInstrs ++ loadInstrs
+      case PrimitiveOp.ArraySet => 
+        val memSym :: idx :: value :: Nil = args: @unchecked
+        val idxInstrs = genTerm(idx)
+        val valueInstrs = genTerm(value)
+        val storeInstrs = List(Instruction.I32Store(Symbol.Memory))
+        val unitInstrs = List(Instruction.I32Const(0))
+        idxInstrs ++ valueInstrs ++ storeInstrs ++ unitInstrs
+      case PrimitiveOp.ArrayLen => 
+        val sizeInstrs = List(Instruction.MemorySize(Symbol.Memory))
+        sizeInstrs
+      case _ => assert(false, "Unsupported memory operation")
 
   def translateArrayPrimOp(op: Expr.ArrayPrimitiveOp, tpe: Expr.Type, targs: List[Expr.Type], args: List[Expr.Term])(using Context): List[Instruction] =
     op match
@@ -461,7 +484,11 @@ object CodeGenerator:
     case Term.UnitLit() => List(Instruction.I32Const(0))
     case Term.BoolLit(value) => if value then List(Instruction.I32Const(1)) else List(Instruction.I32Const(0))
     case Term.PrimOp(arrayOp: Expr.ArrayPrimitiveOp, targs, args) =>
-      translateArrayPrimOp(arrayOp, t.tpe, targs, args)
+      args match
+        case Term.SymbolRef(sym) :: _ if sym eq Expr.Definitions.MemorySymbol => 
+          translateMemoryOp(arrayOp, args)
+        case _ =>
+          translateArrayPrimOp(arrayOp, t.tpe, targs, args)
     case Term.PrimOp(op, Nil, args) => translateSimplePrimOp(args, op)
     case Term.If(cond, thenBranch, elseBranch) =>
       val resultType = translateType(t.tpe)
@@ -697,13 +724,18 @@ object CodeGenerator:
     emitImportFunc(ImportFunc("", "", Symbol.I32Println, I32PrintlnType))
     emitImportFunc(ImportFunc("", "", Symbol.I32Read, I32ReadType))
 
+  def emitDefaultMemory()(using Context): Unit =
+    val memory = Memory(Symbol.Memory, 1)
+    emitMemory(memory)
+
   def genModule(m: Expr.Module)(using Context): Unit =
     val mainSym = m.defns.find(isValidMain) match
       case Some(Definition.ValDef(sym, _)) => sym
       case Some(_) => assert(false, "Invalid definition")
       case None => assert(false, s"No valid main function in module")
-    // First of all, emit imports
+    // First of all, emit imports and default memory
     emitDefaultImports()
+    emitDefaultMemory()
     // (1) create symbols for all the definitions
     //   for struct symbols, we create the type as well
     m.defns.foreach: defn =>
@@ -783,6 +815,7 @@ object CodeGenerator:
     Module(
       ctx.declares.toList ++ 
         ctx.imports.toList ++ 
+        ctx.memories.toList ++
         ctx.types.toList ++ 
         ctx.globals.toList ++
         ctx.funcs.toList ++ 

@@ -439,6 +439,8 @@ object Expr:
     def arrayType(elemType: Type): Type =
       Type.AppliedType(arrayConstructorType, List(elemType)).withKind(TypeKind.Star)
 
+    val MemorySymbol = DefSymbol("WASM_MEMORY", arrayType(i32Type), Module(Nil))
+
   enum Variance:
     case Covariant
     case Contravariant

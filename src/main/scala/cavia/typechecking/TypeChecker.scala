@@ -77,8 +77,14 @@ object TypeChecker:
     ctx.binders.zipWithIndex.find((binder, _) => binder.name == name).map: (bd, idx) =>
       (bd.shift(idx + 1), idx)
 
+  def findPrimitiveSymbol(name: String)(using ctx: Context): Option[Symbol] =
+    if name == "WASM_MEMORY" then
+      Some(Definitions.MemorySymbol)
+    else
+      None
+
   def lookupSymbol(name: String)(using ctx: Context): Option[Symbol] =
-    ctx.symbols.find(_.name == name)
+    findPrimitiveSymbol(name) `orElse` ctx.symbols.find(_.name == name)
 
   def lookupAll(name: String)(using ctx: Context): Option[(Binder, Int) | Symbol] =
     lookupBinder(name) match
@@ -1095,6 +1101,10 @@ object TypeChecker:
             checkDef(defn)(using ctx1).flatMap: (bd, expr) =>
               checkDefns(defns).map: defns1 =>
                 val d = Definition.ValDef(sym, expr)
+                defn match
+                  case defn: Syntax.Definition.ValDef if !defn.tpe.isDefined =>
+                    sym.tpe = expr.tpe
+                  case _ =>
                 d :: defns1
         def checkExtensionDef(extSym: ExtensionSymbol, extDefn: Syntax.Definition.ExtensionDef)(using Context): Result[Definition.ExtensionDef] =
           hopefully:
@@ -1122,7 +1132,7 @@ object TypeChecker:
         for ((sym, defn) <- syms `zip` defns) do
           (sym, defn) match
             case (sym: DefSymbol, defn: Syntax.Definition.ValDef) =>
-              val defnType = extractDefnType(defn)(using ctxWithClasses).!!
+              val defnType = (extractDefnType(defn)(using ctxWithClasses) || Right(Definitions.anyType)).!!
               sym.tpe = defnType
             case (sym: DefSymbol, defn: Syntax.Definition.DefDef) =>
               val defnType = extractDefnType(defn)(using ctxWithClasses).!!

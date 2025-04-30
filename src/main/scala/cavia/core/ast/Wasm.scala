@@ -62,6 +62,9 @@ object Wasm:
     case ArraySet(typeSym: Symbol)
     case ArrayGet(typeSym: Symbol)
     case ArrayLen
+    case I32Load(memorySym: Symbol)
+    case I32Store(memorySym: Symbol)
+    case MemorySize(memorySym: Symbol)
 
     def showIfSimple: Option[String] = this match
       case I32Const(value) => Some(s"i32.const $value")
@@ -107,6 +110,12 @@ object Wasm:
       case ArraySet(typeSym) => Some(s"array.set ${typeSym.show}")
       case ArrayGet(typeSym) => Some(s"array.get ${typeSym.show}")
       case ArrayLen => Some(s"array.len")
+      case I32Load(memorySym) => 
+        Some(s"i32.load ${memorySym.show}")
+      case I32Store(memorySym) => 
+        Some(s"i32.store ${memorySym.show}")
+      case MemorySize(memorySym) =>
+        Some(s"memory.size ${memorySym.show}")
       case _ => None
 
   enum ExportKind:
@@ -140,6 +149,7 @@ object Wasm:
     val Function = fresh("__func")
     val I32Println = fresh("__i32println")
     val I32Read = fresh("__i32read")
+    val Memory = fresh("__memory")
 
   val I32PrintlnType = FuncType(List(ValType.I32), None)
   val I32ReadType = FuncType(List(), Some(ValType.I32))
@@ -181,3 +191,4 @@ object Wasm:
   case class ImportFunc(moduleName: String, funcName: String, ident: Symbol, funcType: FuncType) extends ModuleField
   case class Global(ident: Symbol, tpe: ValType, mutable: Boolean, init: Instruction) extends ModuleField
   case class Start(funcSym: Symbol) extends ModuleField
+  case class Memory(ident: Symbol, size: Int) extends ModuleField
