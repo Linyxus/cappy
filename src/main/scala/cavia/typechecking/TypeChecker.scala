@@ -87,7 +87,6 @@ object TypeChecker:
           MessagePart(List("... which was consumed here"), pos)
         Message(parts)
       case _ => Message.simple(show, pos)
-    
 
   def ctx(using myCtx: Context): Context = myCtx
   
@@ -500,10 +499,6 @@ object TypeChecker:
         hopefully:
           val outTerm = checkIdent(t).!!
           val cv = outTerm.cv
-          // println("----")
-          // ctx.consumedPeaks.elems.foreach: cref =>
-          //   println(s"consumed $cref, hasPos = ${cref.hasPos}")
-          // println("----")
           ctx.consumedPeaks.elems.foreach: cref =>
             if !checkSeparation(cv, CaptureSet(cref :: Nil)) then
               val consumedPos = if cref.hasPos then Some(cref.pos) else None
@@ -1328,4 +1323,3 @@ object TypeChecker:
     case Type.Var(ref) => allFieldNames(ref.tpe)
     case Type.Select(base, fieldInfo) => allFieldNames(fieldInfo.tpe)
     case _ => Nil
-  
