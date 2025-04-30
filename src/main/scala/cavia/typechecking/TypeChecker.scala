@@ -85,7 +85,7 @@ object TypeChecker:
 
   def checkTermParam(param: Syntax.TermParam)(using ctx: Context): Result[TermBinder] =
     checkType(param.tpe).map: tpe =>
-      val binder: TermBinder = TermBinder(param.name, tpe)
+      val binder: TermBinder = TermBinder(param.name, tpe, param.isConsume)
       binder.maybeWithPosFrom(param)
 
   def checkTypeParam(param: Syntax.TypeParam)(using ctx: Context): Result[TypeBinder] =
@@ -162,7 +162,7 @@ object TypeChecker:
       ref.core match
         case CaptureRef.Ref(Type.Var(Term.BinderRef(idx))) =>
           getBinder(idx) match
-            case Binder.TermBinder(_, tpe) =>
+            case Binder.TermBinder(_, tpe, _) =>
               val elems = tpe.captureSet.qualify(ref.mode).elems
               goRefs(elems)
             case _: Binder.CaptureBinder => Set(ref)
@@ -349,8 +349,8 @@ object TypeChecker:
     else tpe1.refined(fieldInfos)
 
   def instantiateBinderCaps(binder: TermBinder)(using Context): TermBinder =
-    val tpe1 = instantiateCaps(binder.tpe, isFresh = false)
-    val binder1 = TermBinder(binder.name, tpe1).maybeWithPosFrom(binder).asInstanceOf[TermBinder]
+    val tpe1 = instantiateCaps(binder.tpe, isFresh = binder.isConsume)
+    val binder1 = TermBinder(binder.name, tpe1, binder.isConsume).maybeWithPosFrom(binder).asInstanceOf[TermBinder]
     binder1
 
   def checkStructInit(classSym: StructSymbol, targs: List[Syntax.Type | Syntax.CaptureSet], args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
@@ -367,8 +367,8 @@ object TypeChecker:
         val fieldType = substituteType(tpe, typeArgs, isParamType = true)
         (field.name, fieldType, field.mutable)
       val argFormals = fields1.map(_._2)
-      val syntheticFunctionType = Type.TermArrow(argFormals.map(tpe => TermBinder("_", tpe)), Type.AppliedType(Type.SymbolRef(classSym), typeArgs))
-      val (termArgs, _) = checkFunctionApply(syntheticFunctionType, args, srcPos, isDependent = false).!!
+      val syntheticFunctionType = Type.TermArrow(argFormals.map(tpe => TermBinder("_", tpe, isConsume = false)), Type.AppliedType(Type.SymbolRef(classSym), typeArgs))
+      val (termArgs, _, consumedSet) = checkFunctionApply(syntheticFunctionType, args, srcPos, isDependent = false).!!
       val classType = 
         if typeArgs.isEmpty then
           Type.SymbolRef(classSym)
@@ -389,13 +389,13 @@ object TypeChecker:
 
   def dropLocalFreshCaps(crefs: List[QualifiedRef], srcPos: SourcePos)(using Context): Result[List[QualifiedRef]] =
     hopefully:
-      val outerLevel = ctx.binders.size
+      val freshLevel = ctx.freshLevel
       crefs.filter: cref =>
         cref.core match
           case CaptureRef.CapInst(capId, CapKind.Fresh(level), fromInst) =>
-            level <= outerLevel
+            level < freshLevel
           case CaptureRef.CapInst(capId, CapKind.Sep(level), fromInst) =>
-            if level > outerLevel then
+            if level >= freshLevel then
               sorry(TypeError.GeneralError(s"A local `cap` instance is leaked into the body of a lambda").withPos(srcPos))
             true
           case _ => true
@@ -415,7 +415,7 @@ object TypeChecker:
           sorry(TypeError.GeneralError("A `cap` that is not nameable is captured by the body of this lambda; try naming `cap`s explicitly with capture parameters").withPos(srcPos))
         val (_, outCV) = dropLocalParams(bodyCV.elems.toList, params.length)
         val outCV1 = dropLocalFreshCaps(outCV, srcPos).!!
-        val outTerm = Term.TermLambda(params, body1).withPos(srcPos)
+        val outTerm = Term.TermLambda(params, body1, skolemizedBinders = params1).withPos(srcPos)
         val outType = Type.Capturing(Type.TermArrow(params, body1.tpe), CaptureSet(outCV1))
         outTerm.withTpe(outType).withCV(CaptureSet.empty)
 
@@ -510,17 +510,15 @@ object TypeChecker:
               val ctx1 = selfType match
                 case None => ctx
                 case Some(selfType) =>
-                  val selfBinder = TermBinder(d.name, selfType).withPos(d.pos)
+                  val selfBinder = TermBinder(d.name, selfType, isConsume = false).withPos(d.pos)
                   ctx.extend(selfBinder)
               val (bd, expr) = checkDef(d.asInstanceOf[Syntax.ValueDef])(using ctx1).!!
               // Avoid self reference
               val bd1 = 
                 if selfType.isDefined then
                   val tpe1 = avoidSelfType(bd.tpe, d).!!
-                  TermBinder(bd.name, tpe1).withPos(bd.pos).asInstanceOf[TermBinder]
+                  TermBinder(bd.name, tpe1, isConsume = false).withPos(bd.pos).asInstanceOf[TermBinder]
                 else bd
-              // Instantiate CAPs in the type
-              // val bd2 = instantiateBinderCaps(bd1)
               // Avoid self type in the body
               val expr1 =
                 if selfType.isDefined then
@@ -751,37 +749,56 @@ object TypeChecker:
         val primOp = PrimitiveOp.BoolNot
         checkPrimOp(primOp, List(term), expected, srcPos)
 
-  def checkFunctionApply(funType: Type, args: List[Syntax.Term], srcPos: SourcePos, isDependent: Boolean = true)(using Context): Result[(List[Term], Type)] =
+  def tryConsume(captures: CaptureSet, srcPos: SourcePos)(using Context): Result[CaptureSet] =
+    hopefully:
+      val consumedSet = captures.qualify(AccessMode.Consume())
+      val pks = computePeak(consumedSet)
+      pks.elems.foreach: cref =>
+        cref.core match
+          case CaptureRef.CapInst(capId, kind, fromInst) =>
+            kind match
+              case _: CapKind.Fresh => // ok
+              case _ => sorry(TypeError.GeneralError(s"Cannot consume ${cref.show}").withPos(srcPos))
+          case _ => sorry(TypeError.GeneralError(s"Cannot consume ${cref.show}").withPos(srcPos))
+      consumedSet
+
+  /** Check a function apply.
+   * Returns the arguments, the result type, and the consumed capabilities in this apply.
+   */
+  def checkFunctionApply(funType: Type, args: List[Syntax.Term], srcPos: SourcePos, isDependent: Boolean = true)(using Context): Result[(List[Term], Type, CaptureSet)] =
     hopefully:
       funType.stripCaptures match
         case Type.TermArrow(formals, resultType) =>
           if args.length != formals.length then
             sorry(TypeError.GeneralError(s"Argument number mismatch, expected ${formals.length}, but got ${args.length}").withPos(srcPos))
-          def go(xs: List[(Syntax.Term, Type)], acc: List[Term], captureSetAcc: List[CaptureSet]): (List[Term], Type, List[CaptureSet]) = xs match
+          def go(xs: List[(Syntax.Term, TermBinder)], acc: List[Term], captureSetAcc: List[(Boolean, CaptureSet)]): (List[Term], Type, List[(Boolean, CaptureSet)]) = xs match
             case Nil =>
               val args = acc.reverse
               (args, substitute(resultType, args), captureSetAcc)
             case (arg, formal) :: xs => 
-              val formal1 =
+              val formalType =
                 if isDependent then
-                  substitute(formal, acc.reverse, isParamType = true)
-                else formal
+                  substitute(formal.tpe, acc.reverse, isParamType = true)
+                else formal.tpe
               val tm = UniversalConversion()
-              val formal2 = tm.apply(formal1)
+              val expectedType = tm.apply(formalType)
               val localSets = tm.createdUniversals
               //println(s"checkArg $arg, expected = $formal1 (from $formal)")
-              val arg1 = checkTerm(arg, expected = formal2).!!
-              val css = localSets.map(_.solve())
+              val arg1 = checkTerm(arg, expected = expectedType).!!
+              val css = localSets.map(_.solve()).map: cs =>
+                (formal.isConsume, cs)
               go(xs, arg1 :: acc, css ++ captureSetAcc)
-          val (args1, outType, css) = go(args `zip` (formals.map(_.tpe)), Nil, Nil)
+          val (args1, outType, css) = go(args `zip` (formals), Nil, Nil)
           // perform separation check
           val sigCaptures = funType.signatureCaptureSet
-          val css1 = css ++ (sigCaptures :: Nil)
+          val css1 = (css.map(_._2)) ++ (sigCaptures :: Nil)
           for i <- 0 until css1.length do
             for j <- i + 1 until css1.length do
               if !checkSeparation(css1(i), css1(j)) then
                 sorry(TypeError.SeparationError(css1(i).show, css1(j).show).withPos(srcPos))
-          (args1, outType)
+          val toConsume = css.filter(_._1).map(_._2).reduceLeftOption(_ ++ _).getOrElse(CaptureSet.empty)
+          val consumedSet = tryConsume(toConsume, srcPos).!!
+          (args1, outType, consumedSet)
         case _ => sorry(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(srcPos))
 
   /** Instantiate fresh capabilities in the result of a function apply. */
@@ -797,9 +814,10 @@ object TypeChecker:
       val funType = fun1.tpe
       funType.stripCaptures match
         case Type.TermArrow(formals, resultType) =>
-          val (args1, outType) = checkFunctionApply(funType, args, srcPos).!!
+          val (args1, outType, consumedSet) = checkFunctionApply(funType, args, srcPos).!!
+          //println(s"consumed set = ${consumedSet.show}")
           val resultTerm = Term.Apply(fun1, args1).withPos(srcPos).withTpe(outType)
-          resultTerm.withCVFrom(fun1 :: args1*)
+          resultTerm.withCVFrom(fun1 :: args1*).withMoreCV(consumedSet)
           fun1 match
             case _: VarRef =>
               // skip, since it will already be marked
@@ -896,12 +914,12 @@ object TypeChecker:
     hopefully:
       val arrConsFunction = Type.TermArrow(
         List(
-          TermBinder("size", Definitions.i32Type),
-          TermBinder("elemType", elemType), 
+          TermBinder("size", Definitions.i32Type, isConsume = false),
+          TermBinder("elemType", elemType, isConsume = false), 
         ),
         Type.Capturing(Type.AppliedType(Type.Base(BaseType.ArrayType), List(elemType)), CaptureSet.universal)
       )
-      val (args1, outType) = checkFunctionApply(arrConsFunction, args, pos, isDependent = false).!!
+      val (args1, outType, consumedSet) = checkFunctionApply(arrConsFunction, args, pos, isDependent = false).!!
       Term.PrimOp(PrimitiveOp.ArrayNew, elemType :: Nil, args1).withPos(pos).withTpe(outType).withCVFrom(args1*)
       
   def checkPolyPrimOp(op: PrimitiveOp, targs: List[Syntax.Type | Syntax.CaptureSet], args: List[Syntax.Term], expected: Type, pos: SourcePos)(using Context): Result[Term] =
@@ -935,7 +953,7 @@ object TypeChecker:
           case Some(expected) => checkType(expected).!!
         val expr1 = checkTerm(expr, expected = expected1).!!
         val binderType = if expected1.exists then expected1 else expr1.tpe
-        val bd = TermBinder(name, binderType).withPos(d.pos)
+        val bd = TermBinder(name, binderType, isConsume = false).withPos(d.pos)
         (bd.asInstanceOf[TermBinder], expr1)
     case Syntax.Definition.DefDef(name, _, paramss, resultType, expr) => 
       hopefully:
@@ -984,7 +1002,7 @@ object TypeChecker:
           case Nil => List(Syntax.TypeParamList(Nil))
           case pss => pss
         val expr1 = go(pss1).!!
-        val bd = TermBinder(name, expr1.tpe).withPos(d.pos)
+        val bd = TermBinder(name, expr1.tpe, isConsume = false).withPos(d.pos)
         (bd.asInstanceOf[TermBinder], expr1)
 
   def extractDefType(d: Syntax.Definition.DefDef, requireExplictType: Boolean = true)(using Context): Result[Type] = 
@@ -1164,7 +1182,7 @@ object TypeChecker:
             case Some((extSym, typeArgs)) =>
               val method = extSym.info.methods.find(_.name == field).get
               val funType = substituteType(method.tpe, typeArgs, isParamType = false)
-              val (args, outType) = checkFunctionApply(funType, List(base), srcPos, isDependent = true).!!
+              val (args, outType, consumedSet) = checkFunctionApply(funType, List(base), srcPos, isDependent = true).!!
               val resolvedTerm = Term.ResolveExtension(extSym, typeArgs, method.name).withPos(srcPos).withTpe(funType).withCV(CaptureSet.empty)
               val appliedTerm = Term.Apply(resolvedTerm, args).withPos(srcPos).withTpe(outType).withCVFrom(resolvedTerm :: args*)
               appliedTerm

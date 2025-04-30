@@ -30,7 +30,7 @@ class TypeMap:
   def apply(tp: Type): Type = mapOver(tp)
 
   def mapBinder(param: Binder): Binder = param match
-    case TermBinder(name, tpe) => TermBinder(name, apply(tpe)).maybeWithPosFrom(param)
+    case TermBinder(name, tpe, isConsume) => TermBinder(name, apply(tpe), isConsume).maybeWithPosFrom(param)
     case TypeBinder(name, bound) => TypeBinder(name, apply(bound)).maybeWithPosFrom(param)
     case CaptureBinder(name, bound) => CaptureBinder(name, mapCaptureSet(bound)).maybeWithPosFrom(param)
 
@@ -165,7 +165,7 @@ extension (captureRef: QualifiedRef)
 extension (binder: Binder)
   def shift(amount: Int): Binder =
     binder match
-      case Binder.TermBinder(name, tpe) => Binder.TermBinder(name, tpe.shift(amount)).maybeWithPosFrom(binder)
+      case Binder.TermBinder(name, tpe, isConsume) => Binder.TermBinder(name, tpe.shift(amount), isConsume).maybeWithPosFrom(binder)
       case Binder.TypeBinder(name, bound) => Binder.TypeBinder(name, bound.shift(amount)).maybeWithPosFrom(binder)
       case Binder.CaptureBinder(name, bound) => Binder.CaptureBinder(name, bound.shift(amount)).maybeWithPosFrom(binder)
 
@@ -348,7 +348,9 @@ object TypePrinter:
       case tp: SingletonType => showSingletonType(tp) + ".type"
 
   def show(binder: Binder)(using TypeChecker.Context): String = binder match
-    case Binder.TermBinder(name, tpe) => s"$name: ${show(tpe)}"
+    case Binder.TermBinder(name, tpe, isConsume) => 
+      val consumeStr = if isConsume then "consume " else ""
+      s"$consumeStr$name: ${show(tpe)}"
     case Binder.TypeBinder(name, tpe) => s"$name <: ${show(tpe)}"
     case Binder.CaptureBinder(name, tpe) => s"$name <: ${show(tpe)}"
 
@@ -396,6 +398,9 @@ extension (cs: CaptureSet)
 
 extension (ref: CaptureRef)
   def show(using TypeChecker.Context): String = TypePrinter.show(ref)
+
+extension (cref: QualifiedRef)
+  def show(using TypeChecker.Context): String = TypePrinter.show(cref)
 
 class SubstitutionMap(args: List[Type], startingVariance: Variance = Variance.Covariant)(using TypeChecker.Context) extends ApproxTypeMap:
   var ok: Boolean = true

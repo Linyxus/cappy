@@ -299,7 +299,8 @@ object Parsers:
   )
 
   def termParamP: Parser[TermParam] =
-    (tokenP[Token.IDENT], tokenP[Token.COLON], typeP).p.map((name, _, tpe) => TermParam(name.name, tpe)).positioned.withWhat("a term parameter")
+    val consumeP: Parser[Boolean] = keywordP("consume").optional.map(_.isDefined)
+    (consumeP, tokenP[Token.IDENT], tokenP[Token.COLON], typeP).p.map((consume, name, _, tpe) => TermParam(name.name, tpe, isConsume = consume)).positioned.withWhat("a term parameter")
 
   def typeParamP: Parser[TypeParam] =
     val boundP = (tokenP[Token.LESSCOLON], typeP).p.map((_, tpe) => tpe)
@@ -330,7 +331,7 @@ object Parsers:
     val arrowP = tokenP[Token.ARROW]
     val capsP = captureSetP.withWhat("a capture set after an arrow")
     val p = (paramTypesP, capturingArrowP, typeP).p.map: (paramTypes, maybeCaps, resultType) =>
-      val params = paramTypes.map(tp => TermParam("_", tp))
+      val params = paramTypes.map(tp => TermParam("_", tp, isConsume = false))
       val arrowType = Type.Arrow(params, resultType)
       maybeCaps match
         case Some(cs) => Type.Capturing(arrowType, false, cs)
@@ -399,7 +400,7 @@ object Parsers:
       val todos = more.map(_._1).reverse `zip` ts
       var result = t
       for (maybeCaps, ty) <- todos do
-        val param = TermParam("_", ty).withPosFrom(ty)
+        val param = TermParam("_", ty, isConsume = false).withPosFrom(ty)
         result = Type.Arrow(List(param), result).withPosFrom(param, result)
         maybeCaps match
           case Some(cs) => result = Type.Capturing(result, false, cs).withPosFrom(result, cs)

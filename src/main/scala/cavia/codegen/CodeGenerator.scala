@@ -330,7 +330,7 @@ object CodeGenerator:
     case Term.IntLit(value) => Set.empty
     case Term.BoolLit(value) => Set.empty
     case Term.UnitLit() => Set.empty
-    case Term.TermLambda(params, body) =>
+    case Term.TermLambda(params, body, _) =>
       dropLocalBinders(freeLocalBinders(body), params.size)
     case Term.TypeLambda(params, body) =>
       dropLocalBinders(freeLocalBinders(body), params.size)
@@ -468,9 +468,9 @@ object CodeGenerator:
       val then1 = genTerm(thenBranch)
       val else1 = genTerm(elseBranch)
       translateBranching(cond, then1, else1, resultType)
-    case Term.TermLambda(params, body) =>
+    case Term.TermLambda(params, body, _) =>
       translateClosure(t.tpe, params, body, selfBinder = None)
-    case Term.Bind(binder, isRecursive, Term.TermLambda(params, body), expr) =>
+    case Term.Bind(binder, isRecursive, Term.TermLambda(params, body, _), expr) =>
       val localSym = Symbol.fresh(binder.name)
       val localType = translateType(binder.tpe)
       emitLocal(localSym, localType)
@@ -606,7 +606,7 @@ object CodeGenerator:
         structInfo
 
   def genModuleFunction(funType: Expr.Type, funSymbol: Symbol, workerSymbol: Option[Symbol], expr: Expr.Term)(using Context): Unit = //trace(s"genModuleFunction($funType, $funSymbol, $workerSymbol, $expr)"):
-    val Term.TermLambda(ps, body) = expr: @unchecked
+    val Term.TermLambda(ps, body, _) = expr: @unchecked
     val funcType = computeFuncType(funType, isClosure = false)
     val workerType = computeFuncType(funType, isClosure = true)
     val paramSymbols = ps.map(p => Symbol.fresh(p.name))

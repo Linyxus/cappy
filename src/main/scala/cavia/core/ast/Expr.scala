@@ -170,14 +170,14 @@ object Expr:
       this
 
   enum Binder extends Positioned:
-    case TermBinder(name: String, tpe: Type)
+    case TermBinder(name: String, tpe: Type, isConsume: Boolean)
     case TypeBinder(name: String, bound: Type)
     case CaptureBinder(name: String, bound: CaptureSet)
 
     val name: String
 
     def kindStr: String = this match
-      case TermBinder(_, _) => "term"
+      case TermBinder(_, _, _) => "term"
       case TypeBinder(_, _) => "type"
       case CaptureBinder(_, _) => "capture"
 
@@ -377,6 +377,8 @@ object Expr:
       case "sorry" => Some(PrimitiveOp.Sorry)
       case _ => None
 
+  sealed trait Closure
+
   enum Term extends Positioned, Typed:
     case BinderRef(idx: Int)
     case SymbolRef(sym: DefSymbol)
@@ -384,8 +386,8 @@ object Expr:
     case IntLit(value: Int)
     case BoolLit(value: Boolean)
     case UnitLit()
-    case TermLambda(params: List[TermBinder], body: Term)
-    case TypeLambda(params: List[TypeBinder | CaptureBinder], body: Term)
+    case TermLambda(params: List[TermBinder], body: Term, skolemizedBinders: List[TermBinder]) extends Term, Closure
+    case TypeLambda(params: List[TypeBinder | CaptureBinder], body: Term) extends Term, Closure
     case Bind(binder: TermBinder, recursive: Boolean, bound: Term, body: Term)
     case PrimOp(op: PrimitiveOp, targs: List[Type], args: List[Term])
     case StructInit(sym: StructSymbol, targs: List[Type | CaptureSet], args: List[Term])

@@ -21,7 +21,7 @@ class ExprPrinter extends IndentedPrinter:
       case Term.IntLit(value) => print(value.toString)
       case Term.BoolLit(value) => print(value.toString)
       case Term.UnitLit() => print("()")
-      case Term.TermLambda(params, body) =>
+      case Term.TermLambda(params, body, _) =>
         print("(")
         print(showBinders(params).mkString(", "))
         print(") => {")

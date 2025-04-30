@@ -31,9 +31,9 @@ object TypeComparer:
     accountsFor(cs2, x1) || {
       x1.core match
         case CaptureRef.Ref(Type.Var(Term.BinderRef(idx))) => getBinder(idx) match
-          case Binder.TermBinder(name, tpe) => checkSubcapture(tpe.captureSet.qualify(x1.mode), cs2)
-          case Binder.CaptureBinder(name, bound) => checkSubcapture(bound.qualify(x1.mode), cs2)
-          case _: Binder.TypeBinder => assert(false, "binder kind is absurd")
+          case bd: TermBinder => checkSubcapture(bd.tpe.captureSet.qualify(x1.mode), cs2)
+          case bd: CaptureBinder => checkSubcapture(bd.bound.qualify(x1.mode), cs2)
+          case _: TypeBinder => assert(false, "binder kind is absurd")
         case CaptureRef.Ref(Type.Var(Term.SymbolRef(sym))) => checkSubcapture(sym.tpe.captureSet.qualify(x1.mode), cs2)
         case CaptureRef.Ref(Type.Select(base: SingletonType, fieldInfo)) =>
           def tryWiden: Boolean =
