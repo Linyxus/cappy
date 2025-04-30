@@ -445,32 +445,38 @@ object TypeChecker:
         val outType = Type.Capturing(Type.TypeArrow(params, body1.tpe), CaptureSet(outCV1))
         outTerm.withTpe(outType).withCV(CaptureSet.empty)
 
+  def adaptLazyType(t: Term)(using Context): Term =
+    t.tpe.stripCaptures match
+      case LazyType(resultType) =>
+        val t1 = Term.TypeApply(t, Nil).withPosFrom(t)
+        val outTerm = t1.withTpe(resultType).withCV(t.cv)
+        instantiateFresh(outTerm)
+      case _ => t
+
+  def checkIdent(t: Syntax.Term.Ident)(using Context): Result[Term] =
+    hopefully:
+      val (ref, tpe) = lookupAll(t.name) match
+        case Some(sym: DefSymbol) => (Term.SymbolRef(sym): VarRef, sym.tpe)
+        case Some((binder: Binder.TermBinder, idx)) => (Term.BinderRef(idx): VarRef, binder.tpe)
+        case Some((binder: Binder, idx)) => sorry(TypeError.UnboundVariable(t.name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
+        case _ => sorry(TypeError.UnboundVariable(t.name).withPos(t.pos))
+
+      val cv = if !tpe.isPure then ref.asSingletonType.singletonCaptureSet else CaptureSet.empty
+      val tpe1 = 
+        if tpe.isPure then 
+          tpe 
+        else Type.Capturing(tpe.stripCaptures, ref.asSingletonType.singletonCaptureSet).withKind(TypeKind.Star)
+      ref.withPosFrom(t).withTpe(tpe1).withCV(cv)
+
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType())(using Context): Result[Term] = 
     val result: Result[Term] = t match
-      case Syntax.Term.Ident(name) => 
+      case t: Syntax.Term.Ident => 
         hopefully:
-          val (ref, tpe) = lookupAll(name) match
-            case Some(sym: DefSymbol) => (Term.SymbolRef(sym): VarRef, sym.tpe)
-            case Some((binder: Binder.TermBinder, idx)) => (Term.BinderRef(idx): VarRef, binder.tpe)
-            case Some((binder: Binder, idx)) => sorry(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
-            case _ => sorry(TypeError.UnboundVariable(name).withPos(t.pos))
-          //if !tpe.isPure then markFree(ref)
-          val cv = if !tpe.isPure then ref.asSingletonType.singletonCaptureSet else CaptureSet.empty
-
+          val outTerm = checkIdent(t).!!
+          val cv = outTerm.cv
           if !checkSeparation(cv, ctx.consumedPeaks) then
             sorry(TypeError.GeneralError(s"This uses a consumed capability").withPos(t.pos))
-
-          tpe.stripCaptures match
-            case LazyType(resultType) => 
-              val t1 = Term.TypeApply(ref, Nil).withPosFrom(t)
-              val outTerm = t1.withTpe(resultType).withCV(cv)
-              instantiateFresh(outTerm)
-            case _ =>
-              val tpe1 = 
-                if tpe.isPure then 
-                  tpe 
-                else Type.Capturing(tpe.stripCaptures, ref.asSingletonType.singletonCaptureSet).withKind(TypeKind.Star)
-              ref.withPosFrom(t).withTpe(tpe1).withCV(cv)
+          outTerm
       case Syntax.Term.StrLit(value) => 
         Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType).withCV(CaptureSet.empty))
       case Syntax.Term.IntLit(value) => 
@@ -481,7 +487,8 @@ object TypeChecker:
         Right(Term.BoolLit(value).withPosFrom(t).withTpe(tpe).withCV(CaptureSet.empty))
       case Syntax.Term.UnitLit() => 
         Right(Term.UnitLit().withPosFrom(t).withTpe(Definitions.unitType).withCV(CaptureSet.empty))
-      case Syntax.Term.Select(base, field) =>
+      case t @ Syntax.Term.Select(base, field) =>
+        // checkStablePath(t) || 
         checkSelect(base, field, t.pos)
       case Syntax.Term.Assign(lhs, rhs) =>
         checkAssign(lhs, rhs, t.pos)
@@ -623,11 +630,13 @@ object TypeChecker:
             case _ => 
               sorry(TypeError.GeneralError(s"Expected a function, but got $term1.tpe.show").withPos(t.pos))
 
-    result.flatMap: t1 =>
+    hopefully:
+      val outTerm = result.!!
+      val t1 = adaptLazyType(outTerm)
       if !expected.exists || TypeComparer.checkSubtype(t1.tpe, expected) then
-        Right(t1)
+        t1
       else 
-        Left(TypeError.TypeMismatch(expected.show, t1.tpe.show).withPos(t.pos))
+        sorry(TypeError.TypeMismatch(expected.show, t1.tpe.show).withPos(t.pos))
 
   def checkIf(
     cond: Syntax.Term, 
@@ -1168,6 +1177,31 @@ object TypeChecker:
       case _ =>
     None
 
+  // def checkStablePath(t: Syntax.Term.Select)(using Context): Result[Term] =
+  //   hopefully:
+  //     def constructPath(base: Term, field: String): Term =
+  //       getFieldInfo(base.tpe, field) match
+  //         case Some(fieldInfo) =>
+  //           if fieldInfo.mutable then
+  //             sorry(TypeError.GeneralError(s"Field is mutable, so this is not a stable path").withPosFrom(t))
+  //           val outTerm = Term.Select(base, fieldInfo).withPosFrom(t).withTpe(fieldInfo.tpe)
+  //           val singletonSet = outTerm.asSingletonType.singletonCaptureSet
+  //           outTerm.withCV(singletonSet)
+  //         case None => sorry(TypeError.GeneralError(s"Field ${t.field} is not found in $base").withPosFrom(t))
+  //     def recur(base: Syntax.Term): Term = base match
+  //       case base: Syntax.Term.Ident => checkIdent(base).!!
+  //       case base: Syntax.Term.Select => 
+  //         val base1 = recur(base.base)
+  //         constructPath(base1, base.field)
+  //       case _ => sorry(TypeError.GeneralError(s"This is not a stable path").withPosFrom(t))
+  //     val base1 = recur(t.base)
+  //     val out = constructPath(base1, t.field)
+  //     println(s"out.cv = ${out.cv.show}")
+  //     println(s"consumedPeaks = ${ctx.consumedPeaks.show}")
+  //     if !checkSeparation(out.cv, ctx.consumedPeaks) then
+  //       sorry(TypeError.GeneralError(s"This uses a consumed capability").withPosFrom(t))
+  //     out
+
   def checkSelect(base: Syntax.Term, field: String, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
       val base1 = checkTerm(base).!!
@@ -1187,7 +1221,7 @@ object TypeChecker:
             case Some(fieldInfo) =>
               val outTerm = Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldInfo.tpe).withCV(base1.cv)
               if isStablePath(outTerm) then
-                val singletonSet = (outTerm.asInstanceOf[VarRef]).asSingletonType.singletonCaptureSet
+                val singletonSet = outTerm.asSingletonType.singletonCaptureSet
                 val narrowedType = Type.Capturing(outTerm.tpe.stripCaptures, singletonSet)
                 outTerm.withTpe(narrowedType).withCV(singletonSet)
               else outTerm
