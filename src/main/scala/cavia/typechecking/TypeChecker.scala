@@ -1099,12 +1099,12 @@ object TypeChecker:
               else
                 ctx.addSymbols(syms)
             checkDef(defn)(using ctx1).flatMap: (bd, expr) =>
+              val d = Definition.ValDef(sym, expr)
+              defn match
+                case defn: Syntax.Definition.ValDef if !defn.tpe.isDefined =>
+                  sym.tpe = expr.tpe
+                case _ =>
               checkDefns(defns).map: defns1 =>
-                val d = Definition.ValDef(sym, expr)
-                defn match
-                  case defn: Syntax.Definition.ValDef if !defn.tpe.isDefined =>
-                    sym.tpe = expr.tpe
-                  case _ =>
                 d :: defns1
         def checkExtensionDef(extSym: ExtensionSymbol, extDefn: Syntax.Definition.ExtensionDef)(using Context): Result[Definition.ExtensionDef] =
           hopefully:
@@ -1183,7 +1183,6 @@ object TypeChecker:
         if TypeComparer.checkSubtype(baseType, formal) then
           solveTypeVars()
           break(Some((sym, typeArgs)))
-        // SCOPE OF EXTENSION METHDOS ???
       case _ =>
     None
 
