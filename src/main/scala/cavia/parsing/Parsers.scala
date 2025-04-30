@@ -320,7 +320,7 @@ object Parsers:
     val p = (paramsP, capturingArrowP, typeP).p.map: (params, maybeCaps, resultType) =>
       val arrowType = Type.Arrow(params, resultType)
       maybeCaps match
-        case Some(cs) => Type.Capturing(arrowType, cs)
+        case Some(cs) => Type.Capturing(arrowType, false, cs)
         case None => arrowType
     p.positioned.withWhat("a term function type")
 
@@ -333,7 +333,7 @@ object Parsers:
       val params = paramTypes.map(tp => TermParam("_", tp))
       val arrowType = Type.Arrow(params, resultType)
       maybeCaps match
-        case Some(cs) => Type.Capturing(arrowType, cs)
+        case Some(cs) => Type.Capturing(arrowType, false, cs)
         case None => arrowType
     p.positioned.withWhat("a non-dependent term function type")
 
@@ -345,7 +345,7 @@ object Parsers:
     val p = (paramsP, arrowP, capsP.tryIt, typeP).p.map: (params, _, maybeCaps, resultType) =>
       val arrowType = Type.TypeArrow(params, resultType)
       maybeCaps match
-        case Some(cs) => Type.Capturing(arrowType, cs)
+        case Some(cs) => Type.Capturing(arrowType, false, cs)
         case None => arrowType
     p.positioned.withWhat("a type function type")
 
@@ -371,12 +371,17 @@ object Parsers:
     p.positioned.withWhat("an applied type")
 
   def capturingTypeP: Parser[Type] =
-    val capsP = (tokenP[Token.HAT], captureSetP.tryIt).p.map: (hatToken, maybeCaps) =>
+    val roP: Parser[Boolean] = keywordP("ro").optional.map:
+      case Some(_) => true
+      case None => false
+    val capsP: Parser[(Boolean, CaptureSet)] = (tokenP[Token.HAT], roP, captureSetP.tryIt).p.map: (hatToken, isRO, maybeCaps) =>
       maybeCaps match
-        case Some(cs) => cs
-        case None => CaptureSet(CaptureRef("cap").withPosFrom(hatToken) :: Nil).withPosFrom(hatToken)
+        case Some(cs) => (isRO, cs)
+        case None => 
+          val mode = AccessMode.Normal().withPosFrom(hatToken)
+          (isRO, CaptureSet(CaptureRef("cap", mode).withPosFrom(hatToken) :: Nil).withPosFrom(hatToken))
     val p = (appliedTypeP, capsP.tryIt).p.map:
-      case (ty, Some(caps)) => Type.Capturing(ty, caps)
+      case (ty, Some((isRO, caps))) => Type.Capturing(ty, isRO, caps)
       case (ty, None) => ty
     p.positioned.withWhat("a capturing type")
 
@@ -385,7 +390,7 @@ object Parsers:
     val capsP = captureSetP.withWhat("a capture set after an arrow")
     val fatArrowP = tokenP[Token.FAT_ARROW]
     val p1 = (arrowP, capsP.tryIt).p.map((_, maybeCaps) => maybeCaps)
-    val p2 = fatArrowP.map(tk => Some(CaptureSet(CaptureRef("cap").withPosFrom(tk) :: Nil).withPosFrom(tk)))
+    val p2 = fatArrowP.map(tk => Some(CaptureSet(CaptureRef("cap", AccessMode.Normal().withPosFrom(tk)).withPosFrom(tk) :: Nil).withPosFrom(tk)))
     p1 `or` p2
 
   def simpleFunctionTypeP: Parser[Type] =
@@ -397,7 +402,7 @@ object Parsers:
         val param = TermParam("_", ty).withPosFrom(ty)
         result = Type.Arrow(List(param), result).withPosFrom(param, result)
         maybeCaps match
-          case Some(cs) => result = Type.Capturing(result, cs).withPosFrom(result, cs)
+          case Some(cs) => result = Type.Capturing(result, false, cs).withPosFrom(result, cs)
           case None =>
       result
     val moreP: Parser[(Option[CaptureSet], Type)] = (capturingArrowP, typeP).p
@@ -405,7 +410,16 @@ object Parsers:
       buildType(head, more)
     p.positioned.withWhat("a simple function type")
 
-  def captureRefP: Parser[CaptureRef] = tokenP[Token.IDENT].map(t => CaptureRef(t.name)).positioned.withWhat("a capture reference")
+  def captureRefP: Parser[CaptureRef] = 
+    val roP = keywordP("ro").map(_ => AccessMode.ReadOnly())
+    val consumeP = keywordP("consume").map(_ => AccessMode.Consume())
+    val modeP = (roP `or` consumeP).optional.map:
+      case Some(mode) => mode
+      case None => AccessMode.Normal()
+    val p =
+      (modeP.positioned, tokenP[Token.IDENT]).p.map: (mode, nameTk) =>
+        CaptureRef(nameTk.name, mode)
+    p.positioned.withWhat("a capture reference")
 
   def captureSetP: Parser[CaptureSet] = 
     val p = 

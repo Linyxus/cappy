@@ -14,7 +14,7 @@ object TypeComparer:
   def checkSubcapture(cs1: CaptureSet, cs2: CaptureSet)(using Context): Boolean = //trace(s"checkSubcapture(${cs1.show}, ${cs2.show})"):
     cs1.elems.forall(checkSubcapture(_, cs2))
 
-  def accountsFor(cs2: CaptureSet, x1: CaptureRef)(using Context): Boolean =
+  def accountsFor(cs2: CaptureSet, x1: QualifiedRef)(using Context): Boolean =
     cs2 match
       case Const(elems) => elems.contains(x1)
       case cs2: UniversalSet if !cs2.solved =>
@@ -26,20 +26,20 @@ object TypeComparer:
       case cs2: UniversalSet =>
         cs2.elems.contains(x1)
 
-  def checkSubcapture(x1: CaptureRef, cs2: CaptureSet)(using Context): Boolean = //trace(s"checkSubcapture(${x1.show}, ${cs2.show})"):
+  def checkSubcapture(x1: QualifiedRef, cs2: CaptureSet)(using Context): Boolean = //trace(s"checkSubcapture(${x1.show}, ${cs2.show})"):
     //println(s"checkSubcapture(${x1.show}, ${cs2.show})")
     accountsFor(cs2, x1) || {
-      x1 match
+      x1.core match
         case CaptureRef.Ref(Type.Var(Term.BinderRef(idx))) => getBinder(idx) match
-          case Binder.TermBinder(name, tpe) => checkSubcapture(tpe.captureSet, cs2)
-          case Binder.CaptureBinder(name, bound) => checkSubcapture(bound, cs2)
+          case Binder.TermBinder(name, tpe) => checkSubcapture(tpe.captureSet.qualify(x1.mode), cs2)
+          case Binder.CaptureBinder(name, bound) => checkSubcapture(bound.qualify(x1.mode), cs2)
           case _: Binder.TypeBinder => assert(false, "binder kind is absurd")
-        case CaptureRef.Ref(Type.Var(Term.SymbolRef(sym))) => checkSubcapture(sym.tpe.captureSet, cs2)
+        case CaptureRef.Ref(Type.Var(Term.SymbolRef(sym))) => checkSubcapture(sym.tpe.captureSet.qualify(x1.mode), cs2)
         case CaptureRef.Ref(Type.Select(base: SingletonType, fieldInfo)) =>
           def tryWiden: Boolean =
-            checkSubcapture(fieldInfo.tpe.captureSet, cs2)
+            checkSubcapture(fieldInfo.tpe.captureSet.qualify(x1.mode), cs2)
           def tryParent: Boolean =
-            checkSubcapture(base.singletonCaptureSet, cs2)
+            checkSubcapture(base.singletonCaptureSet.qualify(x1.mode), cs2)
           tryWiden || tryParent
         case _ => false
     }

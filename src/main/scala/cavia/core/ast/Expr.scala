@@ -3,6 +3,7 @@ package core
 package ast
 
 import scala.collection.mutable.Set
+import Syntax.AccessMode
 
 object Expr:
   /** A trait for expressions that have a type */
@@ -89,9 +90,11 @@ object Expr:
       nextCapId += 1
       result
 
+  case class QualifiedRef(mode: Syntax.AccessMode, core: CaptureRef) extends Positioned
+
   sealed trait CaptureSet extends Positioned:
     import CaptureSet.*
-    def elems: List[CaptureRef]
+    def elems: List[QualifiedRef]
     def ++ (other: CaptureSet): CaptureSet =
       (this, other) match
         case (Const(xs), Const(ys)) => Const(xs ++ ys)
@@ -100,13 +103,22 @@ object Expr:
         case (univ1: UniversalSet, univ2: UniversalSet) => univ1.merge(univ2)
         case _ => assert(false, s"Cannot concatenate $this and $other")
 
+    /** Qualify the capture set with an access mode */
+    def qualify(mode: Syntax.AccessMode): CaptureSet = mode match
+      case Syntax.AccessMode.Normal() => this
+      case _ => qualifyUnchecked(mode)
+
+    def qualifyUnchecked(mode: Syntax.AccessMode): CaptureSet =
+      val elems1 = elems.map(ref => QualifiedRef(mode, ref.core))
+      Const(elems1)
+
   object CaptureSet:
-    case class Const(elems: List[CaptureRef]) extends CaptureSet
-    case class UniversalSet(existingRefs: List[CaptureRef]) extends CaptureSet:
+    case class Const(elems: List[QualifiedRef]) extends CaptureSet
+    case class UniversalSet(existingRefs: List[QualifiedRef]) extends CaptureSet:
       private var mySolved: Boolean = false
       def solved: Boolean = mySolved
-      private var absorbed: Set[CaptureRef] = Set.empty
-      def elems: List[CaptureRef] =
+      private var absorbed: Set[QualifiedRef] = Set.empty
+      def elems: List[QualifiedRef] =
         assert(solved, "getting elems of an unsolved universal set")
         absorbed.toList ++ existingRefs.toList
 
@@ -114,7 +126,7 @@ object Expr:
         mySolved = true
         CaptureSet(elems)
 
-      def absorb(ref: CaptureRef): Unit =
+      def absorb(ref: QualifiedRef): Unit =
         absorbed += ref
 
       def merge(other: UniversalSet): UniversalSet =
@@ -128,11 +140,11 @@ object Expr:
         res.absorbed = absorbed
         res
 
-      def absorbedRefs: List[CaptureRef] = absorbed.toList
+      def absorbedRefs: List[QualifiedRef] = absorbed.toList
 
-    def apply(elems: List[CaptureRef]): CaptureSet = Const(elems)
+    def apply(elems: List[QualifiedRef]): CaptureSet = Const(elems)
     def empty: CaptureSet = Const(Nil)
-    def universal: CaptureSet = Const(List(CaptureRef.CAP()))
+    def universal: CaptureSet = Const(List(QualifiedRef(AccessMode.Normal(), CaptureRef.CAP())))
 
   enum TypeKind:
     case Star  // *
@@ -420,7 +432,6 @@ object Expr:
       Type.Base(BaseType.ArrayType).withKind(TypeKind.Arrow(1, TypeKind.Star))
     def arrayType(elemType: Type): Type =
       Type.AppliedType(arrayConstructorType, List(elemType)).withKind(TypeKind.Star)
-    def capCaptureSet: CaptureSet = CaptureSet(List(CaptureRef.CAP()))
 
   enum Variance:
     case Covariant

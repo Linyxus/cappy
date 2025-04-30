@@ -3,6 +3,7 @@ package typechecking
 
 import core.*
 import ast.*
+import Syntax.AccessMode
 import Expr.*
 import scala.collection.mutable.ArrayBuffer
 
@@ -40,10 +41,10 @@ class TypeMap:
     if allIdentical then captureSet
     else csets.reduce(_ ++ _)
 
-  def mapCaptureRef(ref: CaptureRef): CaptureSet = ref match
+  def mapCaptureRef(ref: QualifiedRef): CaptureSet = ref.core match
     case CaptureRef.Ref(tp) =>
       apply(tp.asInstanceOf[Type]) match
-        case tp1: SingletonType => CaptureSet(CaptureRef.Ref(tp1) :: Nil)
+        case tp1: SingletonType => CaptureSet(QualifiedRef(ref.mode, CaptureRef.Ref(tp1)) :: Nil)
         case tp1 =>
           if variance == Variance.Covariant then
             tp1.captureSet
@@ -153,8 +154,8 @@ extension (captureSet: CaptureSet)
     //assert(result.hasPos == captureSet.hasPos)
     result
 
-extension (captureRef: CaptureRef)
-  def shift(amount: Int): CaptureRef =
+extension (captureRef: QualifiedRef)
+  def shift(amount: Int): QualifiedRef =
     val shifter = ShiftType(amount)
     val result = shifter.mapCaptureRef(captureRef)
     //assert(result.hasPos == captureRef.hasPos)
@@ -229,7 +230,7 @@ extension (t: Term)
 
 extension (ref: SingletonType)
   def asCaptureRef: CaptureRef = CaptureRef.Ref(ref)
-  def singletonCaptureSet: CaptureSet = CaptureSet(List(asCaptureRef))
+  def singletonCaptureSet: CaptureSet = CaptureSet(List(QualifiedRef(AccessMode.Normal(), asCaptureRef)))
 
 /** A type map that approximates selections. 
  * Given p.a.type, if f(p) is not a singleton type, 
@@ -350,6 +351,14 @@ object TypePrinter:
     case Binder.TermBinder(name, tpe) => s"$name: ${show(tpe)}"
     case Binder.TypeBinder(name, tpe) => s"$name <: ${show(tpe)}"
     case Binder.CaptureBinder(name, tpe) => s"$name <: ${show(tpe)}"
+
+  def show(qualifiedRef: QualifiedRef)(using TypeChecker.Context): String = qualifiedRef match
+    case QualifiedRef(mode, ref) =>
+      val modeStr = mode match
+        case AccessMode.Normal() => ""
+        case AccessMode.ReadOnly() => "ro "
+        case AccessMode.Consume() => "consume "
+      s"${modeStr}${show(ref)}"
 
   def show(captureSet: CaptureSet)(using TypeChecker.Context): String = 
     captureSet match
@@ -486,11 +495,11 @@ class TypeSubstitutionMap(targs: List[Type | CaptureSet], startingVariance: Vari
   variance = startingVariance
   val ctxArgs = targs.reverse  // args in the order they will be in the context
 
-  override def mapCaptureRef(ref: CaptureRef): CaptureSet = ref match
+  override def mapCaptureRef(ref: QualifiedRef): CaptureSet = ref.core match
     case CaptureRef.Ref(Type.Var(Term.BinderRef(idx))) if idx >= localBinders.size =>
       val trueIdx = idx - localBinders.size
       if trueIdx < ctxArgs.size then
-        val arg = ctxArgs(trueIdx).asInstanceOf[CaptureSet]  
+        val arg = ctxArgs(trueIdx).asInstanceOf[CaptureSet].qualify(ref.mode)
           // must be a capture set, otherwise the substitution is malformed
         arg.shift(localBinders.size)
       else
@@ -545,10 +554,10 @@ def getRoot(x: SingletonType): (VarRef, VarRef => SingletonType) = x match
   case Type.Var(ref) => (ref, x => x.asSingletonType)
 
 class CollectSignature extends TypeMap:
-  val collected: ArrayBuffer[CaptureRef] = ArrayBuffer.empty
+  val collected: ArrayBuffer[QualifiedRef] = ArrayBuffer.empty
 
-  override def mapCaptureRef(ref: CaptureRef): CaptureSet = 
-    ref match
+  override def mapCaptureRef(ref: QualifiedRef): CaptureSet = 
+    ref.core match
       // case CaptureRef.Ref(Term.BinderRef(idx)) if idx < localBinders.size =>
       // case CaptureRef.Ref(Term.BinderRef(idx)) if idx >= localBinders.size =>
       //   collected += CaptureRef.Ref(Term.BinderRef(idx - localBinders.size))
@@ -556,7 +565,7 @@ class CollectSignature extends TypeMap:
         val (root, _) = getRoot(path)
         root match
           case Term.BinderRef(idx) if idx < localBinders.size =>
-          case root => collected += CaptureRef.Ref(Type.Var(root))
+          case root => collected += ref
       case _ => collected += ref
     CaptureSet(ref :: Nil)
 
@@ -590,20 +599,20 @@ class CapInstantiation(createCapInst: () => CaptureRef.CapInst) extends TypeMap:
     case Type.TermArrow(ps, result) => tpe
     case _ => mapOver(tpe)
 
-  override def mapCaptureRef(ref: CaptureRef): CaptureSet = ref match
+  override def mapCaptureRef(ref: QualifiedRef): CaptureSet = ref.core match
     case CaptureRef.CAP() => 
       val inst: CaptureRef.CapInst = createCapInst()
       localCaps = inst :: localCaps
-      CaptureSet(inst :: Nil)
+      CaptureSet(QualifiedRef(ref.mode, inst) :: Nil)
     case _ => CaptureSet(ref :: Nil)
 
 class UniversalConversion extends TypeMap:
   import scala.collection.mutable.Set
   var createdUniversals: List[CaptureSet.UniversalSet] = Nil
 
-  def maybeCreateUniversal(elems: List[CaptureRef]): CaptureSet =
-    if elems.contains(CaptureRef.CAP()) then
-      val existingRefs = elems.filterNot(_ == CaptureRef.CAP())
+  def maybeCreateUniversal(elems: List[QualifiedRef]): CaptureSet =
+    if elems.exists(_.isUniversal) then
+      val existingRefs = elems.filterNot(_.isUniversal)
       val univSet = CaptureSet.UniversalSet(existingRefs)
       createdUniversals = univSet :: createdUniversals
       univSet
@@ -639,3 +648,12 @@ extension (tpe: Type)
       case Type.Capturing(base, captureSet) =>
         tpe.derivedCapturing(base.refined(refinements), captureSet)
       case tpe => tpe.derivedRefinedType(tpe, refinements)
+
+extension (ref: QualifiedRef)
+  def isReadOnly: Boolean = ref.mode match
+    case AccessMode.ReadOnly() => true
+    case _ => false
+
+  def isUniversal: Boolean = ref.core match
+    case CaptureRef.CAP() => true
+    case _ => false

@@ -5,10 +5,15 @@ package ast
 import tokenizing.*
 
 object Syntax:
+  enum AccessMode extends Positioned:
+    case Normal()
+    case ReadOnly()
+    case Consume()
+
   case class TermParam(name: String, tpe: Type) extends Positioned
   case class TypeParam(name: String, bound: Option[Type]) extends Positioned
   case class CaptureParam(name: String, bound: Option[CaptureSet]) extends Positioned
-  case class CaptureRef(name: String) extends Positioned
+  case class CaptureRef(name: String, mode: AccessMode) extends Positioned
   case class CaptureSet(elems: List[CaptureRef]) extends Positioned
 
   enum InfixOp extends Positioned:
@@ -64,6 +69,6 @@ object Syntax:
     case Arrow(params: List[TermParam], result: Type)
     case TypeArrow(params: List[TypeParam | CaptureParam], result: Type)
     //case CaptureArrow(params: List[CaptureParam], result: Type)
-    case Capturing(inner: Type, captureSet: CaptureSet)
+    case Capturing(inner: Type, isReadOnly: Boolean, captureSet: CaptureSet)
     case AppliedType(tycon: Type, args: List[Type | CaptureSet])
   import Type.*

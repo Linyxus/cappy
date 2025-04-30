@@ -9,6 +9,7 @@ import reporting.trace
 
 object TypeChecker:
   import Expr.*
+  import Syntax.AccessMode
   import Binder.*
   import Inference.*
 
@@ -103,7 +104,7 @@ object TypeChecker:
 
   def checkCaptureParam(param: Syntax.CaptureParam)(using ctx: Context): Result[CaptureBinder] =
     val bound: Result[CaptureSet] = param.bound match
-      case None => Right(Definitions.capCaptureSet.withPosFrom(param))
+      case None => Right(CaptureSet.universal.withPosFrom(param))
       case Some(captureSet) => checkCaptureSet(captureSet)
     bound.map: captureSet =>
       val binder: CaptureBinder = CaptureBinder(param.name, captureSet)
@@ -114,7 +115,12 @@ object TypeChecker:
       case binder: Syntax.CaptureParam => checkCaptureParam(binder)
       case binder: Syntax.TypeParam => checkTypeParam(binder)
 
-  def checkCaptureRef(ref: Syntax.CaptureRef)(using ctx: Context): Result[CaptureRef] =
+  def checkCaptureRef(ref: Syntax.CaptureRef)(using ctx: Context): Result[QualifiedRef] =
+    hopefully:
+      val coreRef = checkCaptureRefCore(ref).!!
+      QualifiedRef(ref.mode, coreRef).maybeWithPosFrom(ref)
+
+  def checkCaptureRefCore(ref: Syntax.CaptureRef)(using ctx: Context): Result[CaptureRef] =
     if ref.name == "cap" then
       Right(CaptureRef.CAP().maybeWithPosFrom(ref))
     else lookupAll(ref.name) match
@@ -124,9 +130,9 @@ object TypeChecker:
       case _ => Left(TypeError.UnboundVariable(ref.name).withPos(ref.pos))
 
   def checkCaptureSet(captureSet: Syntax.CaptureSet)(using ctx: Context): Result[CaptureSet] =
-    val checkElems: List[Result[CaptureRef]] = captureSet.elems.map(checkCaptureRef)
+    val checkElems: List[Result[QualifiedRef]] = captureSet.elems.map(checkCaptureRef)
     @annotation.tailrec
-    def go(elems: List[Result[CaptureRef]], acc: List[CaptureRef]): Result[CaptureSet] = elems match
+    def go(elems: List[Result[QualifiedRef]], acc: List[QualifiedRef]): Result[CaptureSet] = elems match
       case Nil => Right(CaptureSet(acc.reverse).maybeWithPosFrom(captureSet))
       case Left(error) :: _ => Left(error)
       case Right(elem) :: rest => go(rest, elem :: acc)
@@ -152,24 +158,24 @@ object TypeChecker:
     case _ => None
 
   def computePeak(set: CaptureSet)(using Context): CaptureSet =
-    def goRef(ref: CaptureRef): Set[CaptureRef] = 
-      ref match
+    def goRef(ref: QualifiedRef): Set[QualifiedRef] = 
+      ref.core match
         case CaptureRef.Ref(Type.Var(Term.BinderRef(idx))) =>
           getBinder(idx) match
             case Binder.TermBinder(_, tpe) =>
-              val elems = tpe.captureSet.elems
+              val elems = tpe.captureSet.qualify(ref.mode).elems
               goRefs(elems)
             case _: Binder.CaptureBinder => Set(ref)
             case _ => assert(false, "malformed capture set")
         case CaptureRef.Ref(Type.Var(Term.SymbolRef(sym))) =>
-          val refs = sym.tpe.captureSet.elems
+          val refs = sym.tpe.captureSet.qualify(ref.mode).elems
           goRefs(refs)
         case CaptureRef.Ref(Type.Select(base, fieldInfo)) => 
-          val elems = fieldInfo.tpe.captureSet.elems
+          val elems = fieldInfo.tpe.captureSet.qualify(ref.mode).elems
           goRefs(elems)
         case CaptureRef.CAP() => Set(ref)
         case CaptureRef.CapInst(_, _, _) => Set(ref)
-    def goRefs(refs: List[CaptureRef]): Set[CaptureRef] =
+    def goRefs(refs: List[QualifiedRef]): Set[QualifiedRef] =
       refs.flatMap(goRef).toSet
     val elems = goRefs(set.elems)
     CaptureSet(elems.toList)
@@ -184,12 +190,12 @@ object TypeChecker:
             break(false)
       true
 
-  def checkSeparation(ref1: CaptureRef, ref2: CaptureRef)(using Context): Boolean =
+  def checkSeparation(ref1: QualifiedRef, ref2: QualifiedRef)(using Context): Boolean =
     def derivesFrom(ref1: CaptureRef, ref2: CaptureRef): Boolean =
       (ref1, ref2) match
         case (CaptureRef.CapInst(id1, _, from1), CaptureRef.CapInst(id2, _, from2)) => from1 == Some(id2)
         case _ => false
-    val result = ref1 != ref2 && !derivesFrom(ref1, ref2) && !derivesFrom(ref2, ref1)
+    val result = (ref1.isReadOnly && ref2.isReadOnly) || (ref1.core != ref2.core && !derivesFrom(ref1.core, ref2.core) && !derivesFrom(ref2.core, ref1.core))
     result
 
   def checkTypeArg(targ: (Syntax.Type | Syntax.CaptureSet))(using Context): Result[Type | CaptureSet] = targ match
@@ -233,7 +239,7 @@ object TypeChecker:
       go(params, Nil).flatMap: params =>
         checkType(result)(using ctx.extend(params)).map: result1 =>
           Type.TypeArrow(params, result1).maybeWithPosFrom(tpe).withKind(TypeKind.Star)
-    case Syntax.Type.Capturing(inner, captureSet) =>
+    case Syntax.Type.Capturing(inner, isRO, captureSet) =>
       hopefully:
         val inner1 = checkType(inner).!!
         val captureSet1 = checkCaptureSet(captureSet).!!
@@ -270,16 +276,16 @@ object TypeChecker:
           go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
     go(params, Nil)
 
-  private def dropLocalParams(crefs: List[CaptureRef], numParams: Int): (Boolean, List[CaptureRef]) = 
+  private def dropLocalParams(crefs: List[QualifiedRef], numParams: Int): (Boolean, List[QualifiedRef]) = 
     var existsLocalParams = false
     val newCrefs = crefs.flatMap: ref =>
-      ref match
+      ref.core match
         case CaptureRef.Ref(singleton) =>
           val (root, recover) = getRoot(singleton)
           root match
             case Term.BinderRef(idx) =>
               if idx >= numParams then
-                Some(CaptureRef.Ref(recover(Term.BinderRef(idx - numParams))).maybeWithPosFrom(ref))
+                Some(QualifiedRef(ref.mode, CaptureRef.Ref(recover(Term.BinderRef(idx - numParams))).maybeWithPosFrom(ref)))
               else 
                 existsLocalParams = true
                 None
@@ -307,7 +313,7 @@ object TypeChecker:
               case (t: Syntax.CaptureSet, f: CaptureSet) => 
                 val f1 = substituteTypeInCaptureSet(f, checkedAcc.reverse, isParamType = true)
                 val cs1 = checkCaptureSet(t).!!
-                if f.elems.contains(CaptureRef.CAP()) || TypeComparer.checkSubcapture(cs1, f1) then
+                if f.elems.exists(_.isUniversal) || TypeComparer.checkSubcapture(cs1, f1) then
                   cs1
                 else sorry(TypeError.GeneralError(s"Capture set argument ${cs1.show} does not conform to the bound ${f.show}").withPosFrom(t))
               case (t, f) => sorry(TypeError.GeneralError("Argument kind mismatch").withPosFrom(t))
@@ -322,7 +328,7 @@ object TypeChecker:
     val tm1 = CapInstantiation(() => CaptureRef.makeCapInst(capKind, fromInst = None))
     val tpe1 = tm1.apply(tpe)
     val rootCapInst = tpe1.captureSet match
-      case CaptureSet.Const((c: CaptureRef.CapInst) :: Nil) if tm1.localCaps.contains(c) => Some(c)
+      case CaptureSet.Const((QualifiedRef(_, c: CaptureRef.CapInst)) :: Nil) if tm1.localCaps.contains(c) => Some(c)
       case _ => None
     val fieldNames = allFieldNames(tpe1)
     val fieldInfos: List[FieldInfo] = 
@@ -370,22 +376,22 @@ object TypeChecker:
           Type.AppliedType(Type.SymbolRef(classSym), typeArgs)
       val termCaptureElems = termArgs.flatMap: arg =>
         arg.maybeAsSingletonType match
-          case Some(singleton) => singleton.asCaptureRef :: Nil
+          case Some(singleton) => QualifiedRef(AccessMode.Normal(), singleton.asCaptureRef) :: Nil
           case None => arg.tpe.captureSet.elems
       val refinements: List[FieldInfo] = (fields1 `zip` termArgs).flatMap: 
         case ((name, fieldType, mutable), arg) =>
           if fieldType.isPure then None
           else Some(FieldInfo(name, arg.tpe, mutable))
-      val captureSet = CaptureSet(CaptureRef.CAP() :: termCaptureElems)
+      val captureSet = CaptureSet.universal ++ CaptureSet(termCaptureElems)
       val outType = Type.Capturing(classType, captureSet)
       val refinedOutType = outType.refined(refinements)
       Term.StructInit(classSym, typeArgs, termArgs).withPos(srcPos).withTpe(refinedOutType).withCVFrom(termArgs*)
 
-  def dropLocalFreshCaps(crefs: List[CaptureRef], srcPos: SourcePos)(using Context): Result[List[CaptureRef]] =
+  def dropLocalFreshCaps(crefs: List[QualifiedRef], srcPos: SourcePos)(using Context): Result[List[QualifiedRef]] =
     hopefully:
       val outerLevel = ctx.binders.size
       crefs.filter: cref =>
-        cref match
+        cref.core match
           case CaptureRef.CapInst(capId, CapKind.Fresh(level), fromInst) =>
             level <= outerLevel
           case CaptureRef.CapInst(capId, CapKind.Sep(level), fromInst) =>
@@ -955,7 +961,7 @@ object TypeChecker:
             css.foreach: cs =>
               val pks = computePeak(cs)
               pks.elems.foreach: cref =>
-                cref match
+                cref.core match
                   case CaptureRef.CapInst(capId, CapKind.Fresh(level), fromInst) =>
                     if level < curLevel then
                       sorry(TypeError.GeneralError(s"Treating capabilities ${cs.show} as fresh in the result type but they come from the outside").withPos(expr.pos))
