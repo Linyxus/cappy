@@ -150,10 +150,11 @@ object Wasm:
     val I32Println = fresh("__i32println")
     val I32Read = fresh("__i32read")
     val Memory = fresh("__memory")
+    val PutChar = fresh("__putchar")
 
   val I32PrintlnType = FuncType(List(ValType.I32), None)
   val I32ReadType = FuncType(List(), Some(ValType.I32))
-
+  val PutCharType = FuncType(List(ValType.I32), None)
   case class FieldType(sym: Symbol, tpe: ValType, mutable: Boolean)
 
   sealed trait CompositeType:

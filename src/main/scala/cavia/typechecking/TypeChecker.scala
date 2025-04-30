@@ -187,6 +187,7 @@ object TypeChecker:
     case "i64" => Some(Definitions.i64Type)
     case "bool" => Some(Definitions.boolType)
     case "array" => Some(Definitions.arrayConstructorType)
+    case "char" => Some(Definitions.charType)
     // Float types are not supported yet, so commenting them out for now
     // case "f32" => Some(Definitions.f32Type)
     // case "f64" => Some(Definitions.f64Type)
@@ -506,6 +507,8 @@ object TypeChecker:
           outTerm
       case Syntax.Term.StrLit(value) => 
         Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType).withCV(CaptureSet.empty))
+      case Syntax.Term.CharLit(value) =>
+        Right(Term.CharLit(value).withPosFrom(t).withTpe(Definitions.charType).withCV(CaptureSet.empty))
       case Syntax.Term.IntLit(value) => 
         val tpe = if expected.exists && expected.isIntegralType then expected else Definitions.i32Type
         Right(Term.IntLit(value).withPosFrom(t).withTpe(tpe).withCV(CaptureSet.empty))
@@ -960,6 +963,7 @@ object TypeChecker:
       case PrimitiveOp.BoolOr => checkPrimOpArgs(PrimitiveOp.BoolOr, args, List(BaseType.BoolType, BaseType.BoolType), BaseType.BoolType, pos)
       case PrimitiveOp.I32Neg => checkPrimOpArgs(PrimitiveOp.I32Neg, args, List(BaseType.I32), BaseType.I32, pos)
       case PrimitiveOp.I64Neg => checkPrimOpArgs(PrimitiveOp.I64Neg, args, List(BaseType.I64), BaseType.I64, pos)
+      case PrimitiveOp.PutChar => checkPrimOpArgs(PrimitiveOp.PutChar, args, List(BaseType.CharType), BaseType.UnitType, pos)
       case PrimitiveOp.Sorry =>
         hopefully:
           if expected.exists then

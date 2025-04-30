@@ -52,6 +52,7 @@ object Expr:
     case StrType
     case IntType
     case UnitType
+    case CharType
     case AnyType
     case BoolType  // will be represented as i32
     /** Primitive types in WebAssembly */
@@ -304,6 +305,8 @@ object Expr:
     case ArrayLen extends PrimitiveOp, ArrayPrimitiveOp
     /** A primitive in the very virtue of Lean */
     case Sorry
+    /** Print a character */
+    case PutChar extends PrimitiveOp
 
     override def toString: String = this match
       case I32Add => "#i32add"
@@ -343,6 +346,7 @@ object Expr:
       case ArraySet => "#arrayset"
       case ArrayGet => "#arrayget"
       case ArrayLen => "#arraylen"
+      case PutChar => "#putchar"
 
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match
@@ -379,6 +383,7 @@ object Expr:
       case "#i64neg" => Some(PrimitiveOp.I64Neg)
       case "newArray" => Some(PrimitiveOp.ArrayNew)
       case "sorry" => Some(PrimitiveOp.Sorry)
+      case "#putchar" => Some(PrimitiveOp.PutChar)
       case _ => None
 
   sealed trait Closure
@@ -389,6 +394,7 @@ object Expr:
     case StrLit(value: String)
     case IntLit(value: Int)
     case BoolLit(value: Boolean)
+    case CharLit(value: Char)
     case UnitLit()
     case TermLambda(params: List[TermBinder], body: Term, skolemizedBinders: List[TermBinder]) extends Term, Closure
     case TypeLambda(params: List[TypeBinder | CaptureBinder], body: Term) extends Term, Closure
@@ -430,6 +436,7 @@ object Expr:
     def anyType: Type = Type.Base(BaseType.AnyType).withKind(TypeKind.Star)
     def strType: Type = Type.Base(BaseType.StrType).withKind(TypeKind.Star)
     def intType: Type = Type.Base(BaseType.IntType).withKind(TypeKind.Star)
+    def charType: Type = Type.Base(BaseType.CharType).withKind(TypeKind.Star)
     def i64Type: Type = Type.Base(BaseType.I64).withKind(TypeKind.Star)
     def i32Type: Type = Type.Base(BaseType.I32).withKind(TypeKind.Star)
     def unitType: Type = Type.Base(BaseType.UnitType).withKind(TypeKind.Star)

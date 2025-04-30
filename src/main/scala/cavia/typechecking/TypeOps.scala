@@ -296,6 +296,7 @@ object TypePrinter:
     case BaseType.F64 => "f64"
     case BaseType.BoolType => "bool"
     case BaseType.ArrayType => "array"
+    case BaseType.CharType => "char"
 
   def showFunctionType(params: List[Binder], result: Type, cs: Option[CaptureSet] = None, isType: Boolean = false)(using ctx: TypeChecker.Context) =
     def showParams(params: List[Binder])(using ctx: TypeChecker.Context): List[String] = params match

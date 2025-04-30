@@ -19,6 +19,13 @@ class ExprPrinter extends IndentedPrinter:
       case Term.SymbolRef(sym) => print(sym.name)
       case Term.StrLit(value) => print(s""""$value"""")
       case Term.IntLit(value) => print(value.toString)
+      case Term.CharLit(value) =>
+        value match
+          case '\n' => print("'\\n'")
+          case '\r' => print("'\\r'")
+          case '\t' => print("'\\t'")
+          case '\\' => print("'\\\\'")
+          case _ => print(s"'${value}'")
       case Term.BoolLit(value) => print(value.toString)
       case Term.UnitLit() => print("()")
       case Term.TermLambda(params, body, _) =>

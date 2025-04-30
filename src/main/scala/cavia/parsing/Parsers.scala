@@ -179,6 +179,9 @@ object Parsers:
 
   def stringLitP: Parser[Term] =
     tokenP[Token.STR].map(t => Term.StrLit(t.content.substring(1, t.content.length - 1))).positioned
+  
+  def charLitP: Parser[Term] =
+    tokenP[Token.CHAR].map(t => Term.CharLit(t.content)).positioned
 
   def intLitP: Parser[Term] =
     tokenP[Token.INT].map(t => Term.IntLit(t.content.toInt)).positioned
@@ -213,6 +216,7 @@ object Parsers:
     boolLitP,
     identP,
     stringLitP,
+    charLitP,
     intLitP,
     unitLitP,
     termP.surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])

@@ -46,6 +46,11 @@ class Tokenizer(source: SourceFile):
   /** Peek at the next character without consuming it */
   def peek: Char = source.content(currentPos)
 
+  /** Try to peek at the next character without consuming it; return None if at end */
+  def maybePeek: Option[Char] =
+    if isAtEnd then None
+    else Some(peek)
+
   /** Check if the next character is the expected character */
   def expectChar(ch: Char): Boolean =
     if peek == ch then
@@ -146,6 +151,35 @@ class Tokenizer(source: SourceFile):
             else
               val what = if isAtEnd then "end of file" else "new line"
               Error(s"Unclosed string literal, unexpected $what")
+          case '\'' =>
+            maybePeek match
+              case Some('\\') =>
+                advance()
+                val token: Token | Error =
+                  if expectChar('n') then
+                    Token.CHAR('\n')
+                  else if expectChar('r') then
+                    Token.CHAR('\r')
+                  else if expectChar('t') then
+                    Token.CHAR('\t')
+                  else if expectChar('\\') then
+                    Token.CHAR('\\')
+                  else
+                    Error(s"Unrecognised escape character")
+                if token.isInstanceOf[Error] then
+                  token
+                else
+                  if expectChar('\'') then
+                    token
+                  else
+                    Error(s"Unenclosed character literal")
+              case Some(ch) =>
+                advance()
+                if expectChar('\'') then
+                  Token.CHAR(ch)
+                else
+                  Error(s"Unenclosed character literal")
+              case None => Error(s"Unenclosed character literal")
           case '=' if expectChar('>') => Token.FAT_ARROW()
           case '=' if expectChar('=') => Token.DOUBLE_EQUAL()
           case '=' => Token.EQUAL()

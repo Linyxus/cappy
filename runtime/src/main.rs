@@ -29,9 +29,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         number
     });
 
+    let println_char = Func::wrap(&mut store, |i: i32| {
+        let ch = char::from_u32(i as u32).unwrap();
+        print!("{}", ch);
+    });
+
     let module = Module::from_file(&engine, wasm_file_path)?;
 
-    let instance = Instance::new(&mut store, &module, &[println_i32.into(), read_i32.into()])?;
+    let instance = Instance::new(&mut store, &module, &[println_i32.into(), read_i32.into(), println_char.into()])?;
     //let instance = Instance::new(&mut store, &module, &[])?;
 
     let entrypoint = instance.get_func(&mut store, "entrypoint")

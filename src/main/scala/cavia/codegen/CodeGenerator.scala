@@ -212,6 +212,13 @@ object CodeGenerator:
         Instruction.Call(Symbol.I32Println),
         Instruction.I32Const(0)
       )
+      case PrimitiveOp.PutChar =>
+        val arg :: Nil = args: @unchecked
+        val argInstrs = genTerm(arg)
+        argInstrs ++ List(
+          Instruction.Call(Symbol.PutChar),
+          Instruction.I32Const(0)
+        )
       case PrimitiveOp.I32Read => argInstrs ++ List(Instruction.Call(Symbol.I32Read))
       case PrimitiveOp.StructSet =>
         val Expr.Term.Select(base, fieldInfo) :: rhs :: Nil = args: @unchecked
@@ -318,6 +325,7 @@ object CodeGenerator:
       case Expr.Type.Base(Expr.BaseType.I32) => ValType.I32
       case Expr.Type.Base(Expr.BaseType.UnitType) => ValType.I32
       case Expr.Type.Base(Expr.BaseType.BoolType) => ValType.I32
+      case Expr.Type.Base(Expr.BaseType.CharType) => ValType.I32
       case Expr.Type.Capturing(inner, _) => translateType(inner)
       case Expr.Type.TermArrow(params, result) =>
         val funcType = computeFuncType(tpe)
@@ -351,6 +359,7 @@ object CodeGenerator:
     case Term.SymbolRef(sym) => Set.empty
     case Term.StrLit(value) => Set.empty
     case Term.IntLit(value) => Set.empty
+    case Term.CharLit(value) => Set.empty
     case Term.BoolLit(value) => Set.empty
     case Term.UnitLit() => Set.empty
     case Term.TermLambda(params, body, _) =>
@@ -482,6 +491,7 @@ object CodeGenerator:
         case ValType.I64 => List(Instruction.I64Const(value))
         case _ => assert(false, s"Unsupported type for int literal: ${t.tpe}")
     case Term.UnitLit() => List(Instruction.I32Const(0))
+    case Term.CharLit(value) => List(Instruction.I32Const(value.toInt))
     case Term.BoolLit(value) => if value then List(Instruction.I32Const(1)) else List(Instruction.I32Const(0))
     case Term.PrimOp(arrayOp: Expr.ArrayPrimitiveOp, targs, args) =>
       args match
@@ -723,6 +733,7 @@ object CodeGenerator:
   def emitDefaultImports()(using Context): Unit =
     emitImportFunc(ImportFunc("", "", Symbol.I32Println, I32PrintlnType))
     emitImportFunc(ImportFunc("", "", Symbol.I32Read, I32ReadType))
+    emitImportFunc(ImportFunc("", "", Symbol.PutChar, PutCharType))
 
   def emitDefaultMemory()(using Context): Unit =
     val memory = Memory(Symbol.Memory, 1)
