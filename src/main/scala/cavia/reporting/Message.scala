@@ -1,0 +1,18 @@
+package cavia
+package reporting
+import core.*
+
+case class MessagePart(lines: List[String], pos: SourcePos)
+
+case class Message(parts: List[MessagePart]):
+  def show: String =
+    val partsStr = parts.map: part =>
+      Printer.showSourcePos(part.pos, part.lines)
+    partsStr.mkString("\n")
+
+object Message:
+  def simple(msg: String, pos: SourcePos): Message =
+    Message(List(MessagePart(List(msg), pos)))
+
+case class EntityWithProvenance(entity: String, provenancePos: SourcePos, provenance: String)
+

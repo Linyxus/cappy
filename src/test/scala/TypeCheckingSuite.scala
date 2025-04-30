@@ -37,7 +37,7 @@ class TypeCheckingSuite extends munit.FunSuite:
           testCase.checkFile match
             case None =>
             case Some(expectedStr) =>
-              val actualStr = Printer.showSourcePos(err.pos, List(err.toString))
+              val actualStr = err.asMessage.show
               val outputPath = testCase.path.resolveSibling(testCase.path.getFileName.toString.replace(".scala", ".actual"))
               val expectedPath = testCase.path.resolveSibling(testCase.path.getFileName.toString.replace(".scala", ".check"))
               writeOutput(actualStr, outputPath)

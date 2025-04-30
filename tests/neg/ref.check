@@ -1,4 +1,14 @@
 17 |   par[{a}, {op}](printA, op)
    |   ^^^^^^^^^^^^^^
 
-     Separation error: {a} and {op} are not separated
+     Separation error: {a} and {op} are not separated, where
+
+17 |   par[{a}, {op}](printA, op)
+   |       ^^^
+
+     {a} comes from this argument
+
+17 |   par[{a}, {op}](printA, op)
+   |            ^^^^
+
+     and {op} comes from this argument

@@ -5,7 +5,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.boundary, boundary.break
 import core.*
 import ast.*
-import reporting.trace
+import reporting.*
 
 object TypeChecker:
   import Expr.*
@@ -55,19 +55,31 @@ object TypeChecker:
         freshLevel = 0
       )
 
+
   enum TypeError extends Positioned:
     case UnboundVariable(name: String, addenda: String = "")
     case TypeMismatch(expected: String, actual: String)
     case LeakingLocalBinder(tp: String)
-    case SeparationError(cs1: String, cs2: String)
+    case SeparationError(cs1: EntityWithProvenance, cs2: EntityWithProvenance)
     case GeneralError(msg: String)
 
-    override def toString(): String = this match
+    def show: String = this match
       case UnboundVariable(name, addenda) => s"Unbound variable: $name$addenda"
       case TypeMismatch(expected, actual) => s"Type mismatch: expected $expected, but got $actual"
       case LeakingLocalBinder(tp) => s"Leaking local binder: $tp"
       case SeparationError(cs1, cs2) => s"Separation error: $cs1 and $cs2 are not separated"
       case GeneralError(msg) => msg
+
+    def asMessage: Message = this match
+      case SeparationError(entity1, entity2) =>
+        val parts = List(
+          MessagePart(List(s"Separation error: ${entity1.entity} and ${entity2.entity} are not separated, where"), this.pos),
+          MessagePart(List(s"${entity1.entity} comes from ${entity1.provenance}"), entity1.provenancePos),
+          MessagePart(List(s"and ${entity2.entity} comes from ${entity2.provenance}"), entity2.provenancePos),
+        )
+        Message(parts)
+      case _ => Message.simple(show, pos)
+    
 
   def ctx(using myCtx: Context): Context = myCtx
   
@@ -616,8 +628,6 @@ object TypeChecker:
           term1.tpe.stripCaptures match
             case funTpe @ Type.TypeArrow(formals, resultType) => 
               val typeArgs = checkTypeArgs(targs, formals, t.pos).!!
-              val captureArgs = typeArgs.collect:
-                case cs: CaptureSet => cs
               val resultType1 = substituteType(resultType, typeArgs)
             //println(s"checkTypeApply $resultType --> $resultType1, typeArgs = $typeArgs")
               val resultTerm = Term.TypeApply(term1, typeArgs).withPosFrom(t).withTpe(resultType1)
@@ -626,12 +636,18 @@ object TypeChecker:
                 case _: VarRef =>
                 case _ =>
                   resultTerm.withMoreCV(funTpe.captureSet)
+              val captureArgsWithDesc: List[(CaptureSet, EntityWithProvenance)] = (targs `zip` typeArgs).collect:
+                case (targ: Syntax.CaptureSet, cs: CaptureSet) => 
+                  (cs, EntityWithProvenance(cs.show, targ.pos, "this argument"))
               val signature = funTpe.signatureCaptureSet
-              val todoCaptureSets = signature :: captureArgs
+              val signatureWithDesc = (signature, EntityWithProvenance(signature.show, term.pos, "the function's context"))
+              val todoCaptureSets = signatureWithDesc :: captureArgsWithDesc
               for i <- 0 until todoCaptureSets.length do
                 for j <- i + 1 until todoCaptureSets.length do
-                  if !checkSeparation(todoCaptureSets(i), todoCaptureSets(j)) then
-                    sorry(TypeError.SeparationError(todoCaptureSets(i).show, todoCaptureSets(j).show).withPos(t.pos))
+                  val (cs1, hint1) = todoCaptureSets(i)
+                  val (cs2, hint2) = todoCaptureSets(j)
+                  if !checkSeparation(cs1, cs2) then
+                    sorry(TypeError.SeparationError(hint1, hint2).withPos(t.pos))
               instantiateFresh(resultTerm)
             case _ => 
               sorry(TypeError.GeneralError(s"Expected a function, but got $term1.tpe.show").withPos(t.pos))
@@ -802,7 +818,7 @@ object TypeChecker:
         case Type.TermArrow(formals, resultType) =>
           if args.length != formals.length then
             sorry(TypeError.GeneralError(s"Argument number mismatch, expected ${formals.length}, but got ${args.length}").withPos(srcPos))
-          def go(xs: List[(Syntax.Term, TermBinder)], acc: List[Term], captureSetAcc: List[(Boolean, CaptureSet)]): (List[Term], Type, List[(Boolean, CaptureSet)]) = xs match
+          def go(xs: List[(Syntax.Term, TermBinder)], acc: List[Term], captureSetAcc: List[(Boolean, CaptureSet, EntityWithProvenance)]): (List[Term], Type, List[(Boolean, CaptureSet, EntityWithProvenance)]) = xs match
             case Nil =>
               val args = acc.reverse
               (args, substitute(resultType, args), captureSetAcc)
@@ -817,16 +833,19 @@ object TypeChecker:
               //println(s"checkArg $arg, expected = $formal1 (from $formal)")
               val arg1 = checkTerm(arg, expected = expectedType).!!
               val css = localSets.map(_.solve()).map: cs =>
-                (formal.isConsume, cs)
+                (formal.isConsume, cs, EntityWithProvenance(cs.show, arg.pos, "this argument"))
               go(xs, arg1 :: acc, css ++ captureSetAcc)
           val (args1, outType, css) = go(args `zip` (formals), Nil, Nil)
           // perform separation check
           val sigCaptures = funType.signatureCaptureSet
-          val css1 = (css.map(_._2)) ++ (sigCaptures :: Nil)
+          val sigCapturesWithDesc = (sigCaptures, EntityWithProvenance(sigCaptures.show, srcPos, "the function's context"))
+          val css1 = (css.map(x => (x._2, x._3))) ++ (sigCapturesWithDesc :: Nil)
           for i <- 0 until css1.length do
             for j <- i + 1 until css1.length do
-              if !checkSeparation(css1(i), css1(j)) then
-                sorry(TypeError.SeparationError(css1(i).show, css1(j).show).withPos(srcPos))
+              val (cs1, hint1) = css1(i)
+              val (cs2, hint2) = css1(j)
+              if !checkSeparation(cs1, cs2) then
+                sorry(TypeError.SeparationError(hint1, hint2).withPos(srcPos))
           val toConsume = css.filter(_._1).map(_._2).reduceLeftOption(_ ++ _).getOrElse(CaptureSet.empty)
           val consumedSet = tryConsume(toConsume, srcPos).!!
           (args1, outType, consumedSet)

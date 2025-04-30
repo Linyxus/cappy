@@ -27,19 +27,19 @@ import java.nio.file.*
       val mod = TypeChecker.checkModule(result)(using TypeChecker.Context.empty)
       mod match
         case Left(err) => 
-          println(Printer.showSourcePos(err.pos, List(err.toString)))
+          println(err.asMessage.show)
         case Right(mod) =>
           println(ExprPrinter.show(mod)(using TypeChecker.Context.empty))
-          given genCtx: CodeGenerator.Context = CodeGenerator.Context()
-          CodeGenerator.genModule(mod)
-          val wasmMod = CodeGenerator.finalize
-          val outputCode = wasmMod.show
-          println(s"--- wasm module")
-          println(outputCode)
-          // println(s"... too long to print ...")
+          // given genCtx: CodeGenerator.Context = CodeGenerator.Context()
+          // CodeGenerator.genModule(mod)
+          // val wasmMod = CodeGenerator.finalize
+          // val outputCode = wasmMod.show
+          // println(s"--- wasm module")
+          // println(outputCode)
+          // // println(s"... too long to print ...")
 
-          val inputPath = Paths.get(path)
-          val outputName = inputPath.getFileName.toString.replace(".scala", ".wat")
-          val outputPath = inputPath.getParent.resolve(outputName)
-          Files.writeString(outputPath, outputCode)
-          println(s"--- wrote to $outputPath")
+          // val inputPath = Paths.get(path)
+          // val outputName = inputPath.getFileName.toString.replace(".scala", ".wat")
+          // val outputPath = inputPath.getParent.resolve(outputName)
+          // Files.writeString(outputPath, outputCode)
+          // println(s"--- wrote to $outputPath")

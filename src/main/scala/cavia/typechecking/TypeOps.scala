@@ -571,6 +571,7 @@ class CollectSignature extends TypeMap:
         root match
           case Term.BinderRef(idx) if idx < localBinders.size =>
           case root => collected += ref
+      case CaptureRef.CAP() => // do not collect general caps
       case _ => collected += ref
     CaptureSet(ref :: Nil)
 
