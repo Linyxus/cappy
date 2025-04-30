@@ -24,34 +24,64 @@ def alloc(size: i32): i32 =
     else
       if current.size >= size then
         val newSize = current.size - size
-        val newNext = current + size
         current.setSize(size)
-        setHead(newNext)
-        newNext.setSize(newSize)
-        newNext.setNext(current.next)
+        if newSize == 0 then
+          setHead(current.next)
+        else
+          val newNext = current + size
+          setHead(newNext)
+          newNext.setSize(newSize)
+          newNext.setNext(current.next)
         current + HEAD_SIZE
       else go(current.next)
   go(getHead())
 // Deallocate a block
 def free(ptr: i32): Unit =
-  val ptr = ptr - HEAD_SIZE
-  ptr.setNext(getHead())
-  setHead(ptr)
+  def isAdj(p1: i32, p2: i32): bool =
+    (p1 + p1.size) == p2
+  def go(prevPtr: i32, curPtr: i32, accPtr: i32): Unit =
+    if curPtr < 0 then
+      // Adjecent block not found in free list.
+      // Simply prepend the freed block to the free list
+      if prevPtr < 0 then
+        accPtr.setNext(-1)
+      else
+        accPtr.setNext(getHead())
+      setHead(accPtr)
+    else if isAdj(curPtr, accPtr) then
+      // [ current ] [ acc ]
+      curPtr.setSize(curPtr.size + accPtr.size)
+      if prevPtr >= 0 then
+        prevPtr.setNext(curPtr.next)
+      go(prevPtr, curPtr.next, curPtr)
+    else if isAdj(accPtr, curPtr) then
+      // [ acc ] [ current ]
+      accPtr.setSize(accPtr.size + curPtr.size)
+      if prevPtr >= 0 then
+        prevPtr.setNext(curPtr.next)
+      go(prevPtr, curPtr.next, accPtr)
+    else
+      // Non-adjecent block
+      go(curPtr, curPtr.next, accPtr)
+  go(-1, getHead(), ptr - HEAD_SIZE)
 
 def debug(): Unit =
   def go(ptr: i32): Unit =
     if ptr >= 0 then
       #i32println(ptr.size)
       #i32println(ptr.next)
-      #i32println(9999999)
+      #i32println(1234567890)
       go(ptr.next)
   go(getHead())
 
 def main(): Unit =
   val ptr1 = alloc(256)
   val ptr2 = alloc(32)
-  val ptr3 = alloc(1024)
+  //val ptr3 = alloc(1024)
+  //val ptr4 = alloc(10000)
   free(ptr1)
   free(ptr2)
+  //free(ptr3)
+  //free(ptr4)
   debug()
 
