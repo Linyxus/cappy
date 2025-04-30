@@ -14,7 +14,7 @@ object TypeChecker:
   import Inference.*
 
   /** Type checking context. */
-  case class Context(binders: List[Binder], symbols: List[Symbol], inferenceState: InferenceState, freshLevel: Int = 0):
+  case class Context(binders: List[Binder], symbols: List[Symbol], inferenceState: InferenceState, consumedPeaks: CaptureSet = CaptureSet.empty, freshLevel: Int = 0):
     /** Extend the context with a list of binders. */
     def extend(bds: List[Binder]): Context =
       if bds.isEmpty then this
@@ -42,8 +42,18 @@ object TypeChecker:
     def newFreshLevel: Context =
       copy(freshLevel = freshLevel + 1)
 
+    def moreConsumedPeaks(peaks: CaptureSet): Context =
+      copy(consumedPeaks = consumedPeaks ++ peaks)
+
   object Context:
-    def empty: Context = Context(Nil, Nil, InferenceState.empty, 0)
+    def empty: Context = 
+      Context(
+        Nil, 
+        Nil, 
+        InferenceState.empty, 
+        consumedPeaks = CaptureSet.empty, 
+        freshLevel = 0
+      )
 
   enum TypeError extends Positioned:
     case UnboundVariable(name: String, addenda: String = "")
@@ -446,6 +456,10 @@ object TypeChecker:
             case _ => sorry(TypeError.UnboundVariable(name).withPos(t.pos))
           //if !tpe.isPure then markFree(ref)
           val cv = if !tpe.isPure then ref.asSingletonType.singletonCaptureSet else CaptureSet.empty
+
+          if !checkSeparation(cv, ctx.consumedPeaks) then
+            sorry(TypeError.GeneralError(s"This uses a consumed capability").withPos(t.pos))
+
           tpe.stripCaptures match
             case LazyType(resultType) => 
               val t1 = Term.TypeApply(ref, Nil).withPosFrom(t)
@@ -549,14 +563,8 @@ object TypeChecker:
                 val (bd1, boundExpr1, isRecursive) = goDefinition(d1).!!
 
                 // typecheck the body
-                val bodyExpr = go(ds)(using ctx.extend(bd1 :: Nil)).!!
-                // drop local cap instances from the cv of the body
-                // TODO: this is clearly wrong
-                // bodyExpr.withCV:
-                //   val oldCV = bodyExpr.cv
-                //   val newCV = oldCV.elems.filter: cref =>
-                //     !bd1.localCapInsts.contains(cref)
-                //   CaptureSet(newCV)
+                val peaksConsumed = consumedPeaks(boundExpr1.cv)
+                val bodyExpr = go(ds)(using ctx.extend(bd1 :: Nil).moreConsumedPeaks(peaksConsumed)).!!
 
                 val resType = bodyExpr.tpe
                 val approxElems = bd1.tpe.captureSet.elems.flatMap: cref =>
@@ -761,6 +769,14 @@ object TypeChecker:
               case _ => sorry(TypeError.GeneralError(s"Cannot consume ${cref.show}").withPos(srcPos))
           case _ => sorry(TypeError.GeneralError(s"Cannot consume ${cref.show}").withPos(srcPos))
       consumedSet
+
+  def consumedPeaks(cv: CaptureSet)(using Context): CaptureSet =
+    val pks = computePeak(cv)
+    val elems1 = pks.elems.filter: cref =>
+      cref match
+        case QualifiedRef(AccessMode.Consume(), core) => true
+        case _ => false
+    CaptureSet(elems1)
 
   /** Check a function apply.
    * Returns the arguments, the result type, and the consumed capabilities in this apply.
