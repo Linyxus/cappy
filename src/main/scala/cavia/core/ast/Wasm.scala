@@ -59,6 +59,7 @@ object Wasm:
     case Call(funcSym: Symbol)
     case If(resultType: ValType, thenBranch: List[Instruction], elseBranch: List[Instruction])
     case ArrayNew(typeSym: Symbol)
+    case ArrayNewFixed(typeSym: Symbol, size: Int)
     case ArraySet(typeSym: Symbol)
     case ArrayGet(typeSym: Symbol)
     case ArrayLen
@@ -107,6 +108,7 @@ object Wasm:
       case RefNull(typeSym) => Some(s"ref.null ${typeSym.show}")
       case RefNullAny => Some("ref.null any")
       case ArrayNew(typeSym) => Some(s"array.new ${typeSym.show}")
+      case ArrayNewFixed(typeSym, size) => Some(s"array.new_fixed ${typeSym.show} $size")
       case ArraySet(typeSym) => Some(s"array.set ${typeSym.show}")
       case ArrayGet(typeSym) => Some(s"array.get ${typeSym.show}")
       case ArrayLen => Some(s"array.len")

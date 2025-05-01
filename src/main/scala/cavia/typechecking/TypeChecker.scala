@@ -506,7 +506,8 @@ object TypeChecker:
               sorry(TypeError.ConsumedError(cv.show, consumedPos).withPos(t.pos))
           outTerm
       case Syntax.Term.StrLit(value) => 
-        Right(Term.StrLit(value).withPosFrom(t).withTpe(Definitions.strType).withCV(CaptureSet.empty))
+        val charArrayType = Definitions.arrayType(Definitions.charType)
+        Right(Term.StrLit(value).withPosFrom(t).withTpe(charArrayType).withCV(CaptureSet.empty))
       case Syntax.Term.CharLit(value) =>
         Right(Term.CharLit(value).withPosFrom(t).withTpe(Definitions.charType).withCV(CaptureSet.empty))
       case Syntax.Term.IntLit(value) => 

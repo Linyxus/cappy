@@ -357,8 +357,8 @@ object CodeGenerator:
   def freeLocalBinders(t: Expr.Term)(using Context): Set[Int] = t match
     case Term.BinderRef(idx) => Set(idx)
     case Term.SymbolRef(sym) => Set.empty
-    case Term.StrLit(value) => Set.empty
     case Term.IntLit(value) => Set.empty
+    case Term.StrLit(value) => Set.empty
     case Term.CharLit(value) => Set.empty
     case Term.BoolLit(value) => Set.empty
     case Term.UnitLit() => Set.empty
@@ -493,6 +493,11 @@ object CodeGenerator:
     case Term.UnitLit() => List(Instruction.I32Const(0))
     case Term.CharLit(value) => List(Instruction.I32Const(value.toInt))
     case Term.BoolLit(value) => if value then List(Instruction.I32Const(1)) else List(Instruction.I32Const(0))
+    case Term.StrLit(value) => 
+      val typeSym = createArrayType(ArrayType(ValType.I32, mutable = true))
+      val size = value.length
+      val elemInstrs: List[Instruction] = value.map(ch => Instruction.I32Const(ch.toInt)).toList
+      elemInstrs ++ List(Instruction.ArrayNewFixed(typeSym, size))
     case Term.PrimOp(arrayOp: Expr.ArrayPrimitiveOp, targs, args) =>
       args match
         case Term.SymbolRef(sym) :: _ if sym eq Expr.Definitions.MemorySymbol => 
