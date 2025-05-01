@@ -1,13 +1,13 @@
 // Library functions
 // 1. String I/O
 def printChar(ch: char): Unit = #putchar(ch)
-def print(str: array[char]^): Unit =
+def print(consume str: array[char]^): Unit =
   def recur(cur: i32): Unit =
     if cur < str.size then
       printChar(str(cur))
       recur(cur + 1)
   recur(0)
-def println(str: array[char]^): Unit =
+def println(consume str: array[char]^): Unit =
   print(str)
   printChar('\n')
 // 1.1 String operations
@@ -26,6 +26,12 @@ def concatStr(s1: array[char]^, s2: array[char]^): array[char]^ =
   result
 extension (s1: array[char]^)
   def concat(s2: array[char]^): array[char]^ = concatStr(s1, s2)
+def repeatStr(s: array[char]^, n: i32): array[char]^ =
+  if n <= 0 then s
+  else 
+    val res = repeatStr(s, n-1)
+    val s1 = s.concat(res)
+    s1
 // end of library functions
 
 def main(): Unit =
@@ -34,4 +40,6 @@ def main(): Unit =
   println(s)
   val s1 = "你好".concat("世界")
   println(s1)
+  val s2 = s1.concat("!!!!")   // error, `s1` is already consumed
+  println(s2)
 

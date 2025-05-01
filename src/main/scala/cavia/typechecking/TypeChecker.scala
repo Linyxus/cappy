@@ -688,8 +688,11 @@ object TypeChecker:
         case None => Definitions.unitType
       val cond1 = checkTerm(cond, expected = Definitions.boolType).!!
       val thenBranch1 = checkTerm(thenBranch, expected = expected1).!!
-      val elseBranch1 = checkTerm(elseBranch, expected = thenBranch1.tpe).!!
+      val expected2 = if expected1.exists then expected1 else thenBranch1.tpe
+      val elseBranch1 = checkTerm(elseBranch, expected = expected2).!!
       val finalTpe = thenBranch1.tpe
+      // TODO: tighten the screws of if typing
+      // We probably need to find a union type
       Term.If(cond1, thenBranch1, elseBranch1).withPos(srcPos).withTpe(finalTpe).withCVFrom(cond1, thenBranch1, elseBranch1)
 
   def checkInfix(op: Syntax.InfixOp, lhs: Syntax.Term, rhs: Syntax.Term, expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
