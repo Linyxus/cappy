@@ -307,6 +307,10 @@ object Expr:
     case Sorry
     /** Print a character */
     case PutChar extends PrimitiveOp
+    /** Convert a value to a pure value in an unsafe way */
+    case UnsafeAsPure extends PrimitiveOp
+    /** Get the elapsed time since the start of the program in milliseconds */
+    case PerfCounter extends PrimitiveOp
 
     override def toString: String = this match
       case I32Add => "#i32add"
@@ -347,6 +351,8 @@ object Expr:
       case ArrayGet => "#arrayget"
       case ArrayLen => "#arraylen"
       case PutChar => "#putchar"
+      case PerfCounter => "#perfcounter"
+      case UnsafeAsPure => "#unsafeAsPure"
 
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match
@@ -384,6 +390,8 @@ object Expr:
       case "newArray" => Some(PrimitiveOp.ArrayNew)
       case "sorry" => Some(PrimitiveOp.Sorry)
       case "#putchar" => Some(PrimitiveOp.PutChar)
+      case "#unsafeAsPure" => Some(PrimitiveOp.UnsafeAsPure)
+      case "#perfcounter" => Some(PrimitiveOp.PerfCounter)
       case _ => None
 
   sealed trait Closure

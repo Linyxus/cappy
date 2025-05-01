@@ -6,6 +6,7 @@ import scala.util.boundary, boundary.break
 import core.*
 import ast.*
 import reporting.*
+import cavia.core.ast.Expr.Term.PrimOp
 
 object TypeChecker:
   import Expr.*
@@ -934,6 +935,15 @@ object TypeChecker:
     go(args, formals, Nil).map: args1 =>
       Term.PrimOp(op, Nil, args1).withPos(pos).withTpe(Type.Base(resType).withKind(TypeKind.Star)).withCVFrom(args1*)
 
+  def checkUnsafeAsPure(args: List[Syntax.Term], pos: SourcePos)(using Context): Result[Term] =
+    hopefully:
+      args match
+        case arg :: Nil =>
+          val arg1 = checkTerm(arg).!!
+          val outType = arg1.tpe.stripCaptures
+          PrimOp(PrimitiveOp.UnsafeAsPure, Nil, List(arg1)).withPos(pos).withTpe(outType).withCVFrom(arg1)
+        case _ => sorry(TypeError.GeneralError(s"Expected one argument, but got ${args.length}").withPos(pos))
+
   def checkPrimOp(op: PrimitiveOp, args: List[Syntax.Term], expected: Type, pos: SourcePos)(using Context): Result[Term] =
     op match
       case PrimitiveOp.I32Add => checkPrimOpArgs(PrimitiveOp.I32Add, args, List(BaseType.I32, BaseType.I32), BaseType.I32, pos)
@@ -968,6 +978,8 @@ object TypeChecker:
       case PrimitiveOp.I32Neg => checkPrimOpArgs(PrimitiveOp.I32Neg, args, List(BaseType.I32), BaseType.I32, pos)
       case PrimitiveOp.I64Neg => checkPrimOpArgs(PrimitiveOp.I64Neg, args, List(BaseType.I64), BaseType.I64, pos)
       case PrimitiveOp.PutChar => checkPrimOpArgs(PrimitiveOp.PutChar, args, List(BaseType.CharType), BaseType.UnitType, pos)
+      case PrimitiveOp.PerfCounter => checkPrimOpArgs(PrimitiveOp.PerfCounter, args, List(), BaseType.I32, pos)
+      case PrimitiveOp.UnsafeAsPure => checkUnsafeAsPure(args, pos)
       case PrimitiveOp.Sorry =>
         hopefully:
           if expected.exists then

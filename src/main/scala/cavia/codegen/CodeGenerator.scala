@@ -219,7 +219,9 @@ object CodeGenerator:
           Instruction.Call(Symbol.PutChar),
           Instruction.I32Const(0)
         )
+      case PrimitiveOp.UnsafeAsPure => args.flatMap(genTerm)
       case PrimitiveOp.I32Read => argInstrs ++ List(Instruction.Call(Symbol.I32Read))
+      case PrimitiveOp.PerfCounter => argInstrs ++ List(Instruction.Call(Symbol.PerfCounter))
       case PrimitiveOp.StructSet =>
         val Expr.Term.Select(base, fieldInfo) :: rhs :: Nil = args: @unchecked
         val rhsInstrs = genTerm(rhs)
@@ -314,7 +316,7 @@ object CodeGenerator:
         typeSym
       case Some(symbol) => symbol
 
-  def computeArrayType(tpe: Expr.Type)(using Context): ArrayType = tpe.stripCaptures match
+  def computeArrayType(tpe: Expr.Type)(using Context): ArrayType = tpe.dealiasTypeVar.stripCaptures match
     case PrimArrayType(elemType) => ArrayType(translateType(elemType), mutable = true)
     case _ => assert(false, s"Unsupported type: $tpe")
 
@@ -736,9 +738,10 @@ object CodeGenerator:
     case _ => assert(false, s"Unsupported type for making default value: $tp")
 
   def emitDefaultImports()(using Context): Unit =
-    emitImportFunc(ImportFunc("", "", Symbol.I32Println, I32PrintlnType))
-    emitImportFunc(ImportFunc("", "", Symbol.I32Read, I32ReadType))
-    emitImportFunc(ImportFunc("", "", Symbol.PutChar, PutCharType))
+    emitImportFunc(ImportFunc("host", "println_i32", Symbol.I32Println, I32PrintlnType))
+    emitImportFunc(ImportFunc("host", "read_i32", Symbol.I32Read, I32ReadType))
+    emitImportFunc(ImportFunc("host", "println_char", Symbol.PutChar, PutCharType))
+    emitImportFunc(ImportFunc("host", "get_timestamp", Symbol.PerfCounter, FuncType(Nil, Some(ValType.I32))))
 
   def emitDefaultMemory()(using Context): Unit =
     val memory = Memory(Symbol.Memory, 1)

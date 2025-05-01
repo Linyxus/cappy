@@ -153,6 +153,7 @@ object Wasm:
     val I32Read = fresh("__i32read")
     val Memory = fresh("__memory")
     val PutChar = fresh("__putchar")
+    val PerfCounter = fresh("__perf_counter")
 
   val I32PrintlnType = FuncType(List(ValType.I32), None)
   val I32ReadType = FuncType(List(), Some(ValType.I32))
