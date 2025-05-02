@@ -341,10 +341,9 @@ object TypeChecker:
                 val tpe = checkType(t).!!
                 if !tpe.isPure then
                   sorry(TypeError.GeneralError(s"Type argument ${tpe.show} is not pure").withPosFrom(t))
-                if TypeComparer.checkSubtype(tpe, formal1) then
-                  tpe
-                else
+                if !TypeComparer.checkSubtype(tpe, formal1) then
                   sorry(TypeError.GeneralError(s"Type argument ${tpe.show} does not conform to the bound ${f.show}").withPosFrom(t))
+                tpe
               case (t: Syntax.CaptureSet, f: CaptureSet) => 
                 val f1 = substituteTypeInCaptureSet(f, checkedAcc.reverse, isParamType = true)
                 val cs1 = checkCaptureSet(t).!!

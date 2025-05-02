@@ -19,26 +19,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let engine = Engine::new(&config)?;
     let mut store = Store::new(&engine, ());
 
-    // let println_i32 = Func::wrap(&mut store, |i: i32| {
-    //     println!("{}", i);
-    // });
-
-    // let read_i32 = Func::wrap(&mut store, || -> i32 {
-    //     let mut input = String::new();
-    //     std::io::stdin().read_line(&mut input).unwrap();
-    //     let number: i32 = input.trim().parse().unwrap();
-    //     number
-    // });
-
-    // let println_char = Func::wrap(&mut store, |i: i32| {
-    //     let ch = char::from_u32(i as u32).unwrap();
-    //     print!("{}", ch);
-    // });
-
-    // let get_timestamp = Func::wrap(&mut store, move || -> i32 {
-    //     now.elapsed().as_millis() as i32
-    // });
-
     let mut linker = Linker::new(&engine);
 
     let now = Instant::now();
@@ -66,16 +46,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let instance = 
       linker.instantiate(&mut store, &module)?;
-    //   Instance::new(
-    //     &mut store, 
-    //     &module, 
-    //     &[
-    //         println_i32.into(), 
-    //         read_i32.into(), 
-    //         println_char.into(), 
-    //         get_timestamp.into()
-    //     ])?;
-    //let instance = Instance::new(&mut store, &module, &[])?;
 
     let entrypoint = instance.get_func(&mut store, "entrypoint")
         .expect("`entrypoint` was not an exported function");
