@@ -6,5 +6,5 @@ def main(): Unit =
     if i <= 0 then acc
     else go(i - 1, acc + i)
   val start = #perfcounter()
-  #i32println(go(10000000, 0))
+  #i32println(go1(10000000, 0))
   #i32println(#perfcounter() - start)
