@@ -184,6 +184,7 @@ object TypeChecker:
     case "Int" => Some(Definitions.intType)
     case "String" => Some(Definitions.strType)
     case "Any" => Some(Definitions.anyType)
+    case "Nothing" => Some(Definitions.nothingType)
     case "i32" => Some(Definitions.i32Type)
     case "i64" => Some(Definitions.i64Type)
     case "bool" => Some(Definitions.boolType)
@@ -977,11 +978,7 @@ object TypeChecker:
       case PrimitiveOp.PutChar => checkPrimOpArgs(PrimitiveOp.PutChar, args, List(BaseType.CharType), BaseType.UnitType, pos)
       case PrimitiveOp.PerfCounter => checkPrimOpArgs(PrimitiveOp.PerfCounter, args, List(), BaseType.I32, pos)
       case PrimitiveOp.UnsafeAsPure => checkUnsafeAsPure(args, pos)
-      case PrimitiveOp.Sorry =>
-        hopefully:
-          if expected.exists then
-            Term.PrimOp(PrimitiveOp.Sorry, Nil, Nil).withPos(pos).withTpe(expected).withCV(CaptureSet.empty)
-          else sorry(TypeError.GeneralError("no expected type for sorry").withPos(pos))
+      case PrimitiveOp.Sorry => Right(Term.PrimOp(PrimitiveOp.Sorry, Nil, Nil).withPos(pos).withTpe(Definitions.nothingType).withCV(CaptureSet.empty))
       case PrimitiveOp.ArrayNew =>
         hopefully:
           given ctx1: Context = ctx.newInferenceScope

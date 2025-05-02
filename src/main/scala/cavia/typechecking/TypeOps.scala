@@ -287,6 +287,7 @@ class AvoidLocalBinder(tpe: Type)(using ctx: TypeChecker.Context) extends Approx
 object TypePrinter:
   def show(base: BaseType): String = base match
     case BaseType.AnyType => "Any"
+    case BaseType.NothingType => "Nothing"
     case BaseType.IntType => "Int"
     case BaseType.StrType => "String"
     case BaseType.UnitType => "Unit"

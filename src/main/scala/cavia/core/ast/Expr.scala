@@ -54,6 +54,7 @@ object Expr:
     case UnitType
     case CharType
     case AnyType
+    case NothingType
     case BoolType  // will be represented as i32
     /** Primitive types in WebAssembly */
     case I32, I64
@@ -443,6 +444,7 @@ object Expr:
 
   object Definitions:
     def anyType: Type = Type.Base(BaseType.AnyType).withKind(TypeKind.Star)
+    def nothingType: Type = Type.Base(BaseType.NothingType).withKind(TypeKind.Star)
     def strType: Type = Type.Base(BaseType.StrType).withKind(TypeKind.Star)
     def intType: Type = Type.Base(BaseType.IntType).withKind(TypeKind.Star)
     def charType: Type = Type.Base(BaseType.CharType).withKind(TypeKind.Star)
