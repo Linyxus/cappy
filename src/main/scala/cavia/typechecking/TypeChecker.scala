@@ -235,10 +235,6 @@ object TypeChecker:
     val result = (ref1.isReadOnly && ref2.isReadOnly) || (ref1.core != ref2.core && !derivesFrom(ref1.core, ref2.core) && !derivesFrom(ref2.core, ref1.core))
     result
 
-  def checkTypeArg(targ: (Syntax.Type | Syntax.CaptureSet))(using Context): Result[Type | CaptureSet] = targ match
-    case targ: Syntax.Type => checkType(targ)
-    case targ: Syntax.CaptureSet => checkCaptureSet(targ)
-    
   def checkType(tpe: Syntax.Type)(using Context): Result[Type] = tpe match
     case Syntax.Type.Ident(name) => 
       def tryBaseType: Result[Type] = findBaseType(name) match
@@ -343,6 +339,8 @@ object TypeChecker:
               case (t: Syntax.Type, f: Type) =>
                 val formal1 = substituteType(f, checkedAcc.reverse, isParamType = true)
                 val tpe = checkType(t).!!
+                if !tpe.isPure then
+                  sorry(TypeError.GeneralError(s"Type argument ${tpe.show} is not pure").withPosFrom(t))
                 if TypeComparer.checkSubtype(tpe, formal1) then
                   tpe
                 else
