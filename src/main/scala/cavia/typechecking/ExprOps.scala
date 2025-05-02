@@ -221,4 +221,92 @@ object ExprPrinter:
     val printer = ExprPrinter()
     printer.showModule(mod)
     printer.result()
-    
+
+extension (self: Term)
+  def like(other: Term)(using Context): self.type =
+    self.setCV(other.cv)
+    self.setTpe(other.tpe)
+    if other.hasPos then
+      self.setPos(other.pos)
+    self.setMeta(other.meta)
+    self
+
+  def derivedBinderRef(idx: Int)(using Context): Term =
+    self match
+      case Term.BinderRef(idx1) if idx1 == idx => self
+      case _ => Term.BinderRef(idx).like(self)
+
+  def derivedSymbolRef(sym: DefSymbol)(using Context): Term =
+    self match
+      case Term.SymbolRef(sym1) if sym1 eq sym => self
+      case _ => Term.SymbolRef(sym).like(self)
+
+  def derivedStrLit(value: String)(using Context): Term =
+    self match
+      case Term.StrLit(value1) if value1 == value => self
+      case _ => Term.StrLit(value).like(self)
+
+  def derivedIntLit(value: Int)(using Context): Term =
+    self match
+      case Term.IntLit(value1) if value1 == value => self
+      case _ => Term.IntLit(value).like(self)
+
+  def derivedCharLit(value: Char)(using Context): Term =
+    self match
+      case Term.CharLit(value1) if value1 == value => self
+      case _ => Term.CharLit(value).like(self)
+
+  def derivedUnitLit(using Context): Term =
+    self match
+      case Term.UnitLit() => self
+      case _ => Term.UnitLit().like(self)
+
+  def derivedTermLambda(params: List[Binder.TermBinder], body: Term, skolemizedBinders: List[Binder.TermBinder])(using Context): Term =
+    self match
+      case Term.TermLambda(params1, body1, skolemizedBinders1) if (params1 eq params) && (body1 eq body) && (skolemizedBinders1 eq skolemizedBinders) => self
+      case _ => Term.TermLambda(params, body, skolemizedBinders).like(self)
+
+  def derivedTypeLambda(params: List[Binder.TypeBinder | Binder.CaptureBinder], body: Term)(using Context): Term =
+    self match
+      case Term.TypeLambda(params1, body1) if (params1 eq params) && (body1 eq body) => self
+      case _ => Term.TypeLambda(params, body).like(self)
+
+  def derivedBind(binder: Binder.TermBinder, recursive: Boolean, expr: Term, body: Term)(using Context): Term =
+    self match
+      case Term.Bind(binder1, recursive1, expr1, body1) if (binder1 eq binder) && (recursive1 == recursive) && (expr1 eq expr) && (body1 eq body) => self
+      case _ => Term.Bind(binder, recursive, expr, body).like(self)
+
+  def derivedPrimOp(op: PrimitiveOp, targs: List[Type], args: List[Term])(using Context): Term =
+    self match
+      case Term.PrimOp(op1, targs1, args1) if (op1 == op) && (targs1 eq targs) && (args1 eq args) => self
+      case _ => Term.PrimOp(op, targs, args).like(self)
+
+  def derivedStructInit(sym: StructSymbol, targs: List[Type | CaptureSet], args: List[Term])(using Context): Term =
+    self match
+      case Term.StructInit(sym1, targs1, args1) if (sym1 eq sym) && (targs1 eq targs) && (args1 eq args) => self
+      case _ => Term.StructInit(sym, targs, args).like(self)
+      
+  def derivedApply(fun: Term, args: List[Term])(using Context): Term =
+    self match
+      case Term.Apply(fun1, args1) if (fun1 eq fun) && (args1 eq args) => self
+      case _ => Term.Apply(fun, args).like(self)
+      
+  def derivedTypeApply(term: Term, targs: List[Type | CaptureSet])(using Context): Term =
+    self match
+      case Term.TypeApply(term1, targs1) if (term1 eq term) && (targs1 eq targs) => self
+      case _ => Term.TypeApply(term, targs).like(self)
+
+  def derivedSelect(base: Term, field: FieldInfo)(using Context): Term =
+    self match
+      case Term.Select(base1, field1) if (base1 eq base) && (field1 eq field) => self
+      case _ => Term.Select(base, field).like(self)
+
+  def derivedIf(cond: Term, thenBranch: Term, elseBranch: Term)(using Context): Term =
+    self match
+      case Term.If(cond1, thenBranch1, elseBranch1) if (cond1 eq cond) && (thenBranch1 eq thenBranch) && (elseBranch1 eq elseBranch) => self
+      case _ => Term.If(cond, thenBranch, elseBranch).like(self)
+
+  def derivedResolveExtension(sym: ExtensionSymbol, targs: List[Type | CaptureSet], methodName: String)(using Context): Term =
+    self match
+      case Term.ResolveExtension(sym1, targs1, methodName1) if (sym1 eq sym) && (targs1 eq targs) && (methodName1 == methodName) => self
+      case _ => Term.ResolveExtension(sym, targs, methodName).like(self)
