@@ -401,7 +401,7 @@ object Expr:
 
   sealed trait Closure
 
-  enum Term extends Positioned, Typed:
+  enum Term extends Positioned, Typed, HasMetadata:
     case BinderRef(idx: Int)
     case SymbolRef(sym: DefSymbol)
     case StrLit(value: String)
