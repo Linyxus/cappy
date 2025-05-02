@@ -313,6 +313,8 @@ object Expr:
     case UnsafeAsPure extends PrimitiveOp
     /** Get the elapsed time since the start of the program in milliseconds */
     case PerfCounter extends PrimitiveOp
+    /** Return a value */
+    case Return extends PrimitiveOp
 
     override def toString: String = this match
       case I32Add => "#i32add"
@@ -355,6 +357,7 @@ object Expr:
       case PutChar => "#putchar"
       case PerfCounter => "#perfcounter"
       case UnsafeAsPure => "#unsafeAsPure"
+      case Return => "return"
 
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match

@@ -15,7 +15,7 @@ object TypeChecker:
   import Inference.*
 
   /** Type checking context. */
-  case class Context(binders: List[Binder], symbols: List[Symbol], inferenceState: InferenceState, consumedPeaks: CaptureSet = CaptureSet.empty, freshLevel: Int = 0):
+  case class Context(binders: List[Binder], symbols: List[Symbol], inferenceState: InferenceState, consumedPeaks: CaptureSet = CaptureSet.empty, freshLevel: Int = 0, defReturnType: Option[Type] = None):
     /** Extend the context with a list of binders. */
     def extend(bds: List[Binder]): Context =
       if bds.isEmpty then this
@@ -45,6 +45,9 @@ object TypeChecker:
 
     def moreConsumedPeaks(peaks: CaptureSet): Context =
       copy(consumedPeaks = consumedPeaks ++ peaks)
+
+    def withDefReturnType(tpe: Type): Context =
+      copy(defReturnType = Some(tpe))
 
   object Context:
     def empty: Context = 
@@ -802,6 +805,15 @@ object TypeChecker:
       case Syntax.PrefixOp.Not =>
         val primOp = PrimitiveOp.BoolNot
         checkPrimOp(primOp, List(term), expected, srcPos)
+      case Syntax.PrefixOp.Return =>
+        hopefully:
+          ctx.defReturnType match
+            case Some(expected) =>
+              if !expected.exists then
+                sorry(TypeError.GeneralError("you can only `return` within a `def` with an explicit return type").withPos(srcPos))
+              val term1 = checkTerm(term, expected = expected).!!
+              Term.PrimOp(PrimitiveOp.Return, Nil, List(term1)).withPos(srcPos).withTpe(Definitions.nothingType).withCVFrom(term1)
+            case None => sorry(TypeError.GeneralError("you can only `return` within a `def`").withPos(srcPos))
 
   def tryConsume(captures: CaptureSet, srcPos: SourcePos)(using Context): Result[CaptureSet] =
     hopefully:
@@ -1042,7 +1054,7 @@ object TypeChecker:
               case Some(expected) => checkType(expected).!!
             val tm = UniversalConversion()
             val expected1 = tm.apply(expectedBodyType)
-            val outTerm = checkTerm(expr, expected = expected1)
+            val outTerm = checkTerm(expr, expected = expected1)(using ctx.withDefReturnType(expectedBodyType))
             val localSets = tm.createdUniversals
             val css = localSets.map(_.solve())
             // Perform separation checking

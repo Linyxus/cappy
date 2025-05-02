@@ -59,6 +59,7 @@ object TypeComparer:
   def checkSubtype(tp1: Type, tp2: Type)(using Context): Boolean = //trace(s"checkSubtype(${tp1.show}, ${tp2.show})"):
     (tp1.dealiasTypeVar, tp2.dealiasTypeVar) match
       case (_, Type.Base(BaseType.AnyType)) => true
+      case (Type.Base(BaseType.NothingType), _) => true
       case (PrimArrayType(elemType1), Type.Base(BaseType.StrType)) => 
         // temporary hack, in the future we should have `type String = array[char]` when type definitions are added
         elemType1 == Definitions.charType

@@ -21,6 +21,9 @@ object Parsers:
     def prefix(rules: OpRule.Prefix*): OpGroup = OpGroup.PrefixGroup(rules.toList)
   import OpRule.*, OpGroup.*
   val parseTable: List[OpGroup] = List(
+    prefix(
+      Prefix(keywordP("return").map(_ => PrefixOp.Return).positioned),
+    ),
     infix(
       Infix(Assoc.Right, tokenP[Token.DOUBLE_AMP].map(_ => InfixOp.And).positioned),
       Infix(Assoc.Right, tokenP[Token.DOUBLE_BAR].map(_ => InfixOp.Or).positioned),
