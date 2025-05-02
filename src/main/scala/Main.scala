@@ -35,8 +35,8 @@ import java.nio.file.*
           val wasmMod = CodeGenerator.finalize
           val outputCode = wasmMod.show
           println(s"--- wasm module")
-          println(outputCode)
-          // println(s"... too long to print ...")
+          // println(outputCode)
+          println(s"... too long to print ...")
 
           val inputPath = Paths.get(path)
           val outputName = inputPath.getFileName.toString.replace(".scala", ".wat")

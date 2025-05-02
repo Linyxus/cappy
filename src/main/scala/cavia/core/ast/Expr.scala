@@ -210,6 +210,7 @@ object Expr:
     case Select(base: SingletonType, fieldInfo: FieldInfo) extends Type, SingletonType
     /** <notype>, a placeholder type in the implementation */
     case NoType()
+    /** A type variable, created when type inference. */
     case TypeVar(var instance: Type = NoType())
 
     def like(other: Type): this.type =

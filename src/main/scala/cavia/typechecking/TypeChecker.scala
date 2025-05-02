@@ -453,7 +453,7 @@ object TypeChecker:
         val (_, outCV) = dropLocalParams(bodyCV.elems.toList, params.length)
         val outCV1 = dropLocalFreshCaps(outCV, srcPos).!!
         val outTerm = Term.TermLambda(params, body1, skolemizedBinders = params1).withPos(srcPos)
-        val outType = Type.Capturing(Type.TermArrow(params, body1.tpe), CaptureSet(outCV1))
+        val outType = Type.Capturing(Type.TermArrow(params, body1.tpe), CaptureSet(outCV1.distinct))
         outTerm.withTpe(outType).withCV(CaptureSet.empty)
 
   def checkTypeAbstraction(params: List[TypeBinder | CaptureBinder], checkBody: Context ?=> Result[Term], srcPos: SourcePos)(using Context): Result[Term] =
