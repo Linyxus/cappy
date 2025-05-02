@@ -1,5 +1,5 @@
 def main(): Unit =
-  def foo() =
-    return 'a'
-    0
+  def foo(): char =
+    return '0'
+    '0'
   ()

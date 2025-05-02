@@ -462,13 +462,14 @@ object CodeGenerator:
           case (binder, (sym, _)) =>
             ctx1 = ctx1.withLocalSym(binder, sym)
         val bodyInstrs = genTerm(body)(using ctx1)
+        val bodyInstrs1 = maybeAddReturnCall(bodyInstrs)
         val funcResultType = funcType.resultType
         Func(
           workerSym, 
           workerFunParams, 
           funcResultType,
           locals = finalizeLocals,
-          body = selfCastInstrs ++ setLocalInstrs ++ bodyInstrs
+          body = selfCastInstrs ++ setLocalInstrs ++ bodyInstrs1
         )
     emitFunc(workerFunc)
     emitElemDeclare(ExportKind.Func, workerSym)
@@ -649,6 +650,31 @@ object CodeGenerator:
         specMap += (specSig -> structInfo)
         structInfo
 
+  def maybeAddReturnCall(body: List[Instruction])(using Context): List[Instruction] =
+    def goInstrs(instrs: List[Instruction]): Option[List[Instruction]] =
+      go(instrs.last) match
+        case None => None
+        case Some(instr) => Some(instrs.init :+ instr)
+    def go(instr: Instruction): Option[Instruction] = instr match
+      case Instruction.Call(sym) => 
+        // Change to a return call
+        Some(Instruction.ReturnCall(sym))
+      case Instruction.CallRef(sym) =>
+        // Change to a return call
+        Some(Instruction.ReturnCallRef(sym))
+      case Instruction.If(resType, thenBranch, elseBranch) =>
+        (goInstrs(thenBranch), goInstrs(elseBranch)) match
+          case (Some(thenBranch1), Some(elseBranch1)) =>
+            Some(Instruction.If(resType, thenBranch1, elseBranch1))
+          case (Some(thenBranch1), None) =>
+            Some(Instruction.If(resType, thenBranch1, elseBranch))
+          case (None, Some(elseBranch1)) =>
+            Some(Instruction.If(resType, thenBranch, elseBranch1))
+          case (None, None) =>
+            None
+      case _ => None
+    goInstrs(body).getOrElse(body)
+
   def genModuleFunction(funType: Expr.Type, funSymbol: Symbol, workerSymbol: Option[Symbol], expr: Expr.Term)(using Context): Unit = //trace(s"genModuleFunction($funType, $funSymbol, $workerSymbol, $expr)"):
     val Term.TermLambda(ps, body, _) = expr: @unchecked
     val funcType = computeFuncType(funType, isClosure = false)
@@ -663,12 +689,13 @@ object CodeGenerator:
           BinderInfo.Sym(bd, sym)
         val ctx1 = ctx.withMoreBinderInfos(binderInfos)
         val bodyInstrs = genTerm(body)(using ctx1)
+        val bodyInstrs1 = maybeAddReturnCall(bodyInstrs)
         Func(
           funSymbol,
           funcParams,
           funcType.resultType,
           locals = finalizeLocals,
-          body = bodyInstrs,
+          body = bodyInstrs1,
         )
     emitFunc(func)
     workerSymbol match
