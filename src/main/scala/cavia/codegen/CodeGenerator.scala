@@ -20,6 +20,8 @@ object CodeGenerator:
   enum BinderInfo:
     /** A binder with a symbol in the target language created for it. */
     case Sym(binder: Expr.Binder, sym: Symbol)
+    /** A binder that is created for a closure. */
+    case ClosureSym(binder: Expr.Binder, sym: Symbol, funSymbol: Symbol)
     /** This binder is inaccessible. It may be a variable not accessed by a closure. Or it is a capture binder. */
     case Inaccessible(binder: Expr.Binder)
     /** This is a type binder specialized to a concrete value type in the target. */
@@ -64,6 +66,9 @@ object CodeGenerator:
   ):
     def withLocalSym(binder: Expr.Binder, sym: Symbol): Context =
       copy(binderInfos = BinderInfo.Sym(binder, sym) :: binderInfos)
+
+    def withClosureSym(binder: Expr.Binder, sym: Symbol, funSym: Symbol): Context =
+      copy(binderInfos = BinderInfo.ClosureSym(binder, sym, funSym) :: binderInfos)
     
     def usingBinderInfos(binderInfos: List[BinderInfo]): Context =
       copy(binderInfos = binderInfos)
@@ -382,12 +387,15 @@ object CodeGenerator:
       freeLocalBinders(cond) ++ freeLocalBinders(thenBranch) ++ freeLocalBinders(elseBranch)
     case Term.ResolveExtension(sym, targs, field) => Set.empty
 
+  /** Translate a closure of `funType` with a given parameter list and body.
+   * Returns the instructions for creating the closure and the symbol of the worker function.
+   */
   def translateClosure(
     funType: Expr.Type,   // the type of the source function
     params: List[Expr.Binder.TermBinder],   // parameters of the source function
     body: Expr.Term,   // body of the source function
     selfBinder: Option[Expr.Binder]  // whether the source function is self-recursive
-  )(using Context): List[Instruction] =
+  )(using Context): (List[Instruction], Symbol) =
     val funcType = computeFuncType(funType)
     val closureInfo = createClosureTypes(funcType)
     val funName: String = selfBinder match
@@ -456,7 +464,7 @@ object CodeGenerator:
         var ctx1 = ctx.usingBinderInfos(newBinderInfos)
         selfBinder match
           case Some(binder) =>
-            ctx1 = ctx1.withLocalSym(binder, selfCastedSym)
+            ctx1 = ctx1.withClosureSym(binder, selfCastedSym, workerSym)
           case None =>
         (params `zip` workerFunParams.tail).foreach: 
           case (binder, (sym, _)) =>
@@ -479,13 +487,19 @@ object CodeGenerator:
     val createStructInstrs = List(
       Instruction.StructNew(exactClosureTypeSym)
     )
-    getFuncInstrs ++ getEnvInstrs ++ createStructInstrs
+    (getFuncInstrs ++ getEnvInstrs ++ createStructInstrs, workerSym)
 
   def genBinderRef(binder: Int)(using Context): List[Instruction] =
     ctx.binderInfos(binder) match
       case BinderInfo.Sym(binder, sym) => List(Instruction.LocalGet(sym))
+      case BinderInfo.ClosureSym(_, sym, _) => List(Instruction.LocalGet(sym))
       case BinderInfo.Inaccessible(binder) => assert(false, s"Inaccessible binder: $binder")
       case _ => assert(false, "absurd binder info")
+
+  def isClosureSym(binderIdx: Int)(using Context): Boolean =
+    ctx.binderInfos(binderIdx) match
+      case BinderInfo.ClosureSym(_, _, _) => true
+      case _ => false
 
   def genTerm(t: Expr.Term)(using Context): List[Instruction] = t match
     case Term.IntLit(value) => 
@@ -514,14 +528,14 @@ object CodeGenerator:
       val else1 = genTerm(elseBranch)
       translateBranching(cond, then1, else1, resultType)
     case Term.TermLambda(params, body, _) =>
-      translateClosure(t.tpe, params, body, selfBinder = None)
+      translateClosure(t.tpe, params, body, selfBinder = None)._1
     case Term.Bind(binder, isRecursive, Term.TermLambda(params, body, _), expr) =>
       val localSym = Symbol.fresh(binder.name)
       val localType = translateType(binder.tpe)
       emitLocal(localSym, localType)
-      val closureInstrs = translateClosure(binder.tpe, params, body, if isRecursive then Some(binder) else None)
+      val (closureInstrs, workerSym) = translateClosure(binder.tpe, params, body, if isRecursive then Some(binder) else None)
       val setLocalInstrs = List(Instruction.LocalSet(localSym))
-      val bodyInstrs = genTerm(expr)(using ctx.withLocalSym(binder, localSym))
+      val bodyInstrs = genTerm(expr)(using ctx.withClosureSym(binder, localSym, workerSym))
       closureInstrs ++ setLocalInstrs ++ bodyInstrs
     case Term.Bind(binder, false, bound, body) =>
       val localSym = Symbol.fresh(binder.name)
@@ -558,6 +572,12 @@ object CodeGenerator:
       val argInstrs = args.flatMap(genTerm)
       val callInstrs = List(Instruction.Call(methodSym))
       argInstrs ++ callInstrs
+    case Term.Apply(fun @ Term.BinderRef(idx), args) if isClosureSym(idx) =>
+      val BinderInfo.ClosureSym(_, sym, funSym) = ctx.binderInfos(idx): @unchecked
+      val getSelfInstrs = genBinderRef(idx)
+      val argInstrs = args.flatMap(genTerm)
+      val callWorkerInstrs = List(Instruction.Call(funSym))
+      getSelfInstrs ++ argInstrs ++ callWorkerInstrs
     case Term.Apply(fun, args) =>
       val localSym = Symbol.fresh("fun")
       val funcType = computeFuncType(fun.tpe)
