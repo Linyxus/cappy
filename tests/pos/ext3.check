@@ -1,5 +1,5 @@
 module {
-  extension $ext2[T <: Any](?: array[T]^{cap}) {
+  extension $ext3[T <: Any](?: array[T]^{cap}) {
     val show: (x: array[T]^{cap}) ->{} Unit = 
       (x: array[T]^{cap}) => {
         ()
@@ -16,9 +16,9 @@ module {
       val zs: array[array[i32]^{ys}]^{fresh$24} = 
         #arraynew[array[i32]^{ys}](BUF_SIZE, ys)
       val _$6: Unit = 
-        extension($ext2)[bool].show(xs)
+        extension($ext3)[bool].show(xs)
       val _$7: Unit = 
-        extension($ext2)[i32].show(ys)
-      extension($ext2)[array[i32]^{ys}].show(zs)
+        extension($ext3)[i32].show(ys)
+      extension($ext3)[array[i32]^{ys}].show(zs)
     }
 }

@@ -265,6 +265,13 @@ object Parsers:
       .surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
       .map(types => ApplyClause.TypeApply(types))
 
+  def trailingTermClosureP: Parser[ApplyClause] =
+    val lambdaP = (tokenP[Token.COLON], termParamListP, tokenP[Token.FAT_ARROW], blockP).p.map: (_, params, _, body) =>
+      val lambda = Term.Lambda(params.params, body)
+      lambda
+    val p = lambdaP.positioned.withWhat("a trailing lambda").map(t => ApplyClause.TermApply(List(t)))
+    p.positioned
+
   def selectClauseP: Parser[ApplyClause] =
     (tokenP[Token.DOT], tokenP[Token.IDENT]).p.map((_, field) => ApplyClause.Select(field))
   
@@ -274,7 +281,10 @@ object Parsers:
       typeApplyClauseP.withWhat("a type apply clause"),
       selectClauseP.withWhat("a select clause"),
     ).positioned
-    val clausesP = clauseP.many
+    val clausesP = (clauseP.many, trailingTermClosureP.optional).p.map: (clauses, maybeTrailing) =>
+      maybeTrailing match
+        case Some(trailing) => clauses :+ trailing
+        case None => clauses
     val appP = (termAtomP, clausesP).p.map: (fun, clauses) =>
       var result = fun
       for clause <- clauses do
