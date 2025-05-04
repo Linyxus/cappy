@@ -298,7 +298,7 @@ object TypePrinter:
     case BaseType.BoolType => "bool"
     case BaseType.ArrayType => "array"
     case BaseType.CharType => "char"
-
+    case BaseType.BreakType => "Break"
   def showFunctionType(params: List[Binder], result: Type, cs: Option[CaptureSet] = None, isType: Boolean = false)(using ctx: TypeChecker.Context) =
     def showParams(params: List[Binder])(using ctx: TypeChecker.Context): List[String] = params match
       case Nil => Nil
@@ -641,6 +641,11 @@ class UniversalConversion extends TypeMap:
 object PrimArrayType:
   def unapply(tpe: Type): Option[Type] = tpe match
     case Type.AppliedType(Type.Base(BaseType.ArrayType), (elemType: Type) :: Nil) => Some(elemType)
+    case _ => None
+
+object BreakCapabilityType:
+  def unapply(tpe: Type): Option[Type] = tpe match
+    case Type.AppliedType(Type.Base(BaseType.BreakType), (returnType: Type) :: Nil) => Some(returnType)
     case _ => None
 
 object AppliedStructType:

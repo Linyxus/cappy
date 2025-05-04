@@ -49,6 +49,7 @@ object Expr:
       withCV(myCaptured ++ more)
 
   enum BaseType:
+    /** Base types in the type system */
     case StrType
     case IntType
     case UnitType
@@ -61,6 +62,8 @@ object Expr:
     case F32, F64
     /** Array type: `array[T]` */
     case ArrayType  // it is a type constructor
+    /** Type for the capability of boundary/break: `Break[T]` */
+    case BreakType
 
     def isIntegralType: Boolean = this match
       case I32 | I64 | IntType => true
@@ -308,13 +311,15 @@ object Expr:
     /** A primitive in the very virtue of Lean */
     case Sorry
     /** Print a character */
-    case PutChar extends PrimitiveOp
+    case PutChar
     /** Convert a value to a pure value in an unsafe way */
-    case UnsafeAsPure extends PrimitiveOp
+    case UnsafeAsPure
     /** Get the elapsed time since the start of the program in milliseconds */
-    case PerfCounter extends PrimitiveOp
+    case PerfCounter
     /** Return a value */
-    case Return extends PrimitiveOp
+    case Return
+    /** Set up a boundary */
+    case Boundary
 
     override def toString: String = this match
       case I32Add => "#i32add"
@@ -358,6 +363,7 @@ object Expr:
       case PerfCounter => "#perfcounter"
       case UnsafeAsPure => "#unsafeAsPure"
       case Return => "return"
+      case Boundary => "#boundary"
 
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match
@@ -397,6 +403,7 @@ object Expr:
       case "#putchar" => Some(PrimitiveOp.PutChar)
       case "#unsafeAsPure" => Some(PrimitiveOp.UnsafeAsPure)
       case "#perfcounter" => Some(PrimitiveOp.PerfCounter)
+      case "boundary" => Some(PrimitiveOp.Boundary)
       case _ => None
 
   sealed trait Closure
@@ -446,6 +453,8 @@ object Expr:
   case class ExtensionMethod(name: String, tpe: Type, body: Term)
 
   object Definitions:
+    def tycon1Kind: TypeKind = TypeKind.Arrow(1, TypeKind.Star)
+
     def anyType: Type = Type.Base(BaseType.AnyType).withKind(TypeKind.Star)
     def nothingType: Type = Type.Base(BaseType.NothingType).withKind(TypeKind.Star)
     def strType: Type = Type.Base(BaseType.StrType).withKind(TypeKind.Star)
@@ -456,9 +465,13 @@ object Expr:
     def unitType: Type = Type.Base(BaseType.UnitType).withKind(TypeKind.Star)
     def boolType: Type = Type.Base(BaseType.BoolType).withKind(TypeKind.Star)
     def arrayConstructorType: Type =
-      Type.Base(BaseType.ArrayType).withKind(TypeKind.Arrow(1, TypeKind.Star))
+      Type.Base(BaseType.ArrayType).withKind(tycon1Kind)
     def arrayType(elemType: Type): Type =
       Type.AppliedType(arrayConstructorType, List(elemType)).withKind(TypeKind.Star)
+    def breakConstructorType: Type =
+      Type.Base(BaseType.BreakType).withKind(tycon1Kind)
+    def breakCapabilityType(returnType: Type): Type =
+      Type.AppliedType(breakConstructorType, List(returnType)).withKind(TypeKind.Star)
 
     val MemorySymbol = DefSymbol("WASM_MEMORY", arrayType(i32Type), Module(Nil))
 
