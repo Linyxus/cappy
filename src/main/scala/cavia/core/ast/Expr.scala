@@ -62,8 +62,8 @@ object Expr:
     case F32, F64
     /** Array type: `array[T]` */
     case ArrayType  // it is a type constructor
-    /** Type for the capability of boundary/break: `Break[T]` */
-    case BreakType
+    // /** Type for the capability of boundary/break: `Break[T]` */
+    // case BreakType
 
     def isIntegralType: Boolean = this match
       case I32 | I64 | IntType => true
@@ -318,8 +318,8 @@ object Expr:
     case PerfCounter
     /** Return a value */
     case Return
-    /** Set up a boundary */
-    case Boundary
+    // /** Set up a boundary */
+    // case Boundary
 
     override def toString: String = this match
       case I32Add => "#i32add"
@@ -363,7 +363,7 @@ object Expr:
       case PerfCounter => "#perfcounter"
       case UnsafeAsPure => "#unsafeAsPure"
       case Return => "return"
-      case Boundary => "#boundary"
+      // case Boundary => "#boundary"
 
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match
@@ -403,7 +403,7 @@ object Expr:
       case "#putchar" => Some(PrimitiveOp.PutChar)
       case "#unsafeAsPure" => Some(PrimitiveOp.UnsafeAsPure)
       case "#perfcounter" => Some(PrimitiveOp.PerfCounter)
-      case "boundary" => Some(PrimitiveOp.Boundary)
+      // case "boundary" => Some(PrimitiveOp.Boundary)
       case _ => None
 
   sealed trait Closure
@@ -468,10 +468,10 @@ object Expr:
       Type.Base(BaseType.ArrayType).withKind(tycon1Kind)
     def arrayType(elemType: Type): Type =
       Type.AppliedType(arrayConstructorType, List(elemType)).withKind(TypeKind.Star)
-    def breakConstructorType: Type =
-      Type.Base(BaseType.BreakType).withKind(tycon1Kind)
-    def breakCapabilityType(returnType: Type): Type =
-      Type.AppliedType(breakConstructorType, List(returnType)).withKind(TypeKind.Star)
+    // def breakConstructorType: Type =
+    //   Type.Base(BaseType.BreakType).withKind(tycon1Kind)
+    // def breakCapabilityType(returnType: Type): Type =
+    //   Type.AppliedType(breakConstructorType, List(returnType)).withKind(TypeKind.Star)
 
     val MemorySymbol = DefSymbol("WASM_MEMORY", arrayType(i32Type), Module(Nil))
 

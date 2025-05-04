@@ -193,7 +193,7 @@ object TypeChecker:
     case "bool" => Some(Definitions.boolType)
     case "array" => Some(Definitions.arrayConstructorType)
     case "char" => Some(Definitions.charType)
-    case "Break" => Some(Definitions.breakConstructorType)
+    // case "Break" => Some(Definitions.breakConstructorType)
     // Float types are not supported yet, so commenting them out for now
     // case "f32" => Some(Definitions.f32Type)
     // case "f64" => Some(Definitions.f64Type)
@@ -917,12 +917,12 @@ object TypeChecker:
                 args = List(fun1, arg1),
               ).withPos(srcPos).withTpe(elemType).withCVFrom(fun1, arg1)
             case _ => sorry(TypeError.GeneralError(s"Expect exact one array index, but got ${args.length}").withPos(srcPos))
-        case BreakCapabilityType(returnType) =>
-          args match
-            case arg :: Nil =>
-              val arg1 = checkTerm(arg, expected = returnType).!!
-              Term.Apply(fun1, List(arg1)).withPos(srcPos).withTpe(Definitions.nothingType).withCVFrom(fun1, arg1)
-            case _ => sorry(TypeError.GeneralError(s"Expect exact one argument, but got ${args.length}").withPos(srcPos))
+        // case BreakCapabilityType(returnType) =>
+        //   args match
+        //     case arg :: Nil =>
+        //       val arg1 = checkTerm(arg, expected = returnType).!!
+        //       Term.Apply(fun1, List(arg1)).withPos(srcPos).withTpe(Definitions.nothingType).withCVFrom(fun1, arg1)
+        //     case _ => sorry(TypeError.GeneralError(s"Expect exact one argument, but got ${args.length}").withPos(srcPos))
         case _ =>
           sorry(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(fun.pos))
 
@@ -1005,16 +1005,16 @@ object TypeChecker:
           val resultTerm = checkArrayInit(tv, args, pos).!!
           Inference.solveTypeVars()
           resultTerm
-      case PrimitiveOp.Boundary =>
-        hopefully:
-          given ctx1: Context = ctx.newInferenceScope
-          val returnType = Inference.createTypeVar()
-          if args.length != 1 then
-            sorry(TypeError.GeneralError(s"Argument number mismatch, `boundary` expects one term argument").withPos(pos))
-          val arg = args.head
-          val resultTerm = checkBoundary(returnType, arg, pos).!!
-          Inference.solveTypeVars()
-          resultTerm
+      // case PrimitiveOp.Boundary =>
+      //   hopefully:
+      //     given ctx1: Context = ctx.newInferenceScope
+      //     val returnType = Inference.createTypeVar()
+      //     if args.length != 1 then
+      //       sorry(TypeError.GeneralError(s"Argument number mismatch, `boundary` expects one term argument").withPos(pos))
+      //     val arg = args.head
+      //     val resultTerm = checkBoundary(returnType, arg, pos).!!
+      //     Inference.solveTypeVars()
+      //     resultTerm
       case _ => assert(false, s"Unsupported primitive operation: $op")
 
   def checkArrayInit(elemType: Type, args: List[Syntax.Term], pos: SourcePos)(using Context): Result[Term] =
@@ -1029,13 +1029,13 @@ object TypeChecker:
       val (args1, outType, consumedSet) = checkFunctionApply(arrConsFunction, args, pos, isDependent = false).!!
       Term.PrimOp(PrimitiveOp.ArrayNew, elemType :: Nil, args1).withPos(pos).withTpe(outType).withCVFrom(args1*)
 
-  def checkBoundary(returnType: Type, runner: Syntax.Term, srcPos: SourcePos)(using Context): Result[Term] =
-    hopefully:
-      val breakCapType = Definitions.breakCapabilityType(returnType)
-      val expected = Type.TermArrow(List(TermBinder("_", breakCapType, isConsume = false)), returnType)
-      val runner1 = checkTerm(runner, expected = expected).!!
-      val result = Term.PrimOp(PrimitiveOp.Boundary, Nil, List(runner1))
-      result.withPos(srcPos).withTpe(returnType).withCVFrom(runner1)
+  // def checkBoundary(returnType: Type, runner: Syntax.Term, srcPos: SourcePos)(using Context): Result[Term] =
+  //   hopefully:
+  //     val breakCapType = Definitions.breakCapabilityType(returnType)
+  //     val expected = Type.TermArrow(List(TermBinder("_", breakCapType, isConsume = false)), returnType)
+  //     val runner1 = checkTerm(runner, expected = expected).!!
+  //     val result = Term.PrimOp(PrimitiveOp.Boundary, Nil, List(runner1))
+  //     result.withPos(srcPos).withTpe(returnType).withCVFrom(runner1)
       
   def checkPolyPrimOp(op: PrimitiveOp, targs: List[Syntax.Type | Syntax.CaptureSet], args: List[Syntax.Term], expected: Type, pos: SourcePos)(using Context): Result[Term] =
     hopefully:
@@ -1046,12 +1046,12 @@ object TypeChecker:
               val elemType1 = checkType(elemType).!!
               checkArrayInit(elemType1, args, pos).!!
             case _ => sorry(TypeError.GeneralError(s"Argument number mismatch, `newArray` expects one type argument and two term arguments"))
-        case PrimitiveOp.Boundary =>
-          (targs, args) match
-            case ((returnType : Syntax.Type) :: Nil, runner :: Nil) =>
-              val returnType1 = checkType(returnType).!!
-              checkBoundary(returnType1, runner, pos).!!
-            case _ => sorry(TypeError.GeneralError(s"Argument number mismatch, `boundary` expects one type argument and one term argument"))
+        // case PrimitiveOp.Boundary =>
+        //   (targs, args) match
+        //     case ((returnType : Syntax.Type) :: Nil, runner :: Nil) =>
+        //       val returnType1 = checkType(returnType).!!
+        //       checkBoundary(returnType1, runner, pos).!!
+        //     case _ => sorry(TypeError.GeneralError(s"Argument number mismatch, `boundary` expects one type argument and one term argument"))
         case _ => sorry(TypeError.GeneralError(s"Primitive operation $op cannot be applied to type arguments").withPos(pos))
 
   def checkStructDef(d: Syntax.Definition.StructDef)(using Context): Result[StructInfo] =
