@@ -448,7 +448,7 @@ object Expr:
   case class Module(var defns: List[Definition])
 
   case class FieldInfo(name: String, tpe: Type, mutable: Boolean)
-  case class StructInfo(targs: List[TypeBinder | CaptureBinder], fields: List[FieldInfo])
+  case class StructInfo(targs: List[TypeBinder | CaptureBinder], variances: List[Variance], fields: List[FieldInfo])
   case class ExtensionInfo(typeParams: List[TypeBinder | CaptureBinder], selfArgType: Type, methods: List[ExtensionMethod])
   case class ExtensionMethod(name: String, tpe: Type, body: Term)
 

@@ -13,6 +13,20 @@ class ExprPrinter extends IndentedPrinter:
       val s = TypePrinter.show(p)
       s :: showBinders(ps)(using ctx.extend(p))
 
+  def showBindersWithVariances(bds: List[Binder], variances: List[Variance])(using Context): List[String] =
+    (bds, variances) match
+      case (Nil, Nil) => Nil
+      case (p :: ps, v :: vs) =>
+        val s = TypePrinter.show(p)
+        val vStr = showVariance(v)
+        s"$vStr$s" :: showBindersWithVariances(ps, vs)(using ctx.extend(p))
+      case _ => assert(false)
+
+  def showVariance(v: Variance)(using Context): String = v match
+    case Variance.Covariant => "+"
+    case Variance.Contravariant => "-"
+    case Variance.Invariant => ""
+
   def show(t: Expr.Term)(using Context): Unit = 
     t match
       case Term.BinderRef(idx) => print(getBinder(idx).name)
@@ -165,7 +179,7 @@ class ExprPrinter extends IndentedPrinter:
         print("struct ")
         print(sym.name)
         val binders = sym.info.targs
-        val binderStrs = showBinders(binders)
+        val binderStrs = showBindersWithVariances(binders, sym.info.variances)
         if binders.nonEmpty then
           print("[")
           print(binderStrs.mkString(", "))

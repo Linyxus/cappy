@@ -63,6 +63,8 @@ object Syntax:
       case Typ(param, _) => param
       case Cap(param, _) => param
 
+    val variance: Int
+
   enum Definition extends Positioned:
     /** A value definition, like val x: T = ... */
     case ValDef(name: String, tpe: Option[Type], expr: Term)

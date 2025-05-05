@@ -682,3 +682,26 @@ extension (ref: QualifiedRef)
   def isUniversal: Boolean = ref.core match
     case CaptureRef.CAP() => true
     case _ => false
+
+object CheckVariance:
+  case class Mismatch(idx: Int, useSite: Variance)
+
+def checkVarianceUsage(use: Variance, defined: Variance): Boolean =
+  (use, defined) match
+    case (Variance.Covariant, Variance.Covariant) => true
+    case (Variance.Contravariant, Variance.Contravariant) => true
+    case (_, Variance.Invariant) => true
+    case _ => false
+
+class CheckVariance(binderVariances: List[Variance], startingVariance: Variance = Variance.Covariant) extends TypeMap:
+  import CheckVariance.*
+  var mismatches: List[Mismatch] = Nil
+  variance = startingVariance
+
+  override def mapBinderRef(ref: Type.BinderRef): Type =
+    if ref.idx >= localBinders.size then
+      val globalIdx = ref.idx - localBinders.size
+      val definedVariance = binderVariances(globalIdx)
+      if !checkVarianceUsage(variance, definedVariance) then
+        mismatches = Mismatch(globalIdx, variance) :: mismatches
+    ref

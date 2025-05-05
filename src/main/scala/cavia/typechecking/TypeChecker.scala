@@ -1076,9 +1076,15 @@ object TypeChecker:
         //     case _ => sorry(TypeError.GeneralError(s"Argument number mismatch, `boundary` expects one type argument and one term argument"))
         case _ => sorry(TypeError.GeneralError(s"Primitive operation $op cannot be applied to type arguments").withPos(pos))
 
+  def getVariance(v: Int): Variance =
+    if v == 0 then Variance.Invariant
+    else if v > 0 then Variance.Covariant
+    else Variance.Contravariant
+    
   def checkStructDef(d: Syntax.Definition.StructDef)(using Context): Result[StructInfo] =
     hopefully:
       val binders = checkTypeParamList(d.targs.map(_.toTypeParam)).!!
+      val variances = d.targs.map(_.variance).map(getVariance)
       val ctx1 = ctx.extend(binders)
       val fieldNames = d.fields.map(_.name)
       if fieldNames.distinct.length != fieldNames.length then
@@ -1086,7 +1092,25 @@ object TypeChecker:
       val fields = d.fields.map: fieldDef =>
         val fieldType = checkType(fieldDef.tpe)(using ctx1).!!
         FieldInfo(fieldDef.name, fieldType, fieldDef.isVar)
-      StructInfo(binders, fields)
+      val ctxVariances = variances.reverse
+      val ctxTArgs = d.targs.reverse
+      fields.foreach: field =>
+        val startingVariance = if field.mutable then Variance.Invariant else Variance.Covariant
+        val checker = CheckVariance(ctxVariances, startingVariance)
+        checker.apply(field.tpe)
+        checker.mismatches.foreach:
+          case CheckVariance.Mismatch(idx, used) =>
+            val targ = ctxTArgs(idx)
+            def showVariance(v: Variance): String = v match
+              case Variance.Covariant => "covariant"
+              case Variance.Contravariant => "contravariant"
+              case Variance.Invariant => "invariant"
+            def mutableStr = if field.mutable then "mutable " else ""
+            sorry:
+              TypeError.GeneralError(
+                s"Type parameter defined to be ${showVariance(ctxVariances(idx))} but used as ${showVariance(used)} in ${mutableStr}field ${field.name} of type ${field.tpe.show(using ctx1)}"
+              ).withPos(targ.pos)
+      StructInfo(binders, variances, fields)
 
   def checkDef(d: Syntax.ValueDef)(using Context): Result[(TermBinder, Term)] = d match
     case Syntax.Definition.ValDef(name, tpe, expr) =>
@@ -1196,7 +1220,8 @@ object TypeChecker:
               DefSymbol(defn.name, Definitions.anyType, mod).withPosFrom(defn)
             case sd: Syntax.Definition.StructDef =>
               val tparams = checkTypeParamList(sd.targs.map(_.toTypeParam)).!!
-              StructSymbol(defn.name, StructInfo(tparams, Nil), mod).withPosFrom(defn)
+              val variances = sd.targs.map(_.variance).map(getVariance)
+              StructSymbol(defn.name, StructInfo(tparams, variances, Nil), mod).withPosFrom(defn)
             case ed: Syntax.Definition.ExtensionDef =>
               val tparams = checkTypeParamList(ed.typeArgs).!!
               val info = ExtensionInfo(tparams, Definitions.anyType, Nil)
