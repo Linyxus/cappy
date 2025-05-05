@@ -87,4 +87,5 @@ object Syntax:
     //case CaptureArrow(params: List[CaptureParam], result: Type)
     case Capturing(inner: Type, isReadOnly: Boolean, captureSet: CaptureSet)
     case AppliedType(tycon: Type, args: List[Type | CaptureSet])
+    case Boxed(core: Type)
   import Type.*

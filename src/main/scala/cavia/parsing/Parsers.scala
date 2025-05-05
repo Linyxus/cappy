@@ -402,6 +402,7 @@ object Parsers:
     p.positioned.withWhat("an applied type")
 
   def capturingTypeP: Parser[Type] =
+    val boxP = keywordP("box")
     val roP: Parser[Boolean] = keywordP("ro").optional.map:
       case Some(_) => true
       case None => false
@@ -414,7 +415,14 @@ object Parsers:
     val p = (appliedTypeP, capsP.tryIt).p.map:
       case (ty, Some((isRO, caps))) => Type.Capturing(ty, isRO, caps)
       case (ty, None) => ty
-    p.positioned.withWhat("a capturing type")
+    val coreP = p.positioned.withWhat("a capturing type")
+    val outP = (boxP.optional, coreP).p.map:
+      case (boxed, core) =>
+        if boxed.isDefined && core.isInstanceOf[Type.Capturing] then
+          Type.Boxed(core)
+        else
+          core
+    outP.positioned.withWhat("a capturing type")
 
   def capturingArrowP: Parser[Option[CaptureSet]] =
     val arrowP = tokenP[Token.ARROW]
