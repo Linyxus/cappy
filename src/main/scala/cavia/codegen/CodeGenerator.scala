@@ -823,6 +823,8 @@ object CodeGenerator:
           ctx.typeInfos += (sym -> mutable.Map.empty)
         case Definition.ExtensionDef(sym) =>
           ctx.extensionInfos += (sym -> mutable.Map.empty)
+        case Definition.TypeDef(sym) =>
+          // Type definitions do not have runtime representation
     // (2) emit func definitions
     m.defns.foreach: defn =>
       defn match
