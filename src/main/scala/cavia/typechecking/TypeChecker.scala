@@ -259,10 +259,10 @@ object TypeChecker:
         case None => Left(TypeError.UnboundVariable(name).maybeWithPosFrom(tpe))
       def trySymbol: Result[Type] = lookupSymbol(name) match
         case Some(sym: StructSymbol) => 
-          val numArgs = sym.info.targs.length
+          val argVariances = sym.info.variances
           val kind =
-            if numArgs == 0 then TypeKind.Star
-            else TypeKind.Arrow(numArgs, TypeKind.Star)
+            if argVariances.isEmpty then TypeKind.Star
+            else TypeKind.Arrow(argVariances, TypeKind.Star)
           Right(Type.SymbolRef(sym).withKind(kind).maybeWithPosFrom(tpe))
         case _ => Left(TypeError.UnboundVariable(name).maybeWithPosFrom(tpe))
       tryBaseType || tryBinder || trySymbol
@@ -293,9 +293,9 @@ object TypeChecker:
       hopefully:
         val tycon1 = checkType(tycon).!!
         tycon1.kind match
-          case TypeKind.Arrow(arity, resKind) =>
-            if arity != args.length then
-              sorry(TypeError.GeneralError(s"Number of type arguments mismatch: expected $arity, but got ${args.length}").withPos(tpe.pos))
+          case TypeKind.Arrow(argVariances, resKind) =>
+            if argVariances.length != args.length then
+              sorry(TypeError.GeneralError(s"Number of type arguments mismatch: expected ${argVariances.length}, but got ${args.length}").withPos(tpe.pos))
             val targs1: List[Type | CaptureSet] = args.map: arg =>
               arg match
                 case arg: Syntax.Type => checkType(arg).!!
@@ -1046,7 +1046,7 @@ object TypeChecker:
           TermBinder("size", Definitions.i32Type, isConsume = false),
           TermBinder("elemType", elemType, isConsume = false), 
         ),
-        Type.Capturing(Type.AppliedType(Type.Base(BaseType.ArrayType), List(elemType)), isReadOnly = false, CaptureSet.universal)
+        Type.Capturing(Definitions.arrayType(elemType), isReadOnly = false, CaptureSet.universal)
       )
       val (args1, outType, consumedSet) = checkFunctionApply(arrConsFunction, args, pos, isDependent = false).!!
       Term.PrimOp(PrimitiveOp.ArrayNew, elemType :: Nil, args1).withPos(pos).withTpe(outType).withCVFrom(args1*)

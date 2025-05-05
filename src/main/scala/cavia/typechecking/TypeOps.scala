@@ -89,7 +89,15 @@ class TypeMap:
     go(ta.params, Nil)
 
   def mapAppliedType(tp: Type.AppliedType): Type =
-    tp.derivedAppliedType(apply(tp.constructor), tp.args.map(mapTypeArg))
+    val tycon1 = apply(tp.constructor)
+    val argVariances = tycon1.kind match
+      case TypeKind.Arrow(argVariances, _) => argVariances
+      case _ => List()
+    assert(argVariances.length == tp.args.length)
+    val args1 = tp.args.zip(argVariances).map: (arg, v) =>
+      withVariance(variance * v):
+        mapTypeArg(arg)
+    tp.derivedAppliedType(tycon1, args1)
 
   def mapRefinedType(tp: Type.RefinedType): Type =
     tp.derivedRefinedType(apply(tp.base), tp.refinements.map(mapFieldInfo))

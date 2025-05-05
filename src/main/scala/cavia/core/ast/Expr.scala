@@ -153,7 +153,7 @@ object Expr:
 
   enum TypeKind:
     case Star  // *
-    case Arrow(arity: Int, res: TypeKind)  // [T1, T2, ...] -> K
+    case Arrow(params: List[Variance], res: TypeKind)  // [T1, T2, ...] -> K
 
   /** A trait for types that have a kind */
   trait HasKind:
@@ -453,8 +453,6 @@ object Expr:
   case class ExtensionMethod(name: String, tpe: Type, body: Term)
 
   object Definitions:
-    def tycon1Kind: TypeKind = TypeKind.Arrow(1, TypeKind.Star)
-
     def anyType: Type = Type.Base(BaseType.AnyType).withKind(TypeKind.Star)
     def nothingType: Type = Type.Base(BaseType.NothingType).withKind(TypeKind.Star)
     def strType: Type = Type.Base(BaseType.StrType).withKind(TypeKind.Star)
@@ -465,7 +463,8 @@ object Expr:
     def unitType: Type = Type.Base(BaseType.UnitType).withKind(TypeKind.Star)
     def boolType: Type = Type.Base(BaseType.BoolType).withKind(TypeKind.Star)
     def arrayConstructorType: Type =
-      Type.Base(BaseType.ArrayType).withKind(tycon1Kind)
+      val kind = TypeKind.Arrow(List(Variance.Invariant), TypeKind.Star)
+      Type.Base(BaseType.ArrayType).withKind(kind)
     def arrayType(elemType: Type): Type =
       Type.AppliedType(arrayConstructorType, List(elemType)).withKind(TypeKind.Star)
     // def breakConstructorType: Type =
@@ -484,3 +483,8 @@ object Expr:
       case Covariant => Contravariant
       case Contravariant => Covariant
       case Invariant => Invariant
+
+    def *(other: Variance): Variance = this match
+      case Covariant => other
+      case Contravariant => other.negate
+      case Invariant => this
