@@ -298,7 +298,7 @@ object TypeChecker:
               sorry(TypeError.GeneralError(s"Number of type arguments mismatch: expected ${argVariances.length}, but got ${args.length}").withPos(tpe.pos))
             val targs1: List[Type | CaptureSet] = args.map: arg =>
               arg match
-                case arg: Syntax.Type => checkType(arg).!!
+                case arg: Syntax.Type => checkType(arg).!!.boxIfImpure
                 case arg: Syntax.CaptureSet => checkCaptureSet(arg).!!
             Type.AppliedType(tycon1, targs1).maybeWithPosFrom(tpe).withKind(resKind)
           case _ => sorry(TypeError.GeneralError("This is not a type constructor").withPos(tycon.pos))
@@ -418,13 +418,13 @@ object TypeChecker:
         val fieldType = substituteType(tpe, typeArgs, isParamType = true)
         (field.name, fieldType, field.mutable)
       val argFormals = fields1.map(_._2)
-      val syntheticFunctionType = Type.TermArrow(argFormals.map(tpe => TermBinder("_", tpe, isConsume = false)), Type.AppliedType(Type.SymbolRef(classSym), typeArgs))
+      val syntheticFunctionType = Type.TermArrow(argFormals.map(tpe => TermBinder("_", tpe, isConsume = false)), Definitions.anyType)
       val (termArgs, _, consumedSet) = checkFunctionApply(syntheticFunctionType, args, srcPos, isDependent = false).!!
       val classType = 
         if typeArgs.isEmpty then
           Type.SymbolRef(classSym)
         else
-          Type.AppliedType(Type.SymbolRef(classSym), typeArgs)
+          Type.AppliedType(Definitions.structConstructorType(classSym), typeArgs)
       val termCaptureElems = termArgs.flatMap: arg =>
         arg.maybeAsSingletonType match
           case Some(singleton) => QualifiedRef(AccessMode.Normal(), singleton.asCaptureRef) :: Nil
@@ -502,6 +502,16 @@ object TypeChecker:
     else
       // Do nothing
       t
+
+  def maybeAdaptBoxed(t: Term, expected: Type)(using Context): Result[Term] =
+    hopefully:
+      if expected.exists && !TypeComparer.checkSubtype(t.tpe, expected) then
+        if t.tpe.isBoxedType && !expected.isBoxedType then
+          checkUnbox(t, t.pos).!!
+        else if !t.tpe.isBoxedType && expected.isBoxedType then
+          checkBox(t, t.pos).!!
+        else t
+      else t
 
   def checkIdent(t: Syntax.Term.Ident)(using Context): Result[Term] =
     hopefully:
@@ -698,6 +708,7 @@ object TypeChecker:
       var outTerm = result.!!
       outTerm = adaptLazyType(outTerm)
       outTerm = maybeAdaptUnit(outTerm, expected)
+      outTerm = maybeAdaptBoxed(outTerm, expected).!!
       if !expected.exists || TypeComparer.checkSubtype(outTerm.tpe, expected) then
         outTerm
       else 
@@ -988,6 +999,29 @@ object TypeChecker:
           PrimOp(PrimitiveOp.UnsafeAsPure, Nil, List(arg1)).withPos(pos).withTpe(outType).withCVFrom(arg1)
         case _ => sorry(TypeError.GeneralError(s"Expected one argument, but got ${args.length}").withPos(pos))
 
+  def checkUnbox(arg: Syntax.Term | Term, pos: SourcePos)(using Context): Result[Term] =
+    hopefully:
+      val arg1 = arg match
+        case t: Term => t
+        case t: Syntax.Term => checkTerm(t).!!
+      arg1.tpe.dealiasTypeVar match
+        case Type.Boxed(core) =>
+          val outType = core
+          val cv = core.captureSet
+          PrimOp(PrimitiveOp.Unbox, Nil, List(arg1)).withPos(pos).withTpe(outType).withCV(cv)
+        case _ => sorry(TypeError.GeneralError(s"Expected a boxed type, but got ${arg1.tpe.show}").withPos(pos))
+
+  def checkBox(arg: Syntax.Term | Term, pos: SourcePos)(using Context): Result[Term] =
+    hopefully:
+      val arg1 = arg match
+        case t: Term => t
+        case t: Syntax.Term => checkTerm(t).!!
+      if arg1.tpe.isPure then arg1
+      else
+        val outCV = CaptureSet.empty
+        val outType = Type.Boxed(arg1.tpe)
+        PrimOp(PrimitiveOp.Box, Nil, List(arg1)).withPos(pos).withTpe(outType).withCV(outCV)
+
   def checkPrimOp(op: PrimitiveOp, args: List[Syntax.Term], expected: Type, pos: SourcePos)(using Context): Result[Term] =
     op match
       case PrimitiveOp.I32Add => checkPrimOpArgs(PrimitiveOp.I32Add, args, List(BaseType.I32, BaseType.I32), BaseType.I32, pos)
@@ -1025,6 +1059,16 @@ object TypeChecker:
       case PrimitiveOp.PerfCounter => checkPrimOpArgs(PrimitiveOp.PerfCounter, args, List(), BaseType.I32, pos)
       case PrimitiveOp.UnsafeAsPure => checkUnsafeAsPure(args, pos)
       case PrimitiveOp.Sorry => Right(Term.PrimOp(PrimitiveOp.Sorry, Nil, Nil).withPos(pos).withTpe(Definitions.nothingType).withCV(CaptureSet.empty))
+      case PrimitiveOp.Box =>
+        hopefully:
+          if args.length != 1 then
+            sorry(TypeError.GeneralError(s"Argument number mismatch, `box` expects one term argument").withPos(pos))
+          checkBox(args.head, pos).!!
+      case PrimitiveOp.Unbox =>
+        hopefully:
+          if args.length != 1 then
+            sorry(TypeError.GeneralError(s"Argument number mismatch, `unbox` expects one term argument").withPos(pos))
+          checkUnbox(args.head, pos).!!
       case PrimitiveOp.ArrayNew =>
         hopefully:
           given ctx1: Context = ctx.newInferenceScope

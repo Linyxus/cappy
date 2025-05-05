@@ -57,7 +57,7 @@ class TypeMap:
           else if variance == Variance.Contravariant then
             CaptureSet.empty
           else 
-            assert(false, "Don't know how to handle a widened capture ref at invariant occurrence")
+            assert(false, s"Don't know how to handle a widened capture ref at invariant occurrence")
     case CaptureRef.CAP() => CaptureSet(ref :: Nil)
     case _: CaptureRef.CapInst => CaptureSet(ref :: Nil)
 
@@ -234,6 +234,18 @@ extension (tpe: Type)
 
   def isPure(using TypeChecker.Context): Boolean =
     TypeComparer.checkSubcapture(tpe.captureSet, CaptureSet.empty)
+
+  def isBoxedType(using TypeChecker.Context): Boolean = tpe.dealiasTypeVar match
+    case Type.Boxed(core) => true
+    case Type.BinderRef(idx) =>
+      TypeChecker.getBinder(idx) match
+        case Binder.TypeBinder(name, bound) => bound.isBoxedType
+        case _ => assert(false, "(unreachable)")
+    case _ => false
+
+  def boxIfImpure(using TypeChecker.Context): Type =
+    if tpe.isPure then tpe
+    else Type.Boxed(tpe)
 
 extension (t: Term)
   def asSingletonType: SingletonType = t match

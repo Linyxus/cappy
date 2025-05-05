@@ -332,6 +332,9 @@ object Expr:
     case Return
     // /** Set up a boundary */
     // case Boundary
+    /** Primitives for boxing and unboxing in capture tracking */
+    case Box
+    case Unbox
 
     override def toString: String = this match
       case I32Add => "#i32add"
@@ -375,6 +378,8 @@ object Expr:
       case PerfCounter => "#perfcounter"
       case UnsafeAsPure => "#unsafeAsPure"
       case Return => "return"
+      case Box => "#box"
+      case Unbox => "#unbox"
       // case Boundary => "#boundary"
 
   object PrimitiveOp:
@@ -410,6 +415,8 @@ object Expr:
       case "#boolor" => Some(PrimitiveOp.BoolOr)
       case "#i32neg" => Some(PrimitiveOp.I32Neg)
       case "#i64neg" => Some(PrimitiveOp.I64Neg)
+      case "#box" => Some(PrimitiveOp.Box)
+      case "#unbox" => Some(PrimitiveOp.Unbox)
       case "newArray" => Some(PrimitiveOp.ArrayNew)
       case "sorry" => Some(PrimitiveOp.Sorry)
       case "#putchar" => Some(PrimitiveOp.PutChar)
@@ -483,6 +490,14 @@ object Expr:
     //   Type.Base(BaseType.BreakType).withKind(tycon1Kind)
     // def breakCapabilityType(returnType: Type): Type =
     //   Type.AppliedType(breakConstructorType, List(returnType)).withKind(TypeKind.Star)
+    def structConstructorType(sym: StructSymbol): Type =
+      val variances = sym.info.variances
+      val kind = 
+        if variances.isEmpty then
+          TypeKind.Star
+        else
+          TypeKind.Arrow(variances, TypeKind.Star)
+      Type.SymbolRef(sym).withKind(kind)
 
     val MemorySymbol = DefSymbol("WASM_MEMORY", arrayType(i32Type), Module(Nil))
 
