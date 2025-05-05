@@ -1024,7 +1024,10 @@ object TypeChecker:
         case t: Syntax.Term => checkTerm(t).!!
       if arg1.tpe.isPure then arg1
       else
-        val outCV = CaptureSet.empty
+        val outCV = 
+          if isStablePath(arg1) then
+            CaptureSet.empty
+          else arg1.cv
         val outType = Type.Boxed(arg1.tpe)
         PrimOp(PrimitiveOp.Box, Nil, List(arg1)).withPos(pos).withTpe(outType).withCV(outCV)
 
