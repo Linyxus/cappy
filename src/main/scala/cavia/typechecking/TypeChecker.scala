@@ -15,7 +15,14 @@ object TypeChecker:
   import Inference.*
 
   /** Type checking context. */
-  case class Context(binders: List[Binder], symbols: List[Symbol], inferenceState: InferenceState, consumedPeaks: CaptureSet = CaptureSet.empty, freshLevel: Int = 0, defReturnType: Option[Type] = None):
+  case class Context(
+    binders: List[Binder], 
+    symbols: List[Symbol], 
+    inferenceState: InferenceState, 
+    consumedPeaks: CaptureSet = CaptureSet.empty, 
+    freshLevel: Int = 0, 
+    defReturnType: Option[Type] = None,
+  ):
     /** Extend the context with a list of binders. */
     def extend(bds: List[Binder]): Context =
       if bds.isEmpty then this
