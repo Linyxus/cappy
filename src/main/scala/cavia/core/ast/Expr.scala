@@ -202,7 +202,7 @@ object Expr:
     /** Reference to a bound type variable */
     case BinderRef(idx: Int)
     /** Reference to a struct symbol */
-    case SymbolRef(sym: StructSymbol)
+    case SymbolRef(sym: TypeSymbol)
     /** A capturing type, S^C */
     case Capturing(inner: Type, isReadOnly: Boolean, captureSet: CaptureSet)
     /** Function type (z: T1) -> T2 */
@@ -452,13 +452,14 @@ object Expr:
   sealed trait Symbol extends Positioned:
     val name: String
     val from: Module
+  sealed trait TypeSymbol extends Symbol
 
   case class DefSymbol(name: String, var tpe: Type, from: Module) extends Symbol
-  case class StructSymbol(name: String, var info: StructInfo, from: Module) extends Symbol:
+  case class StructSymbol(name: String, var info: StructInfo, from: Module) extends TypeSymbol:
     override def toString(): String = s"StructSymbol($name)"
-  case class ExtensionSymbol(name: String, var info: ExtensionInfo, from: Module) extends Symbol:
+  case class ExtensionSymbol(name: String, var info: ExtensionInfo, from: Module) extends TypeSymbol:
     override def toString(): String = s"ExtensionSymbol($name)"
-  case class TypeDefSymbol(name: String, var info: TypeDefInfo, from: Module) extends Symbol:
+  case class TypeDefSymbol(name: String, var info: TypeDefInfo, from: Module) extends TypeSymbol:
     override def toString(): String = s"TypeDefSymbol($name)"
 
   enum Definition extends Positioned:

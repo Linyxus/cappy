@@ -1,0 +1,4 @@
+11 |   val t6: T2[i32] = t5 // error
+   |                     ^^
+
+     Type mismatch: expected T2[i32], but got array[i32]

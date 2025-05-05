@@ -189,11 +189,11 @@ extension (binder: Binder)
       case Binder.CaptureBinder(name, bound) => Binder.CaptureBinder(name, bound.shift(amount)).maybeWithPosFrom(binder)
 
 extension (tpe: Type)
-  def isIntegralType: Boolean = tpe match
+  def isIntegralType(using ctx: TypeChecker.Context): Boolean = tpe.dealiasTypeVar.eval(using ctx) match
     case Type.Base(base) => base.isIntegralType
     case _ => false
 
-  def isFloatingType: Boolean = tpe match
+  def isFloatingType(using ctx: TypeChecker.Context): Boolean = tpe.dealiasTypeVar.eval(using ctx) match
     case Type.Base(base) => base.isFloatingType
     case _ => false
 
@@ -750,3 +750,22 @@ def showVariance(v: Variance): String = v match
   case Variance.Covariant => "covariant"
   case Variance.Contravariant => "contravariant"
   case Variance.Invariant => "invariant"
+
+extension (tpe: Type)
+  def reduce(using ctx: TypeChecker.Context): Type = tpe match
+    case Type.Capturing(base, isReadOnly, captureSet) =>
+      tpe.derivedCapturing(base.reduce, isReadOnly, captureSet)
+    case Type.RefinedType(base, refinements) =>
+      tpe.derivedRefinedType(base.reduce, refinements)
+    case Type.SymbolRef(sym: TypeDefSymbol) if sym.info.typeParams.isEmpty =>
+      sym.info.body
+    case Type.AppliedType(Type.SymbolRef(baseSym: TypeDefSymbol), args) => 
+      val body = baseSym.info.body
+      val body1 = TypeChecker.substituteType(body, args, isParamType = false)
+      body1
+    case _ => tpe
+
+  def eval(using ctx: TypeChecker.Context): Type =
+    val tpe1 = tpe.reduce
+    if tpe1 eq tpe then tpe
+    else tpe1.eval

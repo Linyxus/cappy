@@ -234,7 +234,7 @@ class ExprPrinter extends IndentedPrinter:
           print(binderStrs.mkString(", "))
           print("]")
         print(" = ")
-        showType(body)
+        showType(body)(using ctx.extend(typeBinders))
         newline()
 
 object ExprPrinter:

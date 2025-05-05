@@ -264,6 +264,11 @@ object TypeChecker:
             if argVariances.isEmpty then TypeKind.Star
             else TypeKind.Arrow(argVariances, TypeKind.Star)
           Right(Type.SymbolRef(sym).withKind(kind).maybeWithPosFrom(tpe))
+        case Some(sym: TypeDefSymbol) =>
+          val kind =
+            if sym.info.typeParams.isEmpty then TypeKind.Star
+            else TypeKind.Arrow(sym.info.variances, TypeKind.Star)
+          Right(Type.SymbolRef(sym).withKind(kind).maybeWithPosFrom(tpe))
         case _ => Left(TypeError.UnboundVariable(name).maybeWithPosFrom(tpe))
       tryBaseType || tryBinder || trySymbol
     case Syntax.Type.Arrow(params, result) =>

@@ -88,17 +88,27 @@ object TypeComparer:
         Inference.addBound(tp1, tp2, isUpper = true)
       case (tp1, tp2: Type.TypeVar) =>
         Inference.addBound(tp2, tp1, isUpper = false)
-      case (Type.AppliedType(base1, args1), Type.AppliedType(base2, args2)) =>
-        val variances = base1.kind match
-          case TypeKind.Arrow(argVariances, _) => argVariances
-          case _ => List()
-        checkSubtype(base1, base2) && compareTypeArgs(args1, args2, variances)
+      case (tp1 @ Type.AppliedType(base1, args1), tp2 @ Type.AppliedType(base2, args2)) =>
+        def tryDefault: Boolean =
+          val variances = base1.kind match
+            case TypeKind.Arrow(argVariances, _) => argVariances
+            case _ => List()
+          checkSubtype(base1, base2) && compareTypeArgs(args1, args2, variances)
+        def tryReduceLeft: Boolean =
+          val tp11 = tp1.reduce
+          !(tp11 eq tp1) && checkSubtype(tp11, tp2)
+        def tryReduceRight: Boolean =
+          val tp22 = tp2.reduce
+          !(tp22 eq tp2) && checkSubtype(tp1, tp22)
+        tryDefault || tryReduceLeft || tryReduceRight
       case (Type.Capturing(inner, isReadOnly1, captureSet), tp2) =>
         def modeCompatible: Boolean = !isReadOnly1 || tp2.isReadOnly
         modeCompatible && checkSubcapture(captureSet, tp2.captureSet) && checkSubtype(inner, tp2)
       case (tp1, Type.Capturing(inner, isReadOnly2, captureSet)) =>
         def modeCompatible: Boolean = isReadOnly2 || !tp1.isReadOnly
         modeCompatible && checkSubcapture(tp1.captureSet, captureSet) && checkSubtype(tp1, inner)
+      case (tp1: Type.SymbolRef, tp2) if !(tp1.eval eq tp1) => checkSubtype(tp1.eval, tp2)
+      case (tp1, tp2: Type.SymbolRef) if !(tp2.eval eq tp2) => checkSubtype(tp1, tp2.eval)
       case (Type.TermArrow(params1, result1), Type.TermArrow(params2, result2)) => 
         def go(ps1: List[TermBinder], ps2: List[TermBinder])(using Context): Boolean = (ps1, ps2) match
           case (Nil, Nil) => true
@@ -118,5 +128,11 @@ object TypeComparer:
       case (Type.BinderRef(idx1), tp2) => getBinder(idx1) match
         case Binder.TypeBinder(name, bound) => checkSubtype(bound, tp2)
         case bd => assert(false, s"binder kind (idx=$idx1) is absurd, $bd")
+      case (tp1: Type.AppliedType, tp2) =>
+        val tp11 = tp1.reduce
+        !(tp11 eq tp1) && checkSubtype(tp11, tp2)
+      case (tp1, Type.AppliedType(base2, args2)) =>
+        val tp22 = tp2.reduce
+        !(tp22 eq tp2) && checkSubtype(tp1, tp22)
       case _ => false
 
