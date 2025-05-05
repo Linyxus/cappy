@@ -302,6 +302,11 @@ object TypeChecker:
                 case arg: Syntax.CaptureSet => checkCaptureSet(arg).!!
             Type.AppliedType(tycon1, targs1).maybeWithPosFrom(tpe).withKind(resKind)
           case _ => sorry(TypeError.GeneralError("This is not a type constructor").withPos(tycon.pos))
+    case Syntax.Type.Boxed(core) =>
+      hopefully:
+        val core1 = checkType(core).!!
+        if core1.isPure then core1
+        else Type.Boxed(core1).withPosFrom(tpe)
 
   def checkTermParamList(params: List[Syntax.TermParam])(using Context): Result[List[TermBinder]] =
     hopefully:

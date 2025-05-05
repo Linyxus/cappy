@@ -12,6 +12,7 @@ class TypeMap:
   import Binder.*
   var localBinders: List[Binder] = Nil
   var variance: Variance = Variance.Covariant
+  var isInsideBox: Boolean = false
 
   def withBinder[T](bd: Binder)(op: => T): T =
     localBinders = bd :: localBinders
@@ -26,6 +27,11 @@ class TypeMap:
     val old = variance
     variance = v
     try op finally variance = old
+
+  def insideBox[T](op: => T): T =
+    val old = isInsideBox
+    isInsideBox = true
+    try op finally isInsideBox = old
 
   def apply(tp: Type): Type = mapOver(tp)
 
@@ -112,6 +118,10 @@ class TypeMap:
         //println(s"select type: $tp, baseTp = $baseTp")
         assert(false, s"Base type mapped to a non-singleton type in a select")
 
+  def mapBoxed(tp: Type.Boxed): Type =
+    insideBox:
+      tp.derivedBoxed(apply(tp.core))
+
   def mapTypeVar(tp: Type.TypeVar): Type = tp
 
   def mapOver(tp: Type): Type = tp.dealiasTypeVar match
@@ -127,6 +137,7 @@ class TypeMap:
     case tp: Type.Var => mapVar(tp)
     case tp: Type.Select => mapSelect(tp)
     case tp: Type.TypeVar => mapTypeVar(tp)
+    case tp: Type.Boxed => mapBoxed(tp)
 
   def mapFieldInfo(info: FieldInfo): FieldInfo =
     FieldInfo(info.name, apply(info.tpe), info.mutable)
@@ -200,6 +211,7 @@ extension (tpe: Type)
     case tvar: Type.TypeVar =>
       if tvar.instance.exists then tvar.instance.captureSet
       else CaptureSet.empty
+    case Type.Boxed(core) => CaptureSet.empty
     case Type.NoType() => assert(false, "computing capture set from no type")
 
   def stripCaptures: Type = tpe match
@@ -357,6 +369,7 @@ object TypePrinter:
         val baseStr = show(base)
         val refinementsStr = refinements.map(refinement => s"${refinement.name}: ${show(refinement.tpe)}").mkString("; ")
         s"$baseStr with { $refinementsStr }"
+      case Type.Boxed(core) => s"box ${show(core)}"
       case tp: SingletonType => showSingletonType(tp) + ".type"
 
   def show(binder: Binder)(using TypeChecker.Context): String = binder match

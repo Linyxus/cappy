@@ -221,6 +221,8 @@ object Expr:
     case NoType()
     /** A type variable, created when type inference. */
     case TypeVar(var instance: Type = NoType())
+    /** A boxed type, box T^{...} */
+    case Boxed(core: Type)
 
     def like(other: Type): this.type =
       assert(other.hasKind, s"Type $other (id=${other.id}) does not have a kind when calling like")
@@ -236,6 +238,11 @@ object Expr:
     def exists: Boolean = this match
       case NoType() => false
       case _ => true
+
+    def derivedBoxed(core1: Type): Type =
+      this match
+        case Type.Boxed(core) if (core eq core1) => this
+        case _ => Type.Boxed(core1).like(this)
 
     def derivedCapturing(inner1: Type, isReadOnly1: Boolean, captureSet1: CaptureSet): Type =
       this match
