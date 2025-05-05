@@ -73,10 +73,12 @@ object TypeComparer:
         Inference.addBound(tp2, tp1, isUpper = false)
       case (Type.AppliedType(base1, args1), Type.AppliedType(base2, args2)) =>
         checkSubtype(base1, base2) && compareTypeArgs(args1, args2)
-      case (Type.Capturing(inner, _, captureSet), tp2) =>
-        checkSubcapture(captureSet, tp2.captureSet) && checkSubtype(inner, tp2)
-      case (tp1, Type.Capturing(inner, _, captureSet)) =>
-        checkSubcapture(tp1.captureSet, captureSet) && checkSubtype(tp1, inner)
+      case (Type.Capturing(inner, isReadOnly1, captureSet), tp2) =>
+        def modeCompatible: Boolean = !isReadOnly1 || tp2.isReadOnly
+        modeCompatible && checkSubcapture(captureSet, tp2.captureSet) && checkSubtype(inner, tp2)
+      case (tp1, Type.Capturing(inner, isReadOnly2, captureSet)) =>
+        def modeCompatible: Boolean = isReadOnly2 || !tp1.isReadOnly
+        modeCompatible && checkSubcapture(tp1.captureSet, captureSet) && checkSubtype(tp1, inner)
       case (Type.TermArrow(params1, result1), Type.TermArrow(params2, result2)) => 
         def go(ps1: List[TermBinder], ps2: List[TermBinder])(using Context): Boolean = (ps1, ps2) match
           case (Nil, Nil) => true

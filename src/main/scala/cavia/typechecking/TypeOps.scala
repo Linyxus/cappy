@@ -663,6 +663,16 @@ extension (tpe: Type)
       case Type.Capturing(base, isReadOnly, captureSet) =>
         tpe.derivedCapturing(base.refined(refinements), isReadOnly, captureSet)
       case tpe => tpe.derivedRefinedType(tpe, refinements)
+  
+  def isReadOnly: Boolean = tpe match
+    case Type.Capturing(_, isReadOnly, _) => isReadOnly
+    case Type.RefinedType(base, _) => base.isReadOnly
+    case _ => false
+
+  def asReadOnly: Type = tpe match
+    case Type.Capturing(base, _, captureSet) => Type.Capturing(base.asReadOnly, isReadOnly = true, captureSet)
+    case Type.RefinedType(base, refinements) => Type.RefinedType(base.asReadOnly, refinements)
+    case tpe => tpe
 
 extension (ref: QualifiedRef)
   def isReadOnly: Boolean = ref.mode match

@@ -482,6 +482,15 @@ object TypeChecker:
         instantiateFresh(outTerm)
       case _ => t
 
+  def maybeAdaptUnit(t: Term, expected: Type)(using Context): Term =
+    if expected.strip == Definitions.unitType && !TypeComparer.checkSubtype(t.tpe, expected) then
+      // Adapts `t` to `val _ = t in ()`
+      val outTerm = Term.Bind(TermBinder("_", t.tpe, isConsume = false), recursive = false, t, makeUnitLit(t.pos))
+      outTerm.withTpe(expected).withCV(t.cv).withPosFrom(t)
+    else
+      // Do nothing
+      t
+
   def checkIdent(t: Syntax.Term.Ident)(using Context): Result[Term] =
     hopefully:
       val (ref, tpe) = lookupAll(t.name) match
@@ -494,7 +503,9 @@ object TypeChecker:
       val tpe1 = 
         if tpe.isPure then 
           tpe 
-        else Type.Capturing(tpe.stripCaptures, isReadOnly = false, ref.asSingletonType.singletonCaptureSet).withKind(TypeKind.Star)
+        else 
+          val core = tpe.stripCaptures
+          tpe.derivedCapturing(core, tpe.isReadOnly, ref.asSingletonType.singletonCaptureSet)
       ref.withPosFrom(t).withTpe(tpe1).withCV(cv)
 
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType())(using Context): Result[Term] = 
@@ -507,6 +518,9 @@ object TypeChecker:
             if !checkSeparation(cv, CaptureSet(cref :: Nil)) then
               val consumedPos = if cref.hasPos then Some(cref.pos) else None
               sorry(TypeError.ConsumedError(cv.show, consumedPos).withPos(t.pos))
+          if expected.isReadOnly then
+            outTerm.setTpe(outTerm.tpe.asReadOnly)
+            outTerm.setCV(outTerm.cv.qualify(AccessMode.ReadOnly()))
           outTerm
       case Syntax.Term.StrLit(value) => 
         val charArrayType = Definitions.arrayType(Definitions.charType)
@@ -669,12 +683,13 @@ object TypeChecker:
               sorry(TypeError.GeneralError(s"Expected a function, but got $term1.tpe.show").withPos(t.pos))
 
     hopefully:
-      val outTerm = result.!!
-      val t1 = adaptLazyType(outTerm)
-      if !expected.exists || TypeComparer.checkSubtype(t1.tpe, expected) then
-        t1
+      var outTerm = result.!!
+      outTerm = adaptLazyType(outTerm)
+      outTerm = maybeAdaptUnit(outTerm, expected)
+      if !expected.exists || TypeComparer.checkSubtype(outTerm.tpe, expected) then
+        outTerm
       else 
-        sorry(TypeError.TypeMismatch(expected.show, t1.tpe.show).withPos(t.pos))
+        sorry(TypeError.TypeMismatch(expected.show, outTerm.tpe.show).withPos(t.pos))
 
   def checkIf(
     cond: Syntax.Term, 
@@ -1343,8 +1358,10 @@ object TypeChecker:
       def fail = sorry(TypeError.GeneralError(s"Cannot assign to this target").withPosFrom(lhs))
       val lhs1 = checkTerm(lhs).!!
       lhs1 match
-        case lhs1 @ Term.Select(_, fieldInfo) =>
+        case lhs1 @ Term.Select(base1, fieldInfo) =>
           if fieldInfo.mutable then
+            if base1.tpe.isReadOnly then
+              sorry(TypeError.TypeMismatch("A mutable reference", base1.tpe.show).withPosFrom(base1))
             val rhs1 = checkTerm(rhs, expected = lhs1.tpe).!!
             Term.PrimOp(PrimitiveOp.StructSet, Nil, List(lhs1, rhs1)).withPos(srcPos).withTpe(Definitions.unitType).withCVFrom(lhs1, rhs1)
           else

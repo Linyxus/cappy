@@ -1,7 +1,7 @@
 package cavia
 package typechecking
 
-import core.ast.*
+import core.*, ast.*
 import reporting.IndentedPrinter
 import Expr.*
 import TypeChecker.*
@@ -310,3 +310,6 @@ extension (self: Term)
     self match
       case Term.ResolveExtension(sym1, targs1, methodName1) if (sym1 eq sym) && (targs1 eq targs) && (methodName1 == methodName) => self
       case _ => Term.ResolveExtension(sym, targs, methodName).like(self)
+
+def makeUnitLit(srcPos: SourcePos)(using Context): Term =
+  Term.UnitLit().withPos(srcPos).withTpe(Definitions.unitType).withCV(CaptureSet.empty)
