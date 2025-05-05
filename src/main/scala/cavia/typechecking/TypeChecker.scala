@@ -891,7 +891,7 @@ object TypeChecker:
    */
   def checkFunctionApply(funType: Type, args: List[Syntax.Term], srcPos: SourcePos, isDependent: Boolean = true)(using Context): Result[(List[Term], Type, CaptureSet)] =
     hopefully:
-      funType.stripCaptures.dealiasTypeVar.eval match
+      funType.simplify match
         case Type.TermArrow(formals, resultType) =>
           if args.length != formals.length then
             sorry(TypeError.GeneralError(s"Argument number mismatch, expected ${formals.length}, but got ${args.length}").withPos(srcPos))
@@ -947,7 +947,7 @@ object TypeChecker:
     hopefully:
       val fun1 = maybeUnbox(checkTerm(fun).!!).!!
       val funType = fun1.tpe
-      funType.stripCaptures.dealiasTypeVar.eval match
+      funType.simplify match
         case Type.TermArrow(formals, resultType) =>
           val (args1, outType, consumedSet) = checkFunctionApply(funType, args, srcPos).!!
           val resultTerm = Term.Apply(fun1, args1).withPos(srcPos).withTpe(outType)
@@ -1453,7 +1453,7 @@ object TypeChecker:
       def fail: Result[Nothing] = Left(TypeError.TypeMismatch(s"a type with the field $field", base1.tpe.show).withPosFrom(base))
       def tryPrimArray: Result[Term] =
         hopefully:
-          base1.tpe.stripCaptures match
+          base1.tpe.simplify match
             case PrimArrayType(elemType) =>
               field match
                 case "size" | "length" =>
@@ -1506,7 +1506,7 @@ object TypeChecker:
 
   def getFieldInfo(tpe: Type, field: String)(using Context): Option[FieldInfo] = 
     def go(tpe: Type): Option[FieldInfo] =
-      tpe match
+      tpe.simplify match
         case AppliedStructType(classSym, targs) => 
           classSym.info.fields.find(_.name == field).map: fieldInfo =>
             val fieldType = substituteType(fieldInfo.tpe, targs, isParamType = false)

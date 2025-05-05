@@ -769,3 +769,9 @@ extension (tpe: Type)
     val tpe1 = tpe.reduce
     if tpe1 eq tpe then tpe
     else tpe1.eval
+
+extension (tpe: Type)
+  def simplify(using ctx: TypeChecker.Context): Type = 
+    val tpe1 =  tpe.stripCaptures.dealiasTypeVar.eval
+    if tpe1 eq tpe then tpe
+    else tpe1.simplify
