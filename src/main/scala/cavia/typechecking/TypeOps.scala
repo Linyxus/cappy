@@ -745,3 +745,8 @@ class CheckVariance(binderVariances: List[Variance], startingVariance: Variance 
       if !checkVarianceUsage(variance, definedVariance) then
         mismatches = Mismatch(globalIdx, variance) :: mismatches
     ref
+
+def showVariance(v: Variance): String = v match
+  case Variance.Covariant => "covariant"
+  case Variance.Contravariant => "contravariant"
+  case Variance.Invariant => "invariant"

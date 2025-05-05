@@ -596,8 +596,10 @@ object TypeChecker:
                 case d: Syntax.Definition.DefDef => Some(extractDefType(d, requireExplictType = false).!!)
                 case _: Syntax.Definition.StructDef =>
                   sorry(TypeError.GeneralError("structs are not allowed in a block").withPos(d.pos))
-                case d: Syntax.Definition.ExtensionDef =>
+                case _: Syntax.Definition.ExtensionDef =>
                   sorry(TypeError.GeneralError("extension definitions are not allowed in a block").withPos(d.pos))
+                case _: Syntax.Definition.TypeDef =>
+                  sorry(TypeError.GeneralError("type definitions are not allowed in a block").withPos(d.pos))
               val ctx1 = selfType match
                 case None => ctx
                 case Some(selfType) =>
@@ -1159,16 +1161,34 @@ object TypeChecker:
         checker.mismatches.foreach:
           case CheckVariance.Mismatch(idx, used) =>
             val targ = ctxTArgs(idx)
-            def showVariance(v: Variance): String = v match
-              case Variance.Covariant => "covariant"
-              case Variance.Contravariant => "contravariant"
-              case Variance.Invariant => "invariant"
             def mutableStr = if field.mutable then "mutable " else ""
             sorry:
               TypeError.GeneralError(
                 s"Type parameter defined to be ${showVariance(ctxVariances(idx))} but used as ${showVariance(used)} in ${mutableStr}field ${field.name} of type ${field.tpe.show(using ctx1)}"
               ).withPos(targ.pos)
       StructInfo(binders, variances, fields)
+
+  def checkTypeDef(d: Syntax.Definition.TypeDef)(using Context): Result[TypeDefInfo] =
+    hopefully:
+      val typeBinders = checkTypeParamList(d.targs.map(_.toTypeParam)).!!
+      val variances = d.targs.map(_.variance).map(getVariance)
+      val ctx1 = ctx.extend(typeBinders)
+      val body1 = checkType(d.body)(using ctx1).!!
+      if !body1.isPure then
+        sorry(TypeError.GeneralError("Rhs of a type definition must be a pure type").withPos(d.body.pos))
+      // Check variances
+      val ctxVariances = variances.reverse
+      val ctxTypeArgs = d.targs.reverse
+      val checker = CheckVariance(ctxVariances)
+      checker.apply(body1)
+      checker.mismatches.foreach:
+        case CheckVariance.Mismatch(idx, used) =>
+          val srcPos = ctxTypeArgs(idx).pos
+          sorry:
+            TypeError.GeneralError(
+              s"Type parameter defined to be ${showVariance(ctxVariances(idx))} but used as ${showVariance(used)} in type ${body1.show(using ctx1)}"
+            ).withPos(srcPos)
+      TypeDefInfo(typeBinders, variances, body1)
 
   def checkDef(d: Syntax.ValueDef)(using Context): Result[(TermBinder, Term)] = d match
     case Syntax.Definition.ValDef(name, tpe, expr) =>
@@ -1285,6 +1305,10 @@ object TypeChecker:
               val tparams = checkTypeParamList(ed.typeArgs).!!
               val info = ExtensionInfo(tparams, Definitions.anyType, Nil)
               ExtensionSymbol(defn.name, info, mod).withPosFrom(ed)
+            case td: Syntax.Definition.TypeDef =>
+              val tparams = checkTypeParamList(td.targs.map(_.toTypeParam)).!!
+              val variances = td.targs.map(_.variance).map(getVariance)
+              TypeDefSymbol(defn.name, TypeDefInfo(tparams, variances, Type.NoType()), mod).withPosFrom(td)
         def checkDefns(defns: List[(DefSymbol, Syntax.ValueDef)]): Result[List[Expr.Definition]] = defns match
           case Nil => Right(Nil)
           case (sym, defn) :: defns =>
@@ -1323,7 +1347,16 @@ object TypeChecker:
           sym.info = info
           Definition.StructDef(sym)
         val allClassSyms = structDefns.map(_.sym)
-        val ctxWithClasses = ctx.addSymbols(allClassSyms)
+        var ctxWithClasses = ctx.addSymbols(allClassSyms)
+        // Typecheck type definitions
+        val typeDefTodos: List[(TypeDefSymbol, Syntax.Definition.TypeDef)] = (syms `zip` defns).flatMap:
+          case (sym: TypeDefSymbol, defn: Syntax.Definition.TypeDef) => Some((sym, defn))
+          case _ => None
+        val typeDefns: List[Definition.TypeDef] = typeDefTodos.map: (sym, defn) =>
+          val ctx1 = ctx.addSymbols(syms)
+          val info = checkTypeDef(defn)(using ctx1).!!
+          sym.info = info
+          Definition.TypeDef(sym)
         // Assign declared types to value definitions and extension definitions
         for ((sym, defn) <- syms `zip` defns) do
           (sym, defn) match
@@ -1355,7 +1388,7 @@ object TypeChecker:
           case _ => None
         val valueDefns = checkDefns(valueDefTodos).!!
         // Done
-        mod.defns = structDefns ++ extensionDefns ++ valueDefns
+        mod.defns = structDefns ++ typeDefns ++ extensionDefns ++ valueDefns
         mod
 
   def isStablePath(t: Term): Boolean = t match

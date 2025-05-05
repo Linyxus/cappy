@@ -458,18 +458,27 @@ object Expr:
     override def toString(): String = s"StructSymbol($name)"
   case class ExtensionSymbol(name: String, var info: ExtensionInfo, from: Module) extends Symbol:
     override def toString(): String = s"ExtensionSymbol($name)"
+  case class TypeDefSymbol(name: String, var info: TypeDefInfo, from: Module) extends Symbol:
+    override def toString(): String = s"TypeDefSymbol($name)"
 
   enum Definition extends Positioned:
     case ValDef(sym: DefSymbol, body: Term)
     case StructDef(sym: StructSymbol)
     case ExtensionDef(sym: ExtensionSymbol)
+    case TypeDef(sym: TypeDefSymbol)
 
   case class Module(var defns: List[Definition])
 
+  /** Denotation of struct types. */
   case class FieldInfo(name: String, tpe: Type, mutable: Boolean)
   case class StructInfo(targs: List[TypeBinder | CaptureBinder], variances: List[Variance], fields: List[FieldInfo])
-  case class ExtensionInfo(typeParams: List[TypeBinder | CaptureBinder], selfArgType: Type, methods: List[ExtensionMethod])
+
+  /** Denotation of extensions. */
   case class ExtensionMethod(name: String, tpe: Type, body: Term)
+  case class ExtensionInfo(typeParams: List[TypeBinder | CaptureBinder], selfArgType: Type, methods: List[ExtensionMethod])
+
+  /** Denotation of type definitions. */
+  case class TypeDefInfo(typeParams: List[TypeBinder | CaptureBinder], variances: List[Variance], body: Type)
 
   object Definitions:
     def anyType: Type = Type.Base(BaseType.AnyType).withKind(TypeKind.Star)

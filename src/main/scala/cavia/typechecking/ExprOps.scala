@@ -224,6 +224,18 @@ class ExprPrinter extends IndentedPrinter:
         newline()
         print("}")
         newline()
+      case Definition.TypeDef(sym) =>
+        val TypeDefInfo(typeBinders, variances, body) = sym.info
+        print("type ")
+        print(sym.name)
+        val binderStrs = showBindersWithVariances(typeBinders, variances)
+        if binderStrs.nonEmpty then
+          print("[")
+          print(binderStrs.mkString(", "))
+          print("]")
+        print(" = ")
+        showType(body)
+        newline()
 
 object ExprPrinter:
   def show(t: Expr.Term)(using Context): String =
