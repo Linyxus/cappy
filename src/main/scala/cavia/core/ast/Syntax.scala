@@ -65,6 +65,12 @@ object Syntax:
 
     val variance: Int
 
+  enum ModuleName:
+    case Root()
+    case Qualified(prefix: ModuleName, name: String)
+
+  case class Module(name: ModuleName, defs: List[Definition]) extends Positioned
+
   enum Definition extends Positioned:
     /** A value definition, like val x: T = ... */
     case ValDef(name: String, tpe: Option[Type], expr: Term)
@@ -74,6 +80,8 @@ object Syntax:
     case StructDef(name: String, targs: List[ConstructorTypeParam], fields: List[FieldDef])
     /** An extension definition */
     case ExtensionDef(name: String, typeArgs: List[TypeParam | CaptureParam], selfArg: TermParam, methods: List[DefDef])
+    /** A type definition, like type Arr[X] = array[X] */
+    case TypeDef(name: String, targs: List[ConstructorTypeParam], body: Type)
 
     val name: String
   import Definition.*

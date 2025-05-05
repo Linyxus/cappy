@@ -12,11 +12,11 @@ object Compiler:
   enum ParseResult:
     case TokenizationError(err: Tokenizer.Error)
     case ParsingError(err: Parser.ParseError)
-    case Ok(result: List[Syntax.Definition])
+    case Ok(result: Syntax.Module)
 
-  def typecheck(defs: List[Syntax.Definition]): TypeChecker.Result[Expr.Module] =
+  def typecheck(module: Syntax.Module): TypeChecker.Result[Expr.Module] =
     val ctx = TypeChecker.Context.empty
-    TypeChecker.checkModule(defs)(using ctx)
+    TypeChecker.checkModule(module)(using ctx)
 
   def parse(source: SourceFile): ParseResult =
     val tokens = Tokenizer.tokenize(source)
@@ -30,7 +30,7 @@ object Compiler:
       //   println(Printer.showSourcePos(token.pos, List(token.toString)))
       val state = Parser.ParserState(tokenArray, 0)
       val ctx = Parser.ParserContext.empty
-      Parsers.programP.runParser(state)(using ctx) match
+      Parsers.moduleP.runParser(state)(using ctx) match
         case Parser.ParseResult(nextState, Left(err)) =>
           val errs = ctx.errors.sortBy(_.pos.span.end)
           // println("Errors:")
@@ -55,7 +55,7 @@ object Compiler:
         println(Printer.showSourcePos(token.pos, List(token.toString)))
       val state = Parser.ParserState(tokenArray, 0)
       val ctx = Parser.ParserContext.empty
-      Parsers.definitionP.runParser(state)(using ctx) match
+      Parsers.moduleP.runParser(state)(using ctx) match
         case Parser.ParseResult(nextState, Left(err)) =>
           println(err.show)
         case Parser.ParseResult(nextState, Right(result)) =>

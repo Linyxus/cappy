@@ -1261,7 +1261,8 @@ object TypeChecker:
     case d: Syntax.Definition.ValDef => extractValType(d)
     case d: Syntax.Definition.DefDef => extractDefType(d)
 
-  def checkModule(defns: List[Syntax.Definition])(using Context): Result[Module] = 
+  def checkModule(module: Syntax.Module)(using Context): Result[Module] = 
+    val defns = module.defs
     val mod = Expr.Module(Nil)
     def hasDuplicatedName: Boolean =
       val names = defns.map(_.name)

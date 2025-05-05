@@ -124,11 +124,37 @@ object Parsers:
       Definition.StructDef(nameTk.name, maybeParams.getOrElse(Nil), fields)
     p.positioned.withWhat("a struct definition")
 
+  def typeDefP: Parser[Definition] =
+    val params = structTypeParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
+    val p = (keywordP("type"), tokenP[Token.IDENT], params.optional, tokenP[Token.EQUAL], typeP).p.map: (_, nameTk, maybeParams, _, body) =>
+      val targs = maybeParams.getOrElse(Nil)
+      Definition.TypeDef(nameTk.name, targs, body)
+    p.positioned.withWhat("a type definition")
+
   def definitionP: Parser[Definition] = 
-    valDefP `or` defDefP `or` structP `or` extensionDefP
+    valDefP `or` defDefP `or` structP `or` extensionDefP `or` typeDefP
+
+  def moduleNameP: Parser[ModuleName] =
+    val moreP = (tokenP[Token.DOT], tokenP[Token.IDENT]).p.map((_, nameTk) => nameTk)
+    val p = (tokenP[Token.IDENT], moreP.many).p.map: (nameTk, more) =>
+      var result = ModuleName.Root()
+      val names = nameTk :: more
+      for nameTk <- names do
+        result = ModuleName.Qualified(result, nameTk.name)
+      result
+    p.withWhat("a module name")
 
   def programP: Parser[List[Definition]] =
     (tokenP[Token.NEWLINE].optional, definitionP.sepBy(tokenP[Token.NEWLINE]), wsUntilEndP).p.map((_, defs, _) => defs)
+
+  def moduleP: Parser[Module] =
+    val headerP = (keywordP("module"), moduleNameP).p.map(_._2)
+    val p = (headerP.optional, programP).p.map: (maybeHeader, defs) =>
+      val name = maybeHeader match
+        case Some(name) => name
+        case None => ModuleName.Root()
+      Module(name, defs)
+    p.positioned.withWhat("a module")
 
   def identP: Parser[Term] = 
     tokenP[Token.IDENT].map(t => Term.Ident(t.name)).positioned

@@ -7,7 +7,7 @@ import Printer.*
 import codegen.*
 import java.nio.file.*
 
-@main def hello(path: String): Unit =
+@main def runCompiler(path: String): Unit =
   val source = SourceFile.fromPath(path)
   println(s"--- input file")
   println(source.content)
@@ -20,11 +20,11 @@ import java.nio.file.*
         println(s"Tokenization error: $err")
     case Compiler.ParseResult.ParsingError(err) =>
       println(err.show)
-    case Compiler.ParseResult.Ok(result) =>
+    case Compiler.ParseResult.Ok(parsedModule) =>
       println(s"--- tree after parser")
-      result.foreach(println)
+      println(parsedModule)
       println(s"--- tree after typechecker")
-      val mod = TypeChecker.checkModule(result)(using TypeChecker.Context.empty)
+      val mod = TypeChecker.checkModule(parsedModule)(using TypeChecker.Context.empty)
       mod match
         case Left(err) => 
           println(err.asMessage.show)
