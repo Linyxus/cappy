@@ -709,7 +709,7 @@ object TypeChecker:
                     sorry(TypeError.SeparationError(hint1, hint2).withPos(t.pos))
               instantiateFresh(resultTerm)
             case _ => 
-              sorry(TypeError.GeneralError(s"Expected a function, but got $term1.tpe.show").withPos(t.pos))
+              sorry(TypeError.GeneralError(s"Expected a function, but got ${term1.tpe.show}").withPos(t.pos))
 
     hopefully:
       var outTerm = result.!!
@@ -891,7 +891,7 @@ object TypeChecker:
    */
   def checkFunctionApply(funType: Type, args: List[Syntax.Term], srcPos: SourcePos, isDependent: Boolean = true)(using Context): Result[(List[Term], Type, CaptureSet)] =
     hopefully:
-      funType.stripCaptures match
+      funType.stripCaptures.dealiasTypeVar.eval match
         case Type.TermArrow(formals, resultType) =>
           if args.length != formals.length then
             sorry(TypeError.GeneralError(s"Argument number mismatch, expected ${formals.length}, but got ${args.length}").withPos(srcPos))
@@ -947,7 +947,7 @@ object TypeChecker:
     hopefully:
       val fun1 = maybeUnbox(checkTerm(fun).!!).!!
       val funType = fun1.tpe
-      funType.stripCaptures match
+      funType.stripCaptures.dealiasTypeVar.eval match
         case Type.TermArrow(formals, resultType) =>
           val (args1, outType, consumedSet) = checkFunctionApply(funType, args, srcPos).!!
           val resultTerm = Term.Apply(fun1, args1).withPos(srcPos).withTpe(outType)
@@ -974,7 +974,7 @@ object TypeChecker:
         //       val arg1 = checkTerm(arg, expected = returnType).!!
         //       Term.Apply(fun1, List(arg1)).withPos(srcPos).withTpe(Definitions.nothingType).withCVFrom(fun1, arg1)
         //     case _ => sorry(TypeError.GeneralError(s"Expect exact one argument, but got ${args.length}").withPos(srcPos))
-        case _ =>
+        case funType =>
           sorry(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(fun.pos))
 
   def substitute(tpe: Type, args: List[Term], isParamType: Boolean = false)(using Context): Type =
@@ -1362,6 +1362,8 @@ object TypeChecker:
           val info = checkTypeDef(defn)(using ctx1).!!
           sym.info = info
           Definition.TypeDef(sym)
+        val allTypeDefSyms = typeDefns.map(_.sym)
+        ctxWithClasses = ctxWithClasses.addSymbols(allTypeDefSyms)
         // Assign declared types to value definitions and extension definitions
         for ((sym, defn) <- syms `zip` defns) do
           (sym, defn) match
