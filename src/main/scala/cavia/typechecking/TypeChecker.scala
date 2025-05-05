@@ -1078,7 +1078,7 @@ object TypeChecker:
 
   def checkStructDef(d: Syntax.Definition.StructDef)(using Context): Result[StructInfo] =
     hopefully:
-      val binders = checkTypeParamList(d.targs).!!
+      val binders = checkTypeParamList(d.targs.map(_.toTypeParam)).!!
       val ctx1 = ctx.extend(binders)
       val fieldNames = d.fields.map(_.name)
       if fieldNames.distinct.length != fieldNames.length then
@@ -1195,7 +1195,7 @@ object TypeChecker:
               //val tpe = extractDefnType(defn).!!
               DefSymbol(defn.name, Definitions.anyType, mod).withPosFrom(defn)
             case sd: Syntax.Definition.StructDef =>
-              val tparams = checkTypeParamList(sd.targs).!!
+              val tparams = checkTypeParamList(sd.targs.map(_.toTypeParam)).!!
               StructSymbol(defn.name, StructInfo(tparams, Nil), mod).withPosFrom(defn)
             case ed: Syntax.Definition.ExtensionDef =>
               val tparams = checkTypeParamList(ed.typeArgs).!!

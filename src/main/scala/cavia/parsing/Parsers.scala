@@ -102,9 +102,23 @@ object Parsers:
       FieldDef(nameTk.name, isVar, tpe)
     p.positioned.withWhat("a struct field definition")
 
+  def varianceP: Parser[Int] =
+    val covP = tokenP[Token.PLUS].map(_ => 1)
+    val contraP = tokenP[Token.MINUS].map(_ => -1)
+    val p = (covP `or` contraP).optional.map(_.getOrElse(0))
+    p
+
+  def structTypeParamP: Parser[ConstructorTypeParam] =
+    val typP = (varianceP, typeParamP).p.map: (v, tp) =>
+      ConstructorTypeParam.Typ(tp, v)
+    val capP = (varianceP, captureParamP).p.map: (v, cp) =>
+      ConstructorTypeParam.Cap(cp, v)
+    val p = capP `or` typP
+    p.positioned.withWhat("a struct type parameter")
+
   def structP: Parser[Definition] =
     val fieldsP = fieldDefP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
-    val paramP: Parser[TypeParam | CaptureParam] = captureParamP `or` typeParamP
+    val paramP: Parser[ConstructorTypeParam] = structTypeParamP
     val paramsP = paramP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
     val p = (keywordP("struct"), tokenP[Token.IDENT], paramsP.optional, fieldsP).p.map: (_, nameTk, maybeParams, fields) =>
       Definition.StructDef(nameTk.name, maybeParams.getOrElse(Nil), fields)
@@ -326,7 +340,6 @@ object Parsers:
     p.positioned.withWhat("a type parameter")
 
   def captureParamP: Parser[CaptureParam] =
-    //tokenP[Token.IDENT].map(t => CaptureParam(t.name)).positioned.withWhat("a capture parameter")
     val boundP = (tokenP[Token.LESSCOLON], captureSetP).p.map((_, cs) => cs)
     val p = (keywordP("cap"), tokenP[Token.IDENT], boundP.tryIt).p.map: (_, name, maybeBound) =>
       CaptureParam(name.name, maybeBound)
