@@ -1366,7 +1366,7 @@ object TypeChecker:
           getFieldInfo(base1.tpe, field) match
             case Some(fieldInfo) =>
               val outTerm = Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldInfo.tpe).withCV(base1.cv)
-              if isStablePath(outTerm) then
+              if isStablePath(outTerm) && !outTerm.tpe.isPure then
                 val singletonSet = outTerm.asSingletonType.singletonCaptureSet
                 val narrowedType = Type.Capturing(outTerm.tpe.stripCaptures, isReadOnly = false, singletonSet)
                 outTerm.withTpe(narrowedType).withCV(singletonSet)
