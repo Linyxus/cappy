@@ -274,7 +274,7 @@ object CodeGenerator:
       val paramBinderInfos = params.map: binder =>
         BinderInfo.Inaccessible(binder)
       FuncType(paramTypes, Some(translateType(result)(using ctx.withMoreBinderInfos(paramBinderInfos))))
-    case Expr.Type.Capturing(inner, _) => computeFuncType(inner, isClosure)
+    case Expr.Type.Capturing(inner, _, _) => computeFuncType(inner, isClosure)
     case _ => assert(false, s"Unsupported type for computing func type")
 
   def createFuncParams(params: List[Expr.Binder.TermBinder])(using Context): List[(Symbol, ValType)] =
@@ -333,7 +333,7 @@ object CodeGenerator:
       case Expr.Type.Base(Expr.BaseType.UnitType) => ValType.I32
       case Expr.Type.Base(Expr.BaseType.BoolType) => ValType.I32
       case Expr.Type.Base(Expr.BaseType.CharType) => ValType.I32
-      case Expr.Type.Capturing(inner, _) => translateType(inner)
+      case Expr.Type.Capturing(inner, _, _) => translateType(inner)
       case Expr.Type.TermArrow(params, result) =>
         val funcType = computeFuncType(tpe)
         val info = createClosureTypes(funcType)

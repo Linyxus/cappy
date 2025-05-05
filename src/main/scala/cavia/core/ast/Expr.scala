@@ -199,7 +199,7 @@ object Expr:
     /** Reference to a struct symbol */
     case SymbolRef(sym: StructSymbol)
     /** A capturing type, S^C */
-    case Capturing(inner: Type, captureSet: CaptureSet)
+    case Capturing(inner: Type, isReadOnly: Boolean, captureSet: CaptureSet)
     /** Function type (z: T1) -> T2 */
     case TermArrow(params: List[TermBinder], result: Type)
     /** Type function type [X, cap C, ...] -> T */
@@ -232,10 +232,10 @@ object Expr:
       case NoType() => false
       case _ => true
 
-    def derivedCapturing(inner1: Type, captureSet1: CaptureSet): Type =
+    def derivedCapturing(inner1: Type, isReadOnly1: Boolean, captureSet1: CaptureSet): Type =
       this match
-        case Type.Capturing(inner, captureSet) if (inner eq inner1) && (captureSet eq captureSet1) => this
-        case _ => Type.Capturing(inner1, captureSet1).like(this)
+        case Type.Capturing(inner, isReadOnly, captureSet) if (inner eq inner1) && (isReadOnly == isReadOnly1) && (captureSet eq captureSet1) => this
+        case _ => Type.Capturing(inner1, isReadOnly1, captureSet1).like(this)
 
     def derivedTermArrow(params1: List[Binder], result1: Type): Type =
       this match

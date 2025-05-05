@@ -64,7 +64,7 @@ class TypeMap:
   def mapNoType(noType: Type.NoType): Type = noType
 
   def mapCapturing(ct: Type.Capturing): Type =
-    ct.derivedCapturing(apply(ct.inner), mapCaptureSet(ct.captureSet))
+    ct.derivedCapturing(apply(ct.inner), ct.isReadOnly, mapCaptureSet(ct.captureSet))
 
   def mapTermArrow(ta: Type.TermArrow): Type =
     def go(ps: List[TermBinder], bs: List[Binder]): Type =
@@ -183,7 +183,7 @@ extension (tpe: Type)
     case Type.Base(base) => CaptureSet.empty
     case Type.BinderRef(idx) => CaptureSet.empty
     case Type.SymbolRef(sym) => CaptureSet.empty
-    case Type.Capturing(inner, captureSet) => inner.captureSet ++ captureSet
+    case Type.Capturing(inner, _, captureSet) => inner.captureSet ++ captureSet
     case Type.TermArrow(params, result) => CaptureSet.empty
     case Type.TypeArrow(params, result) => CaptureSet.empty
     case Type.AppliedType(constructor, args) => CaptureSet.empty
@@ -195,7 +195,7 @@ extension (tpe: Type)
     case Type.NoType() => assert(false, "computing capture set from no type")
 
   def stripCaptures: Type = tpe match
-    case Type.Capturing(inner, captureSet) => inner.stripCaptures
+    case Type.Capturing(inner, _, _) => inner.stripCaptures
     case _ => tpe
 
   def stripRefinements: Type = tpe match
@@ -203,7 +203,7 @@ extension (tpe: Type)
     case _ => tpe
 
   def strip: Type = tpe match
-    case Type.Capturing(inner, _) => inner.strip
+    case Type.Capturing(inner, _, _) => inner.strip
     case Type.RefinedType(base, _) => base.strip
     case _ => tpe
 
@@ -332,13 +332,15 @@ object TypePrinter:
           if args.isEmpty then ""
           else s"[${args.map(showTypeArg).mkString(", ")}]"
         s"${show(constructor)}$typeArgsStr"
-      case Type.Capturing(inner, captureSet) => 
+      case Type.Capturing(inner, isReadOnly, captureSet) => 
         inner match
           case Type.TermArrow(params, result) =>
             showFunctionType(params, result, cs = Some(captureSet), isType = false)
           case Type.TypeArrow(params, result) =>
             showFunctionType(params, result, cs = Some(captureSet), isType = true)
-          case _ => s"${show(inner)}^${show(captureSet)}"
+          case _ => 
+            val roStr = if isReadOnly then "ro" else ""
+            s"${show(inner)}^$roStr${show(captureSet)}"
       case Type.TermArrow(params, result) => 
         showFunctionType(params, result, cs = None, isType = false)
       case Type.TypeArrow(params, result) =>
@@ -658,8 +660,8 @@ extension (tpe: Type)
   def refined(refinements: List[FieldInfo]): Type = 
     if refinements.isEmpty then tpe
     else tpe match
-      case Type.Capturing(base, captureSet) =>
-        tpe.derivedCapturing(base.refined(refinements), captureSet)
+      case Type.Capturing(base, isReadOnly, captureSet) =>
+        tpe.derivedCapturing(base.refined(refinements), isReadOnly, captureSet)
       case tpe => tpe.derivedRefinedType(tpe, refinements)
 
 extension (ref: QualifiedRef)

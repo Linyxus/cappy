@@ -32,9 +32,12 @@ This is currently a toy.
 - [x] Instantiate `cap`s
 - [x] Handle struct captures more precisely
 - [x] Support extension methods
+- [x] Support `char`
+- [ ] Support readonly access
+  + [ ] typechecker: use a proper access mode
+  + [ ] subtype: check access mode when comparing types
 - [ ] Add boxed int type
 - [ ] Support array literal
-- [ ] Support `char`
 - [ ] Support translating type lambdas
 
 ## Issues

@@ -281,7 +281,7 @@ object TypeChecker:
       hopefully:
         val inner1 = checkType(inner).!!
         val captureSet1 = checkCaptureSet(captureSet).!!
-        Type.Capturing(inner1, captureSet1).maybeWithPosFrom(tpe).withKind(TypeKind.Star)
+        Type.Capturing(inner1, isRO, captureSet1).maybeWithPosFrom(tpe).withKind(TypeKind.Star)
     case Syntax.Type.AppliedType(tycon, args) =>
       hopefully:
         val tycon1 = checkType(tycon).!!
@@ -422,7 +422,7 @@ object TypeChecker:
           if fieldType.isPure then None
           else Some(FieldInfo(name, arg.tpe, mutable))
       val captureSet = CaptureSet.universal ++ CaptureSet(termCaptureElems)
-      val outType = Type.Capturing(classType, captureSet)
+      val outType = Type.Capturing(classType, isReadOnly = false, captureSet)
       val refinedOutType = outType.refined(refinements)
       Term.StructInit(classSym, typeArgs, termArgs).withPos(srcPos).withTpe(refinedOutType).withCVFrom(termArgs*)
 
@@ -455,7 +455,7 @@ object TypeChecker:
         val (_, outCV) = dropLocalParams(bodyCV.elems.toList, params.length)
         val outCV1 = dropLocalFreshCaps(outCV, srcPos).!!
         val outTerm = Term.TermLambda(params, body1, skolemizedBinders = params1).withPos(srcPos)
-        val outType = Type.Capturing(Type.TermArrow(params, body1.tpe), CaptureSet(outCV1.distinct))
+        val outType = Type.Capturing(Type.TermArrow(params, body1.tpe), isReadOnly = false, CaptureSet(outCV1.distinct))
         outTerm.withTpe(outType).withCV(CaptureSet.empty)
 
   def checkTypeAbstraction(params: List[TypeBinder | CaptureBinder], checkBody: Context ?=> Result[Term], srcPos: SourcePos)(using Context): Result[Term] =
@@ -471,7 +471,7 @@ object TypeChecker:
           sorry(TypeError.GeneralError("local capture parameters captured by the body of a the lambda"))
         val outCV1 = dropLocalFreshCaps(outCV, srcPos).!!
         val outTerm = Term.TypeLambda(params, body1).withPos(srcPos)
-        val outType = Type.Capturing(Type.TypeArrow(params, body1.tpe), CaptureSet(outCV1))
+        val outType = Type.Capturing(Type.TypeArrow(params, body1.tpe), isReadOnly = false, CaptureSet(outCV1))
         outTerm.withTpe(outType).withCV(CaptureSet.empty)
 
   def adaptLazyType(t: Term)(using Context): Term =
@@ -494,7 +494,7 @@ object TypeChecker:
       val tpe1 = 
         if tpe.isPure then 
           tpe 
-        else Type.Capturing(tpe.stripCaptures, ref.asSingletonType.singletonCaptureSet).withKind(TypeKind.Star)
+        else Type.Capturing(tpe.stripCaptures, isReadOnly = false, ref.asSingletonType.singletonCaptureSet).withKind(TypeKind.Star)
       ref.withPosFrom(t).withTpe(tpe1).withCV(cv)
 
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType())(using Context): Result[Term] = 
@@ -546,7 +546,7 @@ object TypeChecker:
           checkTypeAbstraction(params1, checkBody, t.pos).!!
       case Syntax.Term.Block(stmts) => 
         def avoidSelfType(tpe: Type, d: Syntax.Definition): Result[Type] =
-          val approxType = Type.Capturing(tpe.stripCaptures, CaptureSet.universal)
+          val approxType = Type.Capturing(tpe.stripCaptures, isReadOnly = false, CaptureSet.universal)
           val tm = AvoidLocalBinder(approxType)
           val result = tm.apply(tpe)
           //println(s"avoidSelfType $tpe => $result")
@@ -615,7 +615,7 @@ object TypeChecker:
                   // else Some(cref)
                   Some(cref)
                 val approxCs = CaptureSet(approxElems)
-                val approxType = Type.Capturing(boundExpr1.tpe.stripCaptures, approxCs)
+                val approxType = Type.Capturing(boundExpr1.tpe.stripCaptures, isReadOnly = false, approxCs)
                 val tm = AvoidLocalBinder(approxType)
                 val resType1 = tm.apply(resType)
                 val bodyCV = bodyExpr.cv
@@ -1024,7 +1024,7 @@ object TypeChecker:
           TermBinder("size", Definitions.i32Type, isConsume = false),
           TermBinder("elemType", elemType, isConsume = false), 
         ),
-        Type.Capturing(Type.AppliedType(Type.Base(BaseType.ArrayType), List(elemType)), CaptureSet.universal)
+        Type.Capturing(Type.AppliedType(Type.Base(BaseType.ArrayType), List(elemType)), isReadOnly = false, CaptureSet.universal)
       )
       val (args1, outType, consumedSet) = checkFunctionApply(arrConsFunction, args, pos, isDependent = false).!!
       Term.PrimOp(PrimitiveOp.ArrayNew, elemType :: Nil, args1).withPos(pos).withTpe(outType).withCVFrom(args1*)
@@ -1321,7 +1321,7 @@ object TypeChecker:
               val outTerm = Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldInfo.tpe).withCV(base1.cv)
               if isStablePath(outTerm) then
                 val singletonSet = outTerm.asSingletonType.singletonCaptureSet
-                val narrowedType = Type.Capturing(outTerm.tpe.stripCaptures, singletonSet)
+                val narrowedType = Type.Capturing(outTerm.tpe.stripCaptures, isReadOnly = false, singletonSet)
                 outTerm.withTpe(narrowedType).withCV(singletonSet)
               else outTerm
             case _ => fail.!!
@@ -1363,7 +1363,7 @@ object TypeChecker:
           classSym.info.fields.find(_.name == field).map: fieldInfo =>
             val fieldType = substituteType(fieldInfo.tpe, targs, isParamType = false)
             FieldInfo(fieldInfo.name, fieldType, fieldInfo.mutable)
-        case Type.Capturing(tpe, _) => go(tpe)
+        case Type.Capturing(tpe, _, _) => go(tpe)
         case Type.RefinedType(core, refinements) =>
           refinements.find(_.name == field).orElse(go(core))
         case _ => None
@@ -1371,7 +1371,7 @@ object TypeChecker:
 
   def allFieldNames(tp: Type)(using Context): List[String] = tp match
     // case Type.BinderRef(idx) => allFieldNames(getBinder(idx).asInstanceOf[TypeBinder].bound) // TODO: fix this case
-    case Type.Capturing(inner, captureSet) => allFieldNames(inner)
+    case Type.Capturing(inner, _, _) => allFieldNames(inner)
     case AppliedStructType(classSym, targs) => 
       val fieldNames = classSym.info.fields.map(_.name)
       fieldNames
