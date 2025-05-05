@@ -930,9 +930,15 @@ object TypeChecker:
     val t1 = t.withTpe(tpe1)
     t1
 
+  def maybeUnbox(t: Term)(using Context): Result[Term] =
+    hopefully:
+      if t.tpe.isBoxedType then
+        checkUnbox(t, t.pos).!!
+      else t
+
   def checkApply(fun: Syntax.Term, args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
-      val fun1 = checkTerm(fun).!!
+      val fun1 = maybeUnbox(checkTerm(fun).!!).!!
       val funType = fun1.tpe
       funType.stripCaptures match
         case Type.TermArrow(formals, resultType) =>
