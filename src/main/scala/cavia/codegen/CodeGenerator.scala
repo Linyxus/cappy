@@ -227,6 +227,7 @@ object CodeGenerator:
       case PrimitiveOp.UnsafeAsPure => args.flatMap(genTerm)
       case PrimitiveOp.I32Read => argInstrs ++ List(Instruction.Call(Symbol.I32Read))
       case PrimitiveOp.PerfCounter => argInstrs ++ List(Instruction.Call(Symbol.PerfCounter))
+      case PrimitiveOp.Box | PrimitiveOp.Unbox => args.flatMap(genTerm)  // box and unbox have no runtime effects
       case PrimitiveOp.StructSet =>
         val Expr.Term.Select(base, fieldInfo) :: rhs :: Nil = args: @unchecked
         val rhsInstrs = genTerm(rhs)
@@ -325,7 +326,7 @@ object CodeGenerator:
     case PrimArrayType(elemType) => ArrayType(translateType(elemType), mutable = true)
     case _ => assert(false, s"Unsupported type: $tpe")
 
-  /** What is the WASM type of the WASM representation of a value of this type? */
+  /** What is the WASM value type of the WASM representation of a value of this type? */
   def translateType(tpe: Expr.Type)(using Context): ValType = //trace(s"translateType($tpe)"):
     tpe.dealiasTypeVar match
       case Expr.Type.Base(Expr.BaseType.I64) => ValType.I64
@@ -334,6 +335,7 @@ object CodeGenerator:
       case Expr.Type.Base(Expr.BaseType.BoolType) => ValType.I32
       case Expr.Type.Base(Expr.BaseType.CharType) => ValType.I32
       case Expr.Type.Capturing(inner, _, _) => translateType(inner)
+      case Expr.Type.Boxed(core) => translateType(core)
       case Expr.Type.TermArrow(params, result) =>
         val funcType = computeFuncType(tpe)
         val info = createClosureTypes(funcType)

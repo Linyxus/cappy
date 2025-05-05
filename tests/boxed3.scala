@@ -6,4 +6,4 @@ def foo(xs: Box[array[i32]^]): i32 =
   val t = () => xs.unbox(0)
   0
 def main(): Unit =
-  ()
+  #i32println(0)
