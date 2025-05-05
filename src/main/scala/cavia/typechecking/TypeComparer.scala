@@ -12,7 +12,10 @@ object TypeComparer:
   import CaptureSet.*
 
   def checkSubcapture(cs1: CaptureSet, cs2: CaptureSet)(using Context): Boolean = //trace(s"checkSubcapture(${cs1.show}, ${cs2.show})"):
-    cs1.elems.forall(checkSubcapture(_, cs2))
+    cs1.isUnsolvedUniversal ||  // If LHS is an unsolved universal, ignore it for now. 
+                                // It seems to be safe because universal sets are created either covariantly or invariantly.
+                                // Needs to be revisited when we have type aliases.
+      cs1.elems.forall(checkSubcapture(_, cs2))
 
   def accountsFor(cs2: CaptureSet, x1: QualifiedRef)(using Context): Boolean =
     cs2 match
@@ -47,13 +50,27 @@ object TypeComparer:
   def isSameType(tp1: Type, tp2: Type)(using Context): Boolean = //trace(s"isSameType(${tp1.show}, ${tp2.show})"):
     checkSubtype(tp1, tp2) && checkSubtype(tp2, tp1)
 
-  def compareTypeArgs(args1: List[Type | CaptureSet], args2: List[Type | CaptureSet])(using Context): Boolean =
-    (args1, args2) match
-      case (Nil, Nil) => true
-      case ((arg1: Type) :: args1, (arg2: Type) :: args2) =>
-        checkSubtype(arg1, arg2) && compareTypeArgs(args1, args2)
-      case ((arg1: CaptureSet) :: args1, (arg2: CaptureSet) :: args2) =>
-        checkSubcapture(arg1, arg2) && compareTypeArgs(args1, args2)
+  def checkTypeArg(arg1: Type | CaptureSet, arg2: Type | CaptureSet, variance: Variance)(using Context): Boolean =
+    (arg1, arg2) match
+      case (tpe1: Type, tpe2: Type) =>
+        variance match
+          case Variance.Covariant => checkSubtype(tpe1, tpe2)
+          case Variance.Contravariant => checkSubtype(tpe2, tpe1)
+          case Variance.Invariant => checkSubtype(tpe1, tpe2) && checkSubtype(tpe2, tpe1)
+      case (cs1: CaptureSet, cs2: CaptureSet) =>
+        variance match
+          case Variance.Covariant => checkSubcapture(cs1, cs2)
+          case Variance.Contravariant => checkSubcapture(cs2, cs1)
+          case Variance.Invariant => checkSubcapture(cs1, cs2) && checkSubcapture(cs2, cs1)
+      case _ => false
+
+  def compareTypeArgs(args1: List[Type | CaptureSet], args2: List[Type | CaptureSet], variances: List[Variance])(using Context): Boolean =
+    (args1, args2, variances) match
+      case (Nil, Nil, Nil) => true
+      case ((arg1: Type) :: args1, (arg2: Type) :: args2, v1 :: vs1) =>
+        checkTypeArg(arg1, arg2, v1) && compareTypeArgs(args1, args2, vs1)
+      case ((arg1: CaptureSet) :: args1, (arg2: CaptureSet) :: args2, v1 :: vs1) =>
+        checkTypeArg(arg1, arg2, v1) && compareTypeArgs(args1, args2, vs1)
       case _ => false
 
   def checkSubtype(tp1: Type, tp2: Type)(using Context): Boolean = //trace(s"checkSubtype(${tp1.show}, ${tp2.show})"):
@@ -72,7 +89,10 @@ object TypeComparer:
       case (tp1, tp2: Type.TypeVar) =>
         Inference.addBound(tp2, tp1, isUpper = false)
       case (Type.AppliedType(base1, args1), Type.AppliedType(base2, args2)) =>
-        checkSubtype(base1, base2) && compareTypeArgs(args1, args2)
+        val variances = base1.kind match
+          case TypeKind.Arrow(argVariances, _) => argVariances
+          case _ => List()
+        checkSubtype(base1, base2) && compareTypeArgs(args1, args2, variances)
       case (Type.Capturing(inner, isReadOnly1, captureSet), tp2) =>
         def modeCompatible: Boolean = !isReadOnly1 || tp2.isReadOnly
         modeCompatible && checkSubcapture(captureSet, tp2.captureSet) && checkSubtype(inner, tp2)

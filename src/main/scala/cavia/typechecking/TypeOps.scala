@@ -617,12 +617,16 @@ class CapInstantiation(createCapInst: () => CaptureRef.CapInst) extends TypeMap:
     case Type.TermArrow(ps, result) => tpe
     case _ => mapOver(tpe)
 
-  override def mapCaptureRef(ref: QualifiedRef): CaptureSet = ref.core match
-    case CaptureRef.CAP() => 
-      val inst: CaptureRef.CapInst = createCapInst()
-      localCaps = inst :: localCaps
-      CaptureSet(QualifiedRef(ref.mode, inst) :: Nil)
-    case _ => CaptureSet(ref :: Nil)
+  override def mapCaptureRef(ref: QualifiedRef): CaptureSet = 
+    if variance == Variance.Contravariant then
+      CaptureSet(ref :: Nil)  // do nothing at contravariant sites
+    else
+      ref.core match
+        case CaptureRef.CAP() => 
+          val inst: CaptureRef.CapInst = createCapInst()
+          localCaps = inst :: localCaps
+          CaptureSet(QualifiedRef(ref.mode, inst) :: Nil)
+        case _ => CaptureSet(ref :: Nil)
 
 class UniversalConversion extends TypeMap:
   import scala.collection.mutable.Set
@@ -637,11 +641,14 @@ class UniversalConversion extends TypeMap:
     else CaptureSet.Const(elems)
 
   override def mapCaptureSet(captureSet: CaptureSet): CaptureSet = 
-    captureSet match
-      case CaptureSet.Const(elems) => maybeCreateUniversal(elems)
-      case univ: CaptureSet.UniversalSet if univ.solved => maybeCreateUniversal(univ.elems)
-      case univ: CaptureSet.UniversalSet =>
-        assert(false, "universal conversion on a non-solved universal set")
+    if variance == Variance.Contravariant then
+      captureSet  // do nothing
+    else
+      captureSet match
+        case CaptureSet.Const(elems) => maybeCreateUniversal(elems)
+        case univ: CaptureSet.UniversalSet if univ.solved => maybeCreateUniversal(univ.elems)
+        case univ: CaptureSet.UniversalSet =>
+          assert(false, "universal conversion on a non-solved universal set")
 
   override def apply(tpe: Type): Type = tpe match
     case Type.TypeArrow(ps, result) => tpe

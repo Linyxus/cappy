@@ -151,9 +151,14 @@ object Expr:
     def empty: CaptureSet = Const(Nil)
     def universal: CaptureSet = Const(List(QualifiedRef(AccessMode.Normal(), CaptureRef.CAP())))
 
+  extension (cset: CaptureSet)
+    def isUnsolvedUniversal: Boolean = cset match
+      case CaptureSet.Const(_) => false
+      case univ: CaptureSet.UniversalSet => !univ.solved
+
   enum TypeKind:
     case Star  // *
-    case Arrow(params: List[Variance], res: TypeKind)  // [T1, T2, ...] -> K
+    case Arrow(params: List[Variance], res: TypeKind)  // [+T1, -T2, T3, ...] -> K
 
   /** A trait for types that have a kind */
   trait HasKind:
