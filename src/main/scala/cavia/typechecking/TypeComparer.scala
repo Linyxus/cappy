@@ -134,5 +134,6 @@ object TypeComparer:
       case (tp1, Type.AppliedType(base2, args2)) =>
         val tp22 = tp2.reduce
         !(tp22 eq tp2) && checkSubtype(tp1, tp22)
+      case (Type.Boxed(inner1), Type.Boxed(inner2)) => checkSubtype(inner1, inner2)
       case _ => false
 
