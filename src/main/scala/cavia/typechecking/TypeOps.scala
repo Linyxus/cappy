@@ -222,9 +222,11 @@ extension (tpe: Type)
     case Type.RefinedType(base, refinements) => base.stripRefinements
     case _ => tpe
 
+  /** Strip capturing, refinements and boxes */
   def strip: Type = tpe match
     case Type.Capturing(inner, _, _) => inner.strip
     case Type.RefinedType(base, _) => base.strip
+    case Type.Boxed(core) => core.strip
     case _ => tpe
 
   /** Dealias a solved type variable. */

@@ -454,7 +454,8 @@ object Expr:
     val from: Module
   sealed trait TypeSymbol extends Symbol
 
-  case class DefSymbol(name: String, var tpe: Type, from: Module) extends Symbol
+  case class DefSymbol(name: String, var tpe: Type, from: Module) extends Symbol:
+    override def toString(): String = s"DefSymbol($name, $tpe)"
   case class StructSymbol(name: String, var info: StructInfo, from: Module) extends TypeSymbol:
     override def toString(): String = s"StructSymbol($name)"
   case class ExtensionSymbol(name: String, var info: ExtensionInfo, from: Module) extends TypeSymbol:

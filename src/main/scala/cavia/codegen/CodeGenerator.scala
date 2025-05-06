@@ -76,6 +76,13 @@ object CodeGenerator:
     def withMoreBinderInfos(binderInfos: List[BinderInfo]): Context =
       copy(binderInfos = binderInfos.reverse ++ this.binderInfos)
 
+    def typecheckerCtx: TypeChecker.Context =
+      TypeChecker.Context(
+        binders = binderInfos.map(_.binder),
+        symbols = Nil,
+        inferenceState = Inference.InferenceState.empty,
+      )
+
   def ctx(using ctx: Context): Context = ctx
 
   def emitFunc(f: Func)(using Context): Unit =
@@ -328,7 +335,7 @@ object CodeGenerator:
 
   /** What is the WASM value type of the WASM representation of a value of this type? */
   def translateType(tpe: Expr.Type)(using Context): ValType = //trace(s"translateType($tpe)"):
-    tpe.dealiasTypeVar match
+    tpe.simplify(using ctx.typecheckerCtx) match
       case Expr.Type.Base(Expr.BaseType.I64) => ValType.I64
       case Expr.Type.Base(Expr.BaseType.I32) => ValType.I32
       case Expr.Type.Base(Expr.BaseType.UnitType) => ValType.I32
@@ -607,7 +614,7 @@ object CodeGenerator:
     argInstrs ++ createStructInstrs
 
   def genSelect(base: Expr.Term, fieldInfo: Expr.FieldInfo)(using Context): List[Instruction] =
-    base.tpe.strip match
+    base.tpe.strip.simplify(using ctx.typecheckerCtx) match
       case AppliedStructType(classSym, targs) =>
         val StructInfo(structSym, nameMap) = createStructType(classSym, targs)
         val fieldName = fieldInfo.name
