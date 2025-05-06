@@ -57,7 +57,10 @@ class TypeMap:
           else if variance == Variance.Contravariant then
             CaptureSet.empty
           else 
-            assert(false, s"Don't know how to handle a widened capture ref at invariant occurrence")
+            val cs = tp1.captureSet
+            if !cs.isUnsolvedUniversal && cs.elems.size == 1 then
+              cs
+            else assert(false, s"Don't know how to handle a widened capture ref at invariant occurrence")
     case CaptureRef.CAP() => CaptureSet(ref :: Nil)
     case _: CaptureRef.CapInst => CaptureSet(ref :: Nil)
 
