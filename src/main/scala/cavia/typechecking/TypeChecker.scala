@@ -1223,7 +1223,7 @@ object TypeChecker:
                 val ci = css(i)
                 val cj = css(j)
                 if !checkSeparation(ci, cj) then
-                  sorry(TypeError.GeneralError(s"${ci.show} and ${cj.show} consumes the same capability twice"))
+                  sorry(TypeError.GeneralError(s"In the returned value of this method, ${ci.show} and ${cj.show} consumes the same capability twice").withPos(resultType.get.pos))
             // Check the level of fresh caps
             val curLevel = ctx.freshLevel
             css.foreach: cs =>
