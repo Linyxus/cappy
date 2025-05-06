@@ -360,9 +360,9 @@ object TypeChecker:
             (t, f) match
               case (t: Syntax.Type, f: Type) =>
                 val formal1 = substituteType(f, checkedAcc.reverse, isParamType = true)
-                val tpe = checkType(t).!!
+                var tpe = checkType(t).!!
                 if !tpe.isPure then
-                  sorry(TypeError.GeneralError(s"Type argument ${tpe.show} is not pure").withPosFrom(t))
+                  tpe = Type.Boxed(tpe)
                 if !TypeComparer.checkSubtype(tpe, formal1) then
                   sorry(TypeError.GeneralError(s"Type argument ${tpe.show} does not conform to the bound ${f.show}").withPosFrom(t))
                 tpe
