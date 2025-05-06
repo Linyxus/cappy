@@ -23,7 +23,7 @@ object Syntax:
 
   enum PrefixOp extends Positioned:
     case Neg, Not
-    case Return
+    //case Return
 
   enum Term extends Positioned:
     case Ident(name: String)

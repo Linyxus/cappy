@@ -328,8 +328,8 @@ object Expr:
     case UnsafeAsPure
     /** Get the elapsed time since the start of the program in milliseconds */
     case PerfCounter
-    /** Return a value */
-    case Return
+    // /** Return a value */
+    // case Return
     // /** Set up a boundary */
     // case Boundary
     /** Primitives for boxing and unboxing in capture tracking */
@@ -377,10 +377,10 @@ object Expr:
       case PutChar => "#putchar"
       case PerfCounter => "#perfcounter"
       case UnsafeAsPure => "#unsafeAsPure"
-      case Return => "return"
+      //case Return => "return"
       case Box => "#box"
       case Unbox => "#unbox"
-      // case Boundary => "#boundary"
+      //case Boundary => "#boundary"
 
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match
