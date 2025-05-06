@@ -50,7 +50,7 @@ class TypeMap:
   def mapCaptureRef(ref: QualifiedRef): CaptureSet = ref.core match
     case CaptureRef.Ref(tp) =>
       apply(tp.asInstanceOf[Type]) match
-        case tp1: SingletonType => CaptureSet(QualifiedRef(ref.mode, CaptureRef.Ref(tp1)) :: Nil)
+        case tp1: SingletonType => CaptureSet(QualifiedRef(ref.mode, CaptureRef.Ref(tp1)).maybeWithPosFrom(ref) :: Nil)
         case tp1 =>
           if variance == Variance.Covariant then
             tp1.captureSet

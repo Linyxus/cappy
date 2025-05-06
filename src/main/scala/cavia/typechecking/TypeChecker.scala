@@ -526,7 +526,7 @@ object TypeChecker:
         case Some((binder: Binder, idx)) => sorry(TypeError.UnboundVariable(t.name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
         case _ => sorry(TypeError.UnboundVariable(t.name).withPos(t.pos))
 
-      val cv = if !tpe.isPure then ref.asSingletonType.singletonCaptureSet else CaptureSet.empty
+      val cv = if !tpe.isPure then ref.asSingletonType.singletonCaptureSet.withPos(t.pos) else CaptureSet.empty
       val tpe1 = 
         if tpe.isPure then 
           tpe 
@@ -648,7 +648,7 @@ object TypeChecker:
 
                 // typecheck the body
                 val peaksConsumed = consumedPeaks(boundExpr1.cv)
-                val bodyExpr = go(ds)(using ctx.extend(bd1 :: Nil).moreConsumedPeaks(peaksConsumed)).!!
+                val bodyExpr = go(ds)(using ctx.extend(bd1 :: Nil).moreConsumedPeaks(peaksConsumed.shift(1))).!!
 
                 val resType = bodyExpr.tpe
                 val approxElems = bd1.tpe.captureSet.elems.flatMap: cref =>
@@ -956,7 +956,9 @@ object TypeChecker:
             case _: VarRef =>
               // skip, since it will already be marked
             case _ =>
-              resultTerm.withMoreCV(fun1.tpe.captureSet)
+              val cv = fun1.tpe.captureSet.elems.map: cref =>
+                cref.copy().withPos(srcPos)
+              resultTerm.withMoreCV(CaptureSet(cv))
           resultTerm
         case PrimArrayType(elemType) =>
           args match
