@@ -9,20 +9,22 @@ import Printer.*
 import typechecking.*
 
 object Compiler:
-  enum ParseResult:
-    case TokenizationError(err: Tokenizer.Error)
-    case ParsingError(err: Parser.ParseError)
-    case Ok(result: Syntax.Module)
+  type ParseResult[+X] = Either[Tokenizer.Error | Parser.ParseError, X]
 
   def typecheck(module: Syntax.Module): TypeChecker.Result[Expr.Module] =
     val ctx = TypeChecker.Context.empty
     TypeChecker.checkModule(module)(using ctx)
 
-  def parse(source: SourceFile): ParseResult =
+  def parseAll(sources: List[SourceFile]): ParseResult[List[Syntax.Module]] =
+    hopefully:
+      val modules = sources.map(parse(_).!!)
+      modules
+
+  def parse(source: SourceFile): ParseResult[Syntax.Module] =
     val tokens = Tokenizer.tokenize(source)
     val errTokens = tokens.collect { case err: Tokenizer.Error => err }
     if errTokens.nonEmpty then
-      ParseResult.TokenizationError(errTokens.head)
+      Left(errTokens.head)
     else
       // println("Tokenization successful")
       val tokenArray = (tokens.collect { case token: Token => token }).toArray
@@ -37,9 +39,9 @@ object Compiler:
           // errs.foreach: err =>
           //   println(Printer.showSourcePos(err.pos, List(err.toString)))
           val farestErr = if errs.nonEmpty then errs.last else err
-          ParseResult.ParsingError(farestErr)
+          Left(farestErr)
         case Parser.ParseResult(nextState, Right(result)) =>
-          ParseResult.Ok(result)
+          Right(result)
 
   def compile(source: SourceFile): Unit =
     val tokens = Tokenizer.tokenize(source)

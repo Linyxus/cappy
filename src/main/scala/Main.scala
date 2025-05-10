@@ -1,5 +1,7 @@
 import cavia.*
 import io.*
+import tokenizing.*
+import parsing.*
 import reporting.*
 import typechecking.*
 import core.ast.*
@@ -7,20 +9,25 @@ import Printer.*
 import codegen.*
 import java.nio.file.*
 
-@main def runCompiler(path: String): Unit =
+@main def runCompiler(sourcePaths: String*): Unit =
+  if sourcePaths.length < 1 then
+    println("Expecting at least one argument")
+    return
+
+  val path = sourcePaths.toList.head
   val source = SourceFile.fromPath(path)
   println(s"--- input file")
   println(source.content)
   val result = Compiler.parse(source)
   result match
-    case Compiler.ParseResult.TokenizationError(err) =>
+    case Left(err: Tokenizer.Error) =>
       if err.hasPos then
         println(Printer.showSourcePos(err.pos, List(err.toString)))
       else
         println(s"Tokenization error: $err")
-    case Compiler.ParseResult.ParsingError(err) =>
+    case Left(err: Parser.ParseError) =>
       println(err.show)
-    case Compiler.ParseResult.Ok(parsedModule) =>
+    case Right(parsedModule) =>
       println(s"--- tree after parser")
       println(parsedModule)
       println(s"--- tree after typechecker")
