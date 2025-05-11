@@ -284,10 +284,15 @@ object CodeGenerator:
         BinderInfo.Inaccessible(binder)
       FuncType(paramTypes, Some(translateType(result)(using ctx.withMoreBinderInfos(paramBinderInfos))))
     case Expr.Type.TypeArrow(tparams, result) =>
+      val paramTypes =
+        if isClosure then
+          ValType.AnyRef :: Nil
+        else
+          Nil
       val paramBinderInfos = tparams.map: binder =>
         BinderInfo.Abstract(binder)
       val resultType = translateType(result)(using ctx.withMoreBinderInfos(paramBinderInfos))
-      FuncType(Nil, Some(resultType))
+      FuncType(paramTypes, Some(resultType))
     case Expr.Type.Capturing(inner, _, _) => computeFuncType(inner, isClosure)
     case _ => assert(false, s"Unsupported type for computing func type")
 
@@ -618,6 +623,19 @@ object CodeGenerator:
       val argInstrs = args.flatMap(genTerm)
       val callRefInstrs = List(Instruction.CallRef(info.funcTypeSym))
       funInstrs ++ getSelfArgInstrs ++ argInstrs ++ getWorkerInstrs ++ callRefInstrs
+    case Term.TypeApply(fun, targs) =>
+      val localSym = Symbol.fresh("fun")
+      val funcType = computeFuncType(fun.tpe)
+      val info = createClosureTypes(funcType)
+      emitLocal(localSym, ValType.TypedRef(info.closTypeSym))
+      val funInstrs = genTerm(fun) ++ List(Instruction.LocalSet(localSym))
+      val getWorkerInstrs = List(
+        Instruction.LocalGet(localSym),
+        Instruction.StructGet(info.closTypeSym, Symbol.Function),
+      )
+      val getSelfArgInstrs = List(Instruction.LocalGet(localSym))
+      val callRefInstrs = List(Instruction.CallRef(info.funcTypeSym))
+      funInstrs ++ getSelfArgInstrs ++ getWorkerInstrs ++ callRefInstrs
     case Term.StructInit(classSym, targs, args) =>
       genStructInit(classSym, targs, args)
     case Term.Select(base, fieldInfo) =>
