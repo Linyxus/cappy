@@ -5,7 +5,9 @@ def main(): Unit =
   putStrLn("This is hello from Cavia!!")
   putStrLn("hello, ".concat("world !!"))
   val sum = Var(0)
-  val elapsed = benchmark(() => (0.until(100000)).iterate((i: i32) => sum.data = sum.data + i))
+  val elapsed = benchmark: () => 
+    (0.until(100000)).iterate: (i: i32) => 
+      sum.data = sum.data + i
   putStrLn("Time elapsed (ms):")
   #i32println(elapsed)
   ()
