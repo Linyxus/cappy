@@ -36,9 +36,9 @@ This is currently a toy.
 - [x] Support readonly access
   + [x] typechecker: use a proper access mode
   + [x] subtype: check access mode when comparing types
+- [ ] Support translating type lambdas
 - [ ] Add boxed int type
 - [ ] Support array literal
-- [ ] Support translating type lambdas
 
 ## Issues
 

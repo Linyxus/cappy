@@ -29,7 +29,7 @@ import java.nio.file.*
       println(err.show)
     case Right(parsedModules) =>
       println(s"--- tree after parser")
-      parsedModules.foreach: parsedModule =>
+      parsedModules.init.foreach: parsedModule =>
         println(parsedModule)
       println(s"--- tree after typechecker")
       val mods = TypeChecker.checkModules(parsedModules)(using TypeChecker.Context.empty)
@@ -37,7 +37,7 @@ import java.nio.file.*
         case Left(err) => 
           println(err.asMessage.show)
         case Right(mods) =>
-          mods.foreach: mod =>
+          mods.init.foreach: mod =>  // Don't print the stdlib
             println(ExprPrinter.show(mod)(using TypeChecker.Context.empty))
           given genCtx: CodeGenerator.Context = CodeGenerator.Context()
           CodeGenerator.genModules(mods)

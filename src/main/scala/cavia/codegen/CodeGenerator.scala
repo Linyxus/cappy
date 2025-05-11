@@ -33,7 +33,7 @@ object CodeGenerator:
 
   enum DefInfo:
     case FuncDef(funcSym: Symbol, workerSym: Symbol)
-    case LazyFuncDef(body: Term.TermLambda)
+    case LazyFuncDef(body: Expr.Closure)
     case GlobalDef(globalSym: Symbol)
 
   case class StructInfo(sym: Symbol, nameMap: Map[String, Symbol])
@@ -283,6 +283,11 @@ object CodeGenerator:
       val paramBinderInfos = params.map: binder =>
         BinderInfo.Inaccessible(binder)
       FuncType(paramTypes, Some(translateType(result)(using ctx.withMoreBinderInfos(paramBinderInfos))))
+    case Expr.Type.TypeArrow(tparams, result) =>
+      val paramBinderInfos = tparams.map: binder =>
+        BinderInfo.Abstract(binder)
+      val resultType = translateType(result)(using ctx.withMoreBinderInfos(paramBinderInfos))
+      FuncType(Nil, Some(resultType))
     case Expr.Type.Capturing(inner, _, _) => computeFuncType(inner, isClosure)
     case _ => assert(false, s"Unsupported type for computing func type")
 
@@ -347,6 +352,10 @@ object CodeGenerator:
       case Expr.Type.Capturing(inner, _, _) => translateType(inner)
       case Expr.Type.Boxed(core) => translateType(core)
       case Expr.Type.TermArrow(params, result) =>
+        val funcType = computeFuncType(tpe)
+        val info = createClosureTypes(funcType)
+        ValType.TypedRef(info.closTypeSym)
+      case Expr.Type.TypeArrow(tparams, result) =>
         val funcType = computeFuncType(tpe)
         val info = createClosureTypes(funcType)
         ValType.TypedRef(info.closTypeSym)
@@ -578,6 +587,10 @@ object CodeGenerator:
       val argInstrs = args.flatMap(genTerm)
       val callInstrs = List(Instruction.Call(funcSym))
       argInstrs ++ callInstrs
+    case Term.TypeApply(Term.SymbolRef(sym), _) =>
+      val DefInfo.FuncDef(funcSym, _) = createModuleFunction(sym)
+      val callInstrs = List(Instruction.Call(funcSym))
+      callInstrs
     case Term.Apply(Term.ResolveExtension(extSym, targs, field), args) =>
       val ExtensionInfo(methodMap) = createExtensionInfo(extSym, targs)
       val methodInfo = methodMap(field)
@@ -690,7 +703,7 @@ object CodeGenerator:
         val funcSym = Symbol.fresh(sym.name)
         val workerSym = Symbol.fresh(s"worker_${sym.name}")
         emitElemDeclare(ExportKind.Func, workerSym)
-        genModuleFunction(sym.tpe, funcSym, Some(workerSym), body)
+        genModuleFunction(sym.tpe, funcSym, Some(workerSym), body.asInstanceOf[Expr.Term])
         ctx.defInfos += (sym -> DefInfo.FuncDef(funcSym, workerSym))
         DefInfo.FuncDef(funcSym, workerSym)
       case _ => 
@@ -722,17 +735,27 @@ object CodeGenerator:
     goInstrs(body).getOrElse(body)
 
   def genModuleFunction(funType: Expr.Type, funSymbol: Symbol, workerSymbol: Option[Symbol], expr: Expr.Term)(using Context): Unit = //trace(s"genModuleFunction($funType, $funSymbol, $workerSymbol, $expr)"):
-    val Term.TermLambda(ps, body, _) = expr: @unchecked
+    val (ps: List[Expr.Binder], body: Expr.Term, isTypeLambda: Boolean) = expr match
+      case Term.TermLambda(ps, body, _) => (ps, body, false)
+      case Term.TypeLambda(ps, body) => (ps, body, true)
+      case _ => assert(false, "absurd")
     val funcType = computeFuncType(funType, isClosure = false)
     val workerType = computeFuncType(funType, isClosure = true)
-    val paramSymbols = ps.map(p => Symbol.fresh(p.name))
+    val paramSymbols = 
+      if isTypeLambda then Nil
+      else ps.map(p => Symbol.fresh(p.name))
     val funcParams = paramSymbols `zip` funcType.paramTypes
     val workerSelfSymbol = Symbol.fresh("self")
     val workerParams = (workerSelfSymbol -> ValType.AnyRef) :: funcParams
     val func =
       newLocalsScope:
-        val binderInfos = (ps `zip` paramSymbols).map: (bd, sym) =>
-          BinderInfo.Sym(bd, sym)
+        val binderInfos = 
+          if isTypeLambda then 
+            ps.map: bd =>
+              BinderInfo.Abstract(bd)
+          else 
+            (ps `zip` paramSymbols).map: (bd, sym) =>
+              BinderInfo.Sym(bd, sym)
         val ctx1 = ctx.withMoreBinderInfos(binderInfos)
         val bodyInstrs = genTerm(body)(using ctx1)
         val bodyInstrs1 = maybeAddReturnCall(bodyInstrs)
@@ -838,13 +861,7 @@ object CodeGenerator:
       defn match
         case Definition.ValDef(sym, body) =>
           body match
-            case body: Term.TermLambda =>
-              //val funType = computeFuncType(sym.tpe)
-              //val funcSym = Symbol.fresh(sym.name)
-              //val workerSym = Symbol.fresh(s"worker_${sym.name}")
-              //emitElemDeclare(ExportKind.Func, workerSym)
-              //ctx.defInfos += (sym -> DefInfo.FuncDef(funcSym, workerSym))
-
+            case body: Expr.Closure =>
               // Do nothing for now, we emit the function lazily
               ctx.defInfos += (sym -> DefInfo.LazyFuncDef(body))
             case _ =>
@@ -872,6 +889,7 @@ object CodeGenerator:
         case Definition.ValDef(sym, body) =>
           body match
             case body: Term.TermLambda =>
+            case body: Term.TypeLambda =>
             case body =>
               val valType = toNullable(translateType(sym.tpe))
               val defaultVal = makeDefaultValue(valType)
@@ -889,6 +907,7 @@ object CodeGenerator:
               case Definition.ValDef(sym, body) =>
                 body match
                   case body: Term.TermLambda => Nil
+                  case body: Term.TypeLambda => Nil
                   case body =>
                     val valType = toNullable(translateType(sym.tpe))
                     val DefInfo.GlobalDef(globalSym) = ctx.defInfos(sym): @unchecked
