@@ -119,7 +119,7 @@ object CodeGenerator:
     ctx.locals.clear()
     result
 
-  def translateMemoryOp(op: Expr.ArrayPrimitiveOp, args: List[Expr.Term])(using Context): List[Instruction] =
+  def genMemoryOp(op: Expr.ArrayPrimitiveOp, args: List[Expr.Term])(using Context): List[Instruction] =
     op match
       case PrimitiveOp.ArrayGet => 
         val memSym :: idx :: Nil = args: @unchecked
@@ -138,7 +138,7 @@ object CodeGenerator:
         sizeInstrs
       case _ => assert(false, "Unsupported memory operation")
 
-  def translateArrayPrimOp(op: Expr.ArrayPrimitiveOp, tpe: Expr.Type, targs: List[Expr.Type], args: List[Expr.Term])(using Context): List[Instruction] =
+  def genArrayPrimOp(op: Expr.ArrayPrimitiveOp, tpe: Expr.Type, targs: List[Expr.Type], args: List[Expr.Term])(using Context): List[Instruction] =
     op match
       case PrimitiveOp.ArrayNew => 
         val elemType :: Nil = targs: @unchecked
@@ -174,7 +174,7 @@ object CodeGenerator:
         val lenInstrs = List(Instruction.ArrayLen)
         arrInstrs ++ lenInstrs
 
-  def translateSimplePrimOp(args: List[Expr.Term], op: PrimitiveOp)(using Context): List[Instruction] = 
+  def genSimplePrimOp(args: List[Expr.Term], op: PrimitiveOp)(using Context): List[Instruction] = 
     def argInstrs = args.flatMap(genTerm)
     op match
       // addition
@@ -416,7 +416,7 @@ object CodeGenerator:
   /** Translate a closure of `funType` with a given parameter list and body.
    * Returns the instructions for creating the closure and the symbol of the worker function.
    */
-  def translateClosure(
+  def genClosure(
     funType: Expr.Type,   // the type of the source function
     params: List[Expr.Binder.TermBinder],   // parameters of the source function
     body: Expr.Term,   // body of the source function
@@ -544,22 +544,22 @@ object CodeGenerator:
     case Term.PrimOp(arrayOp: Expr.ArrayPrimitiveOp, targs, args) =>
       args match
         case Term.SymbolRef(sym) :: _ if sym eq Expr.Definitions.MemorySymbol => 
-          translateMemoryOp(arrayOp, args)
+          genMemoryOp(arrayOp, args)
         case _ =>
-          translateArrayPrimOp(arrayOp, t.tpe, targs, args)
-    case Term.PrimOp(op, Nil, args) => translateSimplePrimOp(args, op)
+          genArrayPrimOp(arrayOp, t.tpe, targs, args)
+    case Term.PrimOp(op, Nil, args) => genSimplePrimOp(args, op)
     case Term.If(cond, thenBranch, elseBranch) =>
       val resultType = translateType(t.tpe)
       val then1 = genTerm(thenBranch)
       val else1 = genTerm(elseBranch)
       translateBranching(cond, then1, else1, resultType)
     case Term.TermLambda(params, body, _) =>
-      translateClosure(t.tpe, params, body, selfBinder = None)._1
+      genClosure(t.tpe, params, body, selfBinder = None)._1
     case Term.Bind(binder, isRecursive, Term.TermLambda(params, body, _), expr) =>
       val localSym = Symbol.fresh(binder.name)
       val localType = translateType(binder.tpe)
       emitLocal(localSym, localType)
-      val (closureInstrs, workerSym) = translateClosure(binder.tpe, params, body, if isRecursive then Some(binder) else None)
+      val (closureInstrs, workerSym) = genClosure(binder.tpe, params, body, if isRecursive then Some(binder) else None)
       val setLocalInstrs = List(Instruction.LocalSet(localSym))
       val bodyInstrs = genTerm(expr)(using ctx.withClosureSym(binder, localSym, workerSym))
       closureInstrs ++ setLocalInstrs ++ bodyInstrs
