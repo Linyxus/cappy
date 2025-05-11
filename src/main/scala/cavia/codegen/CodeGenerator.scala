@@ -33,6 +33,7 @@ object CodeGenerator:
 
   enum DefInfo:
     case FuncDef(funcSym: Symbol, workerSym: Symbol)
+    case LazyFuncDef(body: Term.TermLambda)
     case GlobalDef(globalSym: Symbol)
 
   case class StructInfo(sym: Symbol, nameMap: Map[String, Symbol])
@@ -557,7 +558,8 @@ object CodeGenerator:
     case Term.SymbolRef(sym) =>
       val info = ctx.defInfos(sym)
       info match
-        case DefInfo.FuncDef(_, workerSym) =>
+        case info: (DefInfo.FuncDef | DefInfo.LazyFuncDef) =>
+          val DefInfo.FuncDef(_, workerSym) = createModuleFunction(sym)
           val funcType = computeFuncType(t.tpe, isClosure = true)
           val closureInfo = createClosureTypes(funcType)
           val getSelfInstrs = List(
@@ -570,7 +572,7 @@ object CodeGenerator:
         case DefInfo.GlobalDef(globalSym) =>
           List(Instruction.GlobalGet(globalSym))
     case Term.Apply(Term.SymbolRef(sym), args) =>
-      val DefInfo.FuncDef(funcSym, _) = ctx.defInfos(sym): @unchecked
+      val DefInfo.FuncDef(funcSym, _) = createModuleFunction(sym)
       val argInstrs = args.flatMap(genTerm)
       val callInstrs = List(Instruction.Call(funcSym))
       argInstrs ++ callInstrs
@@ -678,6 +680,19 @@ object CodeGenerator:
         val structInfo = StructInfo(structSym, nameMap)
         specMap += (specSig -> structInfo)
         structInfo
+
+  def createModuleFunction(sym: Expr.DefSymbol)(using Context): DefInfo.FuncDef =
+    ctx.defInfos(sym) match
+      case i: DefInfo.FuncDef => i
+      case DefInfo.LazyFuncDef(body) =>
+        val funcSym = Symbol.fresh(sym.name)
+        val workerSym = Symbol.fresh(s"worker_${sym.name}")
+        emitElemDeclare(ExportKind.Func, workerSym)
+        genModuleFunction(sym.tpe, funcSym, Some(workerSym), body)
+        ctx.defInfos += (sym -> DefInfo.FuncDef(funcSym, workerSym))
+        DefInfo.FuncDef(funcSym, workerSym)
+      case _ => 
+        assert(false, "this is absurd: expecting a function symbol, but got a global value")
 
   def maybeAddReturnCall(body: List[Instruction])(using Context): List[Instruction] =
     def goInstrs(instrs: List[Instruction]): Option[List[Instruction]] =
@@ -822,11 +837,14 @@ object CodeGenerator:
         case Definition.ValDef(sym, body) =>
           body match
             case body: Term.TermLambda =>
-              val funType = computeFuncType(sym.tpe)
-              val funcSym = Symbol.fresh(sym.name)
-              val workerSym = Symbol.fresh(s"worker_${sym.name}")
-              emitElemDeclare(ExportKind.Func, workerSym)
-              ctx.defInfos += (sym -> DefInfo.FuncDef(funcSym, workerSym))
+              //val funType = computeFuncType(sym.tpe)
+              //val funcSym = Symbol.fresh(sym.name)
+              //val workerSym = Symbol.fresh(s"worker_${sym.name}")
+              //emitElemDeclare(ExportKind.Func, workerSym)
+              //ctx.defInfos += (sym -> DefInfo.FuncDef(funcSym, workerSym))
+
+              // Do nothing for now, we emit the function lazily
+              ctx.defInfos += (sym -> DefInfo.LazyFuncDef(body))
             case _ =>
               val globalSym = Symbol.fresh(sym.name)
               ctx.defInfos += (sym -> DefInfo.GlobalDef(globalSym))
@@ -837,15 +855,15 @@ object CodeGenerator:
         case Definition.TypeDef(sym) =>
           // Type definitions do not have runtime representation
     // (2) emit func definitions
-    allDefns.foreach: defn =>
-      defn match
-        case Definition.ValDef(sym, body) =>
-          body match
-            case body: Term.TermLambda =>
-              val DefInfo.FuncDef(funcSym, workerSym) = ctx.defInfos(sym): @unchecked
-              genModuleFunction(sym.tpe, funcSym, Some(workerSym), body)
-            case _ =>
-        case _ =>
+    // allDefns.foreach: defn =>
+    //   defn match
+    //     case Definition.ValDef(sym, body) =>
+    //       body match
+    //         case body: Term.TermLambda =>
+    //           val DefInfo.FuncDef(funcSym, workerSym) = ctx.defInfos(sym): @unchecked
+    //           genModuleFunction(sym.tpe, funcSym, Some(workerSym), body)
+    //         case _ =>
+    //     case _ =>
     // (3) emit global definitions
     allDefns.foreach: defn =>
       defn match
@@ -888,7 +906,7 @@ object CodeGenerator:
     ctx.startFunc = Some(startFuncSymbol)
     emitFunc(startFunc)
     // Lastly, emit the main function
-    val DefInfo.FuncDef(mainFunc, _) = ctx.defInfos(mainSym): @unchecked
+    val DefInfo.FuncDef(mainFunc, _) = createModuleFunction(mainSym)
     val exp = Export("entrypoint", ExportKind.Func, mainFunc)
     emitExport(exp)
 
