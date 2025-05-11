@@ -64,6 +64,26 @@ object Compiler:
     name = "<stdlib>",
     content = """
 module std
+// Counter
+struct Counter(var count: i32)
+extension (c: Counter^)
+  def inc(): Unit =
+    c.count = c.get() + 1
+  def get(): i32 = c.count
+// Range
+struct Range(start: i32, end: i32)
+extension (i: i32)
+  def until(end: i32): Range^ = Range(i, end)
+extension (r: Range^)
+  def iterate(op: i32 => Unit): Unit =
+    val cnt = Counter(r.start)
+    def loop(): Unit =
+      if cnt.get() < r.end then
+        op(cnt.get())
+        cnt.inc()
+        loop()
+    loop()
+// Array
 extension [T](xs: array[T]^)
   def mapInPlace(f: T => T): Unit =
     def loop(i: i32): Unit =
@@ -76,6 +96,7 @@ extension [T](xs: array[T]^)
       f(x)
       x
     xs.mapInPlace(op)
+// String and IO
 type String = array[char]
 def putChar(ch: char): Unit = #putchar(ch)
 def putStr(s: String^): Unit =
@@ -83,5 +104,17 @@ def putStr(s: String^): Unit =
 def putStrLn(s: String^): Unit =
   putStr(s)
   putChar('\n')
-"""
-  )
+extension (self: String^)
+  def concat(other: String^): String^ =
+    val res = newArray[char](self.size + other.size, ' ')
+    (0.until(self.size)).iterate((i: i32) => res(i) = self(i))
+    (0.until(other.size)).iterate((i: i32) => res(i + self.size) = other(i))
+    res
+// Performance counter
+def perfCounter(): i32 = #perfcounter()
+def benchmark(body: () => Unit): i32 =
+  val start = perfCounter()
+  body()
+  val end = perfCounter()
+  end - start
+""")
