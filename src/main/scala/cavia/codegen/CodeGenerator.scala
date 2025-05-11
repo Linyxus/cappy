@@ -803,17 +803,21 @@ object CodeGenerator:
     val memory = Memory(Symbol.Memory, 1)
     emitMemory(memory)
 
-  def genModule(m: Expr.Module)(using Context): Unit =
-    val mainSym = m.defns.find(isValidMain) match
-      case Some(Definition.ValDef(sym, _)) => sym
-      case Some(_) => assert(false, "Invalid definition")
-      case None => assert(false, s"No valid main function in module")
+  def locateMainFunction(ms: List[Expr.Module])(using Context): Option[Expr.DefSymbol] =
+    ms.flatMap(_.defns).find(isValidMain) match
+      case Some(Definition.ValDef(sym, _)) => Some(sym)
+      case Some(_) => assert(false, "absurd")
+      case None => None
+
+  def genModules(ms: List[Expr.Module])(using Context): Unit =
+    val allDefns = ms.flatMap(_.defns)
+    val mainSym = locateMainFunction(ms).getOrElse(assert(false, "No valid main function in module"))
     // First of all, emit imports and default memory
     emitDefaultImports()
     emitDefaultMemory()
     // (1) create symbols for all the definitions
     //   for struct symbols, we create the type as well
-    m.defns.foreach: defn =>
+    allDefns.foreach: defn =>
       defn match
         case Definition.ValDef(sym, body) =>
           body match
@@ -833,7 +837,7 @@ object CodeGenerator:
         case Definition.TypeDef(sym) =>
           // Type definitions do not have runtime representation
     // (2) emit func definitions
-    m.defns.foreach: defn =>
+    allDefns.foreach: defn =>
       defn match
         case Definition.ValDef(sym, body) =>
           body match
@@ -843,7 +847,7 @@ object CodeGenerator:
             case _ =>
         case _ =>
     // (3) emit global definitions
-    m.defns.foreach: defn =>
+    allDefns.foreach: defn =>
       defn match
         case Definition.ValDef(sym, body) =>
           body match
@@ -860,7 +864,7 @@ object CodeGenerator:
     val startFunc =
       newLocalsScope:
         val instrs =
-          m.defns.flatMap: defn =>
+          allDefns.flatMap: defn =>
             defn match
               case Definition.ValDef(sym, body) =>
                 body match
