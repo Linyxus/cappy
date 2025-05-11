@@ -149,7 +149,7 @@ object Parsers:
 
   def moduleP: Parser[Module] =
     val headerP = (keywordP("module"), moduleNameP).p.map(_._2)
-    val p = (headerP.optional, programP).p.map: (maybeHeader, defs) =>
+    val p = (tokenP[Token.NEWLINE].optional, headerP.optional, programP).p.map: (_, maybeHeader, defs) =>
       val name = maybeHeader match
         case Some(name) => name
         case None => ModuleName.Root()

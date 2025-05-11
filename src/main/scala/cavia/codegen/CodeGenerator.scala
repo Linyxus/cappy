@@ -330,9 +330,11 @@ object CodeGenerator:
         typeSym
       case Some(symbol) => symbol
 
-  def computeArrayType(tpe: Expr.Type)(using Context): ArrayType = tpe.dealiasTypeVar.stripCaptures match
-    case PrimArrayType(elemType) => ArrayType(translateType(elemType), mutable = true)
-    case _ => assert(false, s"Unsupported type: $tpe")
+  def computeArrayType(tpe: Expr.Type)(using Context): ArrayType = 
+    tpe.dealiasTypeVar.strip.simplify(using ctx.typecheckerCtx) match
+      case PrimArrayType(elemType) => 
+        ArrayType(translateType(elemType), mutable = true)
+      case _ => assert(false, s"Unsupported type: $tpe")
 
   /** What is the WASM value type of the WASM representation of a value of this type? */
   def translateType(tpe: Expr.Type)(using Context): ValType = //trace(s"translateType($tpe)"):

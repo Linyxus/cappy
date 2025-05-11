@@ -14,7 +14,7 @@ import java.nio.file.*
     println("Expecting at least one argument")
     return
 
-  val sources = sourcePaths.toList.map(SourceFile.fromPath)
+  val sources = sourcePaths.toList.map(SourceFile.fromPath) :+ Compiler.stdlib
   println(s"--- input file(s)")
   sources.foreach: source =>
     println(source.content)
@@ -44,8 +44,8 @@ import java.nio.file.*
           val wasmMod = CodeGenerator.finalize
           val outputCode = wasmMod.show
           println(s"--- wasm module")
-          println(outputCode)
-          // println(s"... too long to print ...")
+          // println(outputCode)
+          println(s"... too long to print ...")
 
           val inputPath = Paths.get(sourcePaths(0))
           val outputName = inputPath.getFileName.toString.replace(".scala", ".wat")

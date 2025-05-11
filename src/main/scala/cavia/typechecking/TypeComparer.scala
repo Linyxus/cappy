@@ -77,9 +77,9 @@ object TypeComparer:
     (tp1.dealiasTypeVar, tp2.dealiasTypeVar) match
       case (_, Type.Base(BaseType.AnyType)) => true
       case (Type.Base(BaseType.NothingType), _) => true
-      case (PrimArrayType(elemType1), Type.Base(BaseType.StrType)) => 
-        // temporary hack, in the future we should have `type String = array[char]` when type definitions are added
-        elemType1 == Definitions.charType
+      // case (PrimArrayType(elemType1), Type.Base(BaseType.StrType)) => 
+      //   // temporary hack, in the future we should have `type String = array[char]` when type definitions are added
+      //   elemType1 == Definitions.charType
       case _ if tp1 == tp2 => true
       case (Type.RefinedType(base1, refinements1), tp2) => checkSubtype(base1, tp2)
       case (tp1: Type.TypeVar, tp2: Type.TypeVar) =>

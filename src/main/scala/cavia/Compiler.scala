@@ -11,10 +11,6 @@ import typechecking.*
 object Compiler:
   type ParseResult[+X] = Either[Tokenizer.Error | Parser.ParseError, X]
 
-  def typecheck(module: Syntax.Module): TypeChecker.Result[Expr.Module] =
-    val ctx = TypeChecker.Context.empty
-    TypeChecker.checkModule(module)(using ctx)
-
   def parseAll(sources: List[SourceFile]): ParseResult[List[Syntax.Module]] =
     hopefully:
       val modules = sources.map(parse(_).!!)
@@ -63,3 +59,29 @@ object Compiler:
         case Parser.ParseResult(nextState, Right(result)) =>
           println("Parsing successful")
           println(Printer.showSourcePos(result.pos, List(result.toString)))
+
+  val stdlib: SourceFile = SourceFile(
+    name = "<stdlib>",
+    content = """
+module std
+extension [T](xs: array[T]^)
+  def mapInPlace(f: T => T): Unit =
+    def loop(i: i32): Unit =
+      if i < xs.length then
+        xs(i) = f(xs(i))
+        loop(i+1)
+    loop(0)
+  def foreach(f: T => Unit): Unit =
+    def op(x: T): T =
+      f(x)
+      x
+    xs.mapInPlace(op)
+type String = array[char]
+def putChar(ch: char): Unit = #putchar(ch)
+def putStr(s: String^): Unit =
+  s.foreach(putChar)
+def putStrLn(s: String^): Unit =
+  putStr(s)
+  putChar('\n')
+"""
+  )
