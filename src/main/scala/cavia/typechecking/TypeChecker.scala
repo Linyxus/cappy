@@ -6,7 +6,7 @@ import scala.util.boundary, boundary.break
 import core.*
 import ast.*
 import reporting.*
-import cavia.core.ast.Expr.Term.PrimOp
+import cavia.core.ast.Syntax.ModuleName
 
 object TypeChecker:
   import Expr.*
@@ -1011,7 +1011,7 @@ object TypeChecker:
         case arg :: Nil =>
           val arg1 = checkTerm(arg).!!
           val outType = arg1.tpe.stripCaptures
-          PrimOp(PrimitiveOp.UnsafeAsPure, Nil, List(arg1)).withPos(pos).withTpe(outType).withCVFrom(arg1)
+          Term.PrimOp(PrimitiveOp.UnsafeAsPure, Nil, List(arg1)).withPos(pos).withTpe(outType).withCVFrom(arg1)
         case _ => sorry(TypeError.GeneralError(s"Expected one argument, but got ${args.length}").withPos(pos))
 
   def checkUnbox(arg: Syntax.Term | Term, pos: SourcePos)(using Context): Result[Term] =
@@ -1023,7 +1023,7 @@ object TypeChecker:
         case Type.Boxed(core) =>
           val outType = core
           val cv = core.captureSet
-          PrimOp(PrimitiveOp.Unbox, Nil, List(arg1)).withPos(pos).withTpe(outType).withCV(cv)
+          Term.PrimOp(PrimitiveOp.Unbox, Nil, List(arg1)).withPos(pos).withTpe(outType).withCV(cv)
         case _ => sorry(TypeError.GeneralError(s"Expected a boxed type, but got ${arg1.tpe.show}").withPos(pos))
 
   def checkBox(arg: Syntax.Term | Term, pos: SourcePos)(using Context): Result[Term] =
@@ -1038,7 +1038,7 @@ object TypeChecker:
             CaptureSet.empty
           else arg1.cv
         val outType = Type.Boxed(arg1.tpe)
-        PrimOp(PrimitiveOp.Box, Nil, List(arg1)).withPos(pos).withTpe(outType).withCV(outCV)
+        Term.PrimOp(PrimitiveOp.Box, Nil, List(arg1)).withPos(pos).withTpe(outType).withCV(outCV)
 
   def checkPrimOp(op: PrimitiveOp, args: List[Syntax.Term], expected: Type, pos: SourcePos)(using Context): Result[Term] =
     op match
@@ -1257,6 +1257,18 @@ object TypeChecker:
         val bd = TermBinder(name, expr1.tpe, isConsume = false).withPos(d.pos)
         (bd.asInstanceOf[TermBinder], expr1)
 
+  def checkExtensionDef(d: Syntax.Definition.ExtensionDef, sym: ExtensionSymbol)(using Context): Result[ExtensionInfo] =
+    hopefully:
+      val typeArgs = sym.info.typeParams
+      val ctx1 = ctx.extend(typeArgs)
+      val selfArgBinder = checkTermParam(d.selfArg)(using ctx1).!!
+      val methodInfos = d.methods.map: method =>
+        val method1 =
+          method.copy(paramss = Syntax.TermParamList(List(d.selfArg)) :: method.paramss).withPosFrom(method)
+        val (bd, expr) = checkDef(method1)(using ctx1).!!
+        ExtensionMethod(method.name, bd.tpe, expr)
+      ExtensionInfo(typeArgs, selfArgBinder.tpe, methodInfos)
+
   def extractDefType(d: Syntax.Definition.DefDef, requireExplictType: Boolean = true)(using Context): Result[Type] = 
     def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[Type] = pss match
       case Nil => 
@@ -1288,9 +1300,108 @@ object TypeChecker:
     case d: Syntax.Definition.ValDef => extractValType(d)
     case d: Syntax.Definition.DefDef => extractDefType(d)
 
-  def checkModule(module: Syntax.Module)(using Context): Result[Module] = 
+  def createSymbol(d: Syntax.Definition, m: Module)(using Context): Result[Symbol] =
+    hopefully:
+      d match
+        case d: (Syntax.Definition.DefDef | Syntax.Definition.ValDef) =>
+          DefSymbol(d.name, Definitions.anyType, m).withPosFrom(d)
+        case d: Syntax.Definition.StructDef =>
+          val tparams = checkTypeParamList(d.targs.map(_.toTypeParam)).!!
+          val variances = d.targs.map(_.variance).map(getVariance)
+          val info = StructInfo(tparams, variances, Nil)
+          StructSymbol(d.name, info, m).withPosFrom(d)
+        case d: Syntax.Definition.ExtensionDef =>
+          val tparams = checkTypeParamList(d.typeArgs).!!
+          val info = ExtensionInfo(tparams, Definitions.anyType, Nil)
+          ExtensionSymbol(d.name, info, m).withPosFrom(d)
+        case d: Syntax.Definition.TypeDef =>
+          val tparams = checkTypeParamList(d.targs.map(_.toTypeParam)).!!
+          val variances = d.targs.map(_.variance).map(getVariance)
+          val info = TypeDefInfo(tparams, variances, Type.NoType())
+          TypeDefSymbol(d.name, info, m).withPosFrom(d)
+
+  /** Elaborate symbols with their declared types. */
+  def elaborateType(d: Syntax.Definition, sym: Symbol, allSyms: List[Symbol])(using Context): Result[Unit] =
+    val ctx1 = ctx.addSymbols(allSyms)
+    hopefully:
+      (d, sym) match
+        case (d: Syntax.Definition.ValDef, sym: DefSymbol) =>
+          val defType = (extractDefnType(d)(using ctx1) || Right(Definitions.anyType)).!!
+          sym.tpe = defType
+        case (d: Syntax.Definition.DefDef, sym: DefSymbol) =>
+          val defType = extractDefType(d)(using ctx1).!!
+          sym.tpe = defType
+        case (d: Syntax.Definition.ExtensionDef, sym: ExtensionSymbol) =>
+          val typeArgs = sym.info.typeParams
+          val ctx2 = ctx1.extend(typeArgs)
+          val selfArgBinder = checkTermParam(d.selfArg)(using ctx2).!!
+          val methodInfos = d.methods.map: method =>
+            val method1 =
+              method.copy(paramss = Syntax.TermParamList(List(d.selfArg)) :: method.paramss).withPosFrom(method)
+            val methodType = extractDefnType(method1)(using ctx2).!!
+            ExtensionMethod(method.name, methodType, body = null)
+          sym.info = ExtensionInfo(typeArgs, selfArgBinder.tpe, methodInfos)
+        case _ => // do nothing
+
+  def checkModules(modules: List[Syntax.Module])(using Context): Result[List[Module]] =
+    hopefully:
+      // Create all modules
+      val mods: List[Expr.Module] = modules.map: m =>
+        Expr.Module(getModuleName(m.name), defns = Nil, parent = null)
+      // Create symbols with infos as placeholders
+      val modSyms: List[List[Symbol]] = (modules `zip` mods).map: (m0, m) =>
+        m0.defs.map: d =>
+          createSymbol(d, m).!!
+      val allSyms: List[Symbol] = modSyms.flatten
+      // Elaborate symbol types
+      (modules `zip` modSyms).foreach: (m0, syms) =>
+        (m0.defs `zip` syms).foreach: (d, sym) =>
+          elaborateType(d, sym, allSyms).!!
+      // Typecheck each module
+      val ctxWithAllSyms = ctx.addSymbols(allSyms)
+      (modules `zip` mods `zip` modSyms).foreach: 
+        case ((m0, m), syms) =>
+          // Typecheck struct and type definitions
+          val typeDefs: List[Definition] = (m0.defs `zip` syms).collect:
+            case (d: Syntax.Definition.StructDef, sym: StructSymbol) => 
+              val info1 = checkStructDef(d)(using ctxWithAllSyms).!!
+              sym.info = info1
+              Definition.StructDef(sym).withPosFrom(d)
+            case (d: Syntax.Definition.TypeDef, sym: TypeDefSymbol) =>
+              val info1 = checkTypeDef(d)(using ctxWithAllSyms).!!
+              sym.info = info1
+              Definition.TypeDef(sym).withPosFrom(d)
+          // Typecheck extension definitions
+          val extensionDefs: List[Definition] = (m0.defs `zip` syms).collect:
+            case (d: Syntax.Definition.ExtensionDef, sym: ExtensionSymbol) =>
+              val info1 = checkExtensionDef(d, sym)(using ctxWithAllSyms).!!
+              sym.info = info1
+              Definition.ExtensionDef(sym).withPosFrom(d)
+          // Typecheck value definitions, i.e. `val` and `def`
+          val valueDefs: List[Definition] = (m0.defs `zip` syms).collect:
+            case (d: Syntax.Definition.ValDef, sym: DefSymbol) =>
+              val (bd, expr) = checkDef(d)(using ctxWithAllSyms).!!
+              if !d.tpe.isDefined then
+                sym.tpe = expr.tpe
+              Definition.ValDef(sym, expr).withPosFrom(d)
+            case (d: Syntax.Definition.DefDef, sym: DefSymbol) =>
+              val (bd, expr) = checkDef(d)(using ctxWithAllSyms).!!
+              Definition.ValDef(sym, expr).withPosFrom(d)
+          // Done
+          val allDefs = typeDefs ++ extensionDefs ++ valueDefs
+          m.defns = allDefs
+      // Return all typechecked modules
+      mods
+
+  def getModuleName(name: Syntax.ModuleName): String =
+    name match
+      case ModuleName.Root() => "<root>"
+      case ModuleName.Qualified(ModuleName.Root(), name) => name
+      case _ => assert(false, "Qualified module names are not yet supported")
+
+  def checkModule(module: Syntax.Module)(using Context): Result[Module] =
     val defns = module.defs
-    val mod = Expr.Module(Nil)
+    val mod = Expr.Module(name = getModuleName(module.name), Nil)
     def hasDuplicatedName: Boolean =
       val names = defns.map(_.name)
       names.distinct.length != names.length

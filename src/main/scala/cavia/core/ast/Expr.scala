@@ -469,7 +469,9 @@ object Expr:
     case ExtensionDef(sym: ExtensionSymbol)
     case TypeDef(sym: TypeDefSymbol)
 
-  case class Module(var defns: List[Definition])
+    val sym: Symbol
+
+  case class Module(name: String, var defns: List[Definition], parent: Module | Null = null)
 
   /** Denotation of struct types. */
   case class FieldInfo(name: String, tpe: Type, mutable: Boolean)
@@ -510,7 +512,8 @@ object Expr:
           TypeKind.Arrow(variances, TypeKind.Star)
       Type.SymbolRef(sym).withKind(kind)
 
-    val MemorySymbol = DefSymbol("WASM_MEMORY", arrayType(i32Type), Module(Nil))
+    val RootModule = Module("root", defns = Nil)
+    val MemorySymbol = DefSymbol("WASM_MEMORY", arrayType(i32Type), RootModule)
 
   enum Variance:
     case Covariant
