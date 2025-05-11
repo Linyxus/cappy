@@ -157,7 +157,7 @@ class ExprPrinter extends IndentedPrinter:
         print(TypePrinter.show(cs))
 
   def showModule(mod: Module)(using Context): Unit =
-    print("module {")
+    print(s"module ${mod.name} {")
     newline()
     indented:
       mod.defns.foreach(showDefinition)

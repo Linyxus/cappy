@@ -14,11 +14,11 @@ import java.nio.file.*
     println("Expecting at least one argument")
     return
 
-  val path = sourcePaths.toList.head
-  val source = SourceFile.fromPath(path)
-  println(s"--- input file")
-  println(source.content)
-  val result = Compiler.parse(source)
+  val sources = sourcePaths.toList.map(SourceFile.fromPath)
+  println(s"--- input file(s)")
+  sources.foreach: source =>
+    println(source.content)
+  val result = Compiler.parseAll(sources)
   result match
     case Left(err: Tokenizer.Error) =>
       if err.hasPos then
@@ -27,26 +27,28 @@ import java.nio.file.*
         println(s"Tokenization error: $err")
     case Left(err: Parser.ParseError) =>
       println(err.show)
-    case Right(parsedModule) =>
+    case Right(parsedModules) =>
       println(s"--- tree after parser")
-      println(parsedModule)
+      parsedModules.foreach: parsedModule =>
+        println(parsedModule)
       println(s"--- tree after typechecker")
-      val mod = TypeChecker.checkModule(parsedModule)(using TypeChecker.Context.empty)
-      mod match
+      val mods = TypeChecker.checkModules(parsedModules)(using TypeChecker.Context.empty)
+      mods match
         case Left(err) => 
           println(err.asMessage.show)
-        case Right(mod) =>
-          println(ExprPrinter.show(mod)(using TypeChecker.Context.empty))
-          given genCtx: CodeGenerator.Context = CodeGenerator.Context()
-          CodeGenerator.genModule(mod)
-          val wasmMod = CodeGenerator.finalize
-          val outputCode = wasmMod.show
-          println(s"--- wasm module")
-          println(outputCode)
-          // println(s"... too long to print ...")
+        case Right(mods) =>
+          mods.foreach: mod =>
+            println(ExprPrinter.show(mod)(using TypeChecker.Context.empty))
+          // given genCtx: CodeGenerator.Context = CodeGenerator.Context()
+          // CodeGenerator.genModule(mod)
+          // val wasmMod = CodeGenerator.finalize
+          // val outputCode = wasmMod.show
+          // println(s"--- wasm module")
+          // println(outputCode)
+          // // println(s"... too long to print ...")
 
-          val inputPath = Paths.get(path)
-          val outputName = inputPath.getFileName.toString.replace(".scala", ".wat")
-          val outputPath = inputPath.getParent.resolve(outputName)
-          Files.writeString(outputPath, outputCode)
-          println(s"--- wrote to $outputPath")
+          // val inputPath = Paths.get(path)
+          // val outputName = inputPath.getFileName.toString.replace(".scala", ".wat")
+          // val outputPath = inputPath.getParent.resolve(outputName)
+          // Files.writeString(outputPath, outputCode)
+          // println(s"--- wrote to $outputPath")
