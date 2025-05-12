@@ -1,13 +1,13 @@
-module {
+module <root> {
   struct Ref(var data: i32)
   struct Pair(x: Ref^{cap}, y: Ref^{cap})
   val main: () -> Unit = 
     () => {
-      val a: Ref^{fresh$34} = 
+      val a: Ref^{fresh$36} = 
         Ref(0)
-      val b: Ref^{fresh$35} = 
+      val b: Ref^{fresh$37} = 
         Ref(0)
-      val p: Pair with { x: Ref^{a}; y: Ref^{b} }^{fresh$36, a, b} = 
+      val p: Pair with { x: Ref^{a}; y: Ref^{b} }^{fresh$38, a, b} = 
         Pair(a, b)
       val t1: Ref^{p.x} = 
         p.x

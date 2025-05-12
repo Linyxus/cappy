@@ -1,4 +1,4 @@
-module {
+module <root> {
   val f: [] -> Unit = 
     [] => {
       g[]

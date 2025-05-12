@@ -1,4 +1,4 @@
-module {
+module <root> {
   extension $ext3[T <: Any](?: array[T]^{cap}) {
     val show: (x: array[T]^{cap}) ->{} Unit = 
       (x: array[T]^{cap}) => {

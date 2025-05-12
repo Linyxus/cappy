@@ -29,6 +29,7 @@ object CodeGenerator:
     /** This is a type binder that is abstract. */
     case Abstract(binder: Expr.Binder)
 
+    /** Retrieve the source binder. */
     val binder: Expr.Binder
 
   enum DefInfo:

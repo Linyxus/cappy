@@ -449,9 +449,15 @@ object Expr:
   /** Reference to a variable, either a binder or a symbol */
   type VarRef = Term.BinderRef | Term.SymbolRef
 
+  object Symbol:
+    private var nextSymbolId: Int = 0
   sealed trait Symbol extends Positioned:
+    private val id: Int =
+      Symbol.nextSymbolId += 1
+      Symbol.nextSymbolId
     val name: String
     val from: Module
+    override def hashCode(): Int = id
   sealed trait TypeSymbol extends Symbol
 
   case class DefSymbol(name: String, var tpe: Type, from: Module) extends Symbol:

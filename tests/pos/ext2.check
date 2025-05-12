@@ -1,4 +1,4 @@
-module {
+module <root> {
   extension $ext1(?: array[i32]^{cap}) {
     val show: (xs: array[i32]^{cap}) ->{} () ->{xs} Unit = 
       (xs: array[i32]^{cap}) => {

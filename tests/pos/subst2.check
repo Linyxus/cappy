@@ -1,4 +1,4 @@
-module {
+module <root> {
   struct Ref()
   struct Pair(fst: Ref^{cap}, snd: Ref^{cap})
   val main: () -> Unit = 

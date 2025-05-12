@@ -1,4 +1,4 @@
-module {
+module <root> {
   struct Ref(var data: i32)
   extension $ext2(?: Ref^{cap}) {
     val inc: (self: Ref^{cap}) ->{} () ->{self} Unit = 

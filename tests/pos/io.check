@@ -1,4 +1,4 @@
-module {
+module <root> {
   val test: [IO <: Any] -> (a: IO^{cap}, b: IO^{cap}) -> Unit = 
     [IO <: Any] => {
       (a: IO^{cap}, b: IO^{cap}) => {

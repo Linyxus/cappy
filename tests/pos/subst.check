@@ -1,4 +1,4 @@
-module {
+module <root> {
   struct Ref()
   val test: (a: Ref^{cap}, b: Ref^{cap}) -> Unit = 
     (a: Ref^{cap}, b: Ref^{cap}) => {

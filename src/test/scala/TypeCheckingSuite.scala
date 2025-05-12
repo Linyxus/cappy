@@ -13,11 +13,11 @@ class TypeCheckingSuite extends munit.FunSuite:
   for testCase <- loadAllTestcases("tests/pos") do
     test(s"pos typechecking test: ${testCase.path.getFileName}"):
       val parsed = Compiler.parse(testCase.source)
-      assert(parsed.isInstanceOf[Compiler.ParseResult.Ok])
-      val defs = parsed.asInstanceOf[Compiler.ParseResult.Ok].result
-      val typedModule = Compiler.typecheck(defs)
-      assert(typedModule.isRight)
-      val module = typedModule.getOrElse(???)
+      assert(parsed.isRight)
+      val defs = parsed.getOrElse(???)
+      val typedModules = TypeChecker.checkModules(List(defs))(using TypeChecker.Context.empty)
+      assert(typedModules.isRight)
+      val module = typedModules.getOrElse(???).head
       if testCase.checkFile.isDefined then
         val expected = testCase.checkFile.get
         val actualStr = ExprPrinter.show(module)(using TypeChecker.Context.empty)
@@ -30,9 +30,10 @@ class TypeCheckingSuite extends munit.FunSuite:
   for testCase <- loadAllTestcases("tests/neg") do
     test(s"neg typechecking test: ${testCase.path.getFileName}"):
       val parsed = Compiler.parse(testCase.source)
-      assert(parsed.isInstanceOf[Compiler.ParseResult.Ok])
-      val defs = parsed.asInstanceOf[Compiler.ParseResult.Ok].result
-      Compiler.typecheck(defs) match
+      assert(parsed.isRight)
+      val defs = parsed.getOrElse(???)
+      val typedModules = TypeChecker.checkModules(List(defs))(using TypeChecker.Context.empty)
+      typedModules match
         case Left(err) => 
           testCase.checkFile match
             case None =>
