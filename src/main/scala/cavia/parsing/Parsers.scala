@@ -102,6 +102,14 @@ object Parsers:
       FieldDef(nameTk.name, isVar, tpe)
     p.positioned.withWhat("a struct field definition")
 
+  def fieldListDefP: Parser[FieldDef] =
+    val varP = keywordP("var").map(_ => true)
+    val valP = keywordP("val").map(_ => false)
+    val mutableP = varP `or` valP
+    val p = (mutableP, tokenP[Token.IDENT], tokenP[Token.COLON], typeP).p.map: (isVar, nameTk, _, tpe) =>
+      FieldDef(nameTk.name, isVar, tpe)
+    p.positioned.withWhat("a struct field definition")
+
   def varianceP: Parser[Int] =
     val covP = tokenP[Token.PLUS].map(_ => 1)
     val contraP = tokenP[Token.MINUS].map(_ => -1)
@@ -117,7 +125,14 @@ object Parsers:
     p.positioned.withWhat("a struct type parameter")
 
   def structP: Parser[Definition] =
-    val fieldsP = fieldDefP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
+    val inlineFieldsP = fieldDefP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
+    val listFieldsP = 
+      (
+        tokenP[Token.COLON], 
+        fieldListDefP.sepBy(tokenP[Token.NEWLINE]).surroundedBy(tokenP[Token.INDENT], tokenP[Token.DEDENT].optional)
+      ).p.map: (_, fields) =>
+        fields
+    val fieldsP: Parser[List[FieldDef]] = inlineFieldsP `or` listFieldsP
     val paramP: Parser[ConstructorTypeParam] = structTypeParamP
     val paramsP = paramP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
     val p = (keywordP("struct"), tokenP[Token.IDENT], paramsP.optional, fieldsP).p.map: (_, nameTk, maybeParams, fields) =>
