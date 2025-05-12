@@ -425,7 +425,15 @@ object Expr:
       // case "boundary" => Some(PrimitiveOp.Boundary)
       case _ => None
 
+  /** Marker trait for all closures: term/type lambdas */
   sealed trait Closure
+
+  enum Pattern extends Positioned, Typed:
+    case Wildcard()
+    case Bind(binder: TermBinder, pat: Pattern)
+    case EnumVariant(constructor: StructSymbol, fields: List[Pattern])
+
+  case class MatchCase(pat: Pattern, body: Term) extends Positioned, Typed
 
   enum Term extends Positioned, Typed, HasMetadata:
     case BinderRef(idx: Int)
@@ -444,6 +452,7 @@ object Expr:
     case TypeApply(term: Term, targs: List[Type | CaptureSet])
     case Select(base: Term, fieldInfo: FieldInfo)
     case If(cond: Term, thenBranch: Term, elseBranch: Term)
+    case Match(scrutinee: Term, cases: List[MatchCase])
     case ResolveExtension(sym: ExtensionSymbol, targs: List[Type | CaptureSet], methodName: String)
 
   /** Reference to a variable, either a binder or a symbol */

@@ -138,6 +138,22 @@ class ExprPrinter extends IndentedPrinter:
         newline()
         indented:
           show(elseBranch)
+      case Term.Match(scrutinee, cases) =>
+        show(scrutinee)
+        print(" match {")
+        newline()
+        indented:
+          cases.foreach: cas =>
+            print("case ")
+            showPattern(cas.pat)
+            print(" => {")
+            newline()
+            indented:
+              show(cas.body)(using ctx.extend(bindersInPattern(cas.pat)))
+            newline()
+            print("}")
+            newline()
+        print("}")
       case Term.ResolveExtension(sym, targs, methodName) =>
         print(s"extension(${sym.name})")
         if targs.nonEmpty then
@@ -156,6 +172,23 @@ class ExprPrinter extends IndentedPrinter:
       case cs: CaptureSet =>
         print(TypePrinter.show(cs))
 
+  def showPattern(pat: Pattern)(using Context): Unit =
+    pat match
+      case Pattern.Wildcard() =>
+        print("_")
+      case Pattern.Bind(binder, pat) =>
+        print(binder.name)
+        print(" @ ")
+        showPattern(pat)
+      case Pattern.EnumVariant(constructor, fields) =>
+        print(constructor.name)
+        print("(")
+        fields.zipWithIndex.foreach: (field, idx) =>
+          showPattern(field)
+          if idx < fields.size - 1 then
+            print(", ")
+        print(")")
+        
   def showModule(mod: Module)(using Context): Unit =
     print(s"module ${mod.name} {")
     newline()

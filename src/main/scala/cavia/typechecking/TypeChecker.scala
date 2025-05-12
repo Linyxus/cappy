@@ -551,6 +551,70 @@ object TypeChecker:
           tpe.derivedCapturing(core, tpe.isReadOnly, ref.asSingletonType.singletonCaptureSet)
       ref.withPosFrom(t).withTpe(tpe1).withCV(cv)
 
+  def destructMatchableType(scrutineeType: Type, srcPos: SourcePos)(using Context): Result[(EnumSymbol, List[Type | CaptureSet])] =
+    hopefully:
+      def go(tpe: Type): (EnumSymbol, List[Type | CaptureSet]) =
+        tpe match
+          case Type.RefinedType(base, _) => go(base)
+          case Type.SymbolRef(sym: EnumSymbol) => (sym, Nil)
+          case Type.AppliedType(base, targs) =>
+            val (sym, targs1) = go(base)
+            (sym, targs1 ++ targs)
+          case _ => sorry(TypeError.GeneralError(s"cannot match on a non-`enum` type ${scrutineeType.show}").withPos(srcPos))
+      go(scrutineeType.simplify)
+
+  def checkPattern(pat: Syntax.Pattern, scrutineeType: Type)(using Context): Result[Pattern] =
+    hopefully:
+      pat match
+        case Syntax.Pattern.Wildcard() => 
+          Pattern.Wildcard().withPosFrom(pat).withTpe(scrutineeType)
+        case Syntax.Pattern.Bind(name, pat) => 
+          val pat1 = checkPattern(pat, scrutineeType).!!
+          val binder1 = TermBinder(name, scrutineeType, isConsume = false).withPosFrom(pat)
+          Pattern.Bind(binder1.asInstanceOf[TermBinder], pat1).withPosFrom(pat).withTpe(scrutineeType)
+        case Syntax.Pattern.EnumVariant(constructor, fields) => 
+          val (enumSym, typeArgs) = destructMatchableType(scrutineeType, pat.pos).!!
+          val variantSymbol = lookupStructSymbol(constructor) match
+            case None => sorry(TypeError.UnboundVariable(constructor).withPos(pat.pos))
+            case Some(sym: StructSymbol) => sym
+          if !enumSym.info.variants.exists(_ eq variantSymbol) then
+            sorry(TypeError.GeneralError(s"not a valid variant name: $constructor").withPos(pat.pos))
+          val numFields = variantSymbol.info.fields.length
+          if fields.length != numFields then
+            sorry(TypeError.GeneralError(s"expected ${numFields} fields, but got ${fields.length}").withPos(pat.pos))
+          val fieldTypes = variantSymbol.info.fields.map: fieldInfo =>
+            substituteType(fieldInfo.tpe, typeArgs, isParamType = false)
+          val fieldPatterns = (fields `zip` fieldTypes).map: (fieldPat, fieldType) =>
+            checkPattern(fieldPat, fieldType).!!
+          Pattern.EnumVariant(variantSymbol, fieldPatterns).withPosFrom(pat).withTpe(scrutineeType)
+
+  def bindersInPattern(pat: Pattern): List[TermBinder] =
+    pat match
+      case Pattern.Wildcard() => Nil
+      case Pattern.Bind(binder, pat) => binder :: bindersInPattern(pat)
+      case Pattern.EnumVariant(_, fields) => fields.flatMap(bindersInPattern)
+
+  def checkMatchCase(pat: Syntax.MatchCase, scrutineeType: Type, expected: Type)(using Context): Result[MatchCase] =
+    hopefully:
+      val pat1 = checkPattern(pat.pat, scrutineeType).!!
+      val binders = bindersInPattern(pat1)
+      val ctx1 = ctx.extend(binders)
+      val body1 = checkTerm(pat.body, expected)(using ctx1).!!
+      MatchCase(pat1, body1).withPosFrom(pat).withTpe(body1.tpe).withCV(body1.cv)
+
+  def checkMatch(scrutinee: Syntax.Term, cases: List[Syntax.MatchCase], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
+    hopefully:
+      val scrutinee1 = checkTerm(scrutinee).!!
+      destructMatchableType(scrutinee1.tpe, scrutinee.pos).!!   // sanity check
+      val cases1 = cases.map: cas =>
+        checkMatchCase(cas, scrutinee1.tpe, expected).!!
+      val outType = 
+        if expected.exists then 
+          expected 
+        else Definitions.anyType  // TODO: compute the union type as the output type
+      val outTerm = Term.Match(scrutinee1, cases1).withPos(srcPos).withTpe(outType).withCVFrom(scrutinee1 :: cases1*)
+      outTerm
+
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType())(using Context): Result[Term] = 
     val result: Result[Term] = t match
       case t: Syntax.Term.Ident => 
@@ -589,6 +653,8 @@ object TypeChecker:
         checkPrefix(op, term, expected, t.pos)
       case Syntax.Term.If(cond, thenBranch, maybeElseBranch) =>
         checkIf(cond, thenBranch, maybeElseBranch, expected, t.pos)
+      case Syntax.Term.Match(scrutinee, cases) =>
+        checkMatch(scrutinee, cases, expected, t.pos)
       case Syntax.Term.Lambda(params, body) => 
         hopefully:
           val ps1 = checkTermParamList(params).!!
