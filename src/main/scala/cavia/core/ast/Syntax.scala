@@ -25,6 +25,12 @@ object Syntax:
     case Neg, Not
     //case Return
 
+  enum Pattern extends Positioned:
+    case Wildcard()
+    case Bind(name: String, pat: Pattern)
+    case EnumVariant(constructor: String, fields: List[Pattern])
+  case class MatchCase(pat: Pattern, body: Term) extends Positioned
+
   enum Term extends Positioned:
     case Ident(name: String)
     case Select(base: Term, field: String)
@@ -44,6 +50,7 @@ object Syntax:
     case Infix(op: InfixOp, lhs: Term, rhs: Term)
     case Prefix(op: PrefixOp, term: Term)
     case If(cond: Term, thenBranch: Term, elseBranch: Option[Term])
+    case Match(scrutinee: Term, cases: List[MatchCase])
   import Term.*
 
   case class TypeParamList(params: List[TypeParam | CaptureParam]) extends Positioned
