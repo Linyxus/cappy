@@ -468,12 +468,15 @@ object Expr:
     override def toString(): String = s"ExtensionSymbol($name)"
   case class TypeDefSymbol(name: String, var info: TypeDefInfo, from: Module) extends TypeSymbol:
     override def toString(): String = s"TypeDefSymbol($name)"
+  case class EnumSymbol(name: String, var info: EnumInfo, from: Module) extends TypeSymbol:
+    override def toString(): String = s"EnumSymbol($name)"
 
   enum Definition extends Positioned:
     case ValDef(sym: DefSymbol, body: Term)
     case StructDef(sym: StructSymbol)
     case ExtensionDef(sym: ExtensionSymbol)
     case TypeDef(sym: TypeDefSymbol)
+    case EnumDef(sym: EnumSymbol)
 
     val sym: Symbol
 
@@ -482,6 +485,9 @@ object Expr:
   /** Denotation of struct types. */
   case class FieldInfo(name: String, tpe: Type, mutable: Boolean)
   case class StructInfo(targs: List[TypeBinder | CaptureBinder], variances: List[Variance], fields: List[FieldInfo])
+
+  /** Denotation of enum types. */
+  case class EnumInfo(targs: List[TypeBinder | CaptureBinder], variances: List[Variance], variants: List[StructSymbol])
 
   /** Denotation of extensions. */
   case class ExtensionMethod(name: String, tpe: Type, body: Term)

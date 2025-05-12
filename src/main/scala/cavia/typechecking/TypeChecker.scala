@@ -113,8 +113,20 @@ object TypeChecker:
     else
       None
 
+  def findDefinedSymbol(name: String)(using ctx: Context): Option[Symbol] = boundary:
+    for sym <- ctx.symbols do
+      if sym.name == name then
+        break(Some(sym))
+      sym match
+        case sym: EnumSymbol =>
+          sym.info.variants.find(_.name == name) match
+            case Some(variant) => break(Some(variant))
+            case None => ()
+        case _ => ()
+    None
+
   def lookupSymbol(name: String)(using ctx: Context): Option[Symbol] =
-    findPrimitiveSymbol(name) `orElse` ctx.symbols.find(_.name == name)
+    findPrimitiveSymbol(name) `orElse` findDefinedSymbol(name)
 
   def lookupAll(name: String)(using ctx: Context): Option[(Binder, Int) | Symbol] =
     lookupBinder(name) match
@@ -268,6 +280,10 @@ object TypeChecker:
           val kind =
             if sym.info.typeParams.isEmpty then TypeKind.Star
             else TypeKind.Arrow(sym.info.variances, TypeKind.Star)
+          Right(Type.SymbolRef(sym).withKind(kind).maybeWithPosFrom(tpe))
+        case Some(sym: EnumSymbol) =>
+          val argVariances = sym.info.variances
+          val kind = if argVariances.isEmpty then TypeKind.Star else TypeKind.Arrow(argVariances, TypeKind.Star)
           Right(Type.SymbolRef(sym).withKind(kind).maybeWithPosFrom(tpe))
         case _ => Left(TypeError.UnboundVariable(name).maybeWithPosFrom(tpe))
       tryBaseType || tryBinder || trySymbol
@@ -605,6 +621,8 @@ object TypeChecker:
                   sorry(TypeError.GeneralError("extension definitions are not allowed in a block").withPos(d.pos))
                 case _: Syntax.Definition.TypeDef =>
                   sorry(TypeError.GeneralError("type definitions are not allowed in a block").withPos(d.pos))
+                case _: Syntax.Definition.EnumDef =>
+                  sorry(TypeError.GeneralError("enum definitions are not allowed in a block").withPos(d.pos))
               val ctx1 = selfType match
                 case None => ctx
                 case Some(selfType) =>
@@ -1147,21 +1165,32 @@ object TypeChecker:
     if v == 0 then Variance.Invariant
     else if v > 0 then Variance.Covariant
     else Variance.Contravariant
-    
-  def checkStructDef(d: Syntax.Definition.StructDef)(using Context): Result[StructInfo] =
+
+  def checkEnumDef(d: Syntax.Definition.EnumDef, symbol: EnumSymbol)(using Context): Result[Unit] =
     hopefully:
-      val binders = checkTypeParamList(d.targs.map(_.toTypeParam)).!!
+      val typeParams = checkTypeParamList(d.targs.map(_.toTypeParam)).!!
       val variances = d.targs.map(_.variance).map(getVariance)
-      val ctx1 = ctx.extend(binders)
-      val fieldNames = d.fields.map(_.name)
+      (d.variants `zip` symbol.info.variants).foreach: (caseDef, symbol) =>
+        val info = checkStructFields(typeParams, variances, caseDef.fields, caseDef.pos).!!
+        symbol.info = info
+
+  def checkStructFields(
+    typeParams: List[TypeBinder | CaptureBinder], 
+    variances: List[Variance], 
+    fields: List[Syntax.FieldDef],
+    srcPos: SourcePos
+  )(using Context): Result[StructInfo] =
+    hopefully:
+      val ctx1 = ctx.extend(typeParams)
+      val fieldNames = fields.map(_.name)
       if fieldNames.distinct.length != fieldNames.length then
-        sorry(TypeError.GeneralError("Duplicated field name").withPos(d.pos))
-      val fields = d.fields.map: fieldDef =>
+        sorry(TypeError.GeneralError("Duplicated field name").withPos(srcPos))
+      val fieldInfos = fields.map: fieldDef =>
         val fieldType = checkType(fieldDef.tpe)(using ctx1).!!
         FieldInfo(fieldDef.name, fieldType, fieldDef.isVar)
       val ctxVariances = variances.reverse
-      val ctxTArgs = d.targs.reverse
-      fields.foreach: field =>
+      val ctxTArgs = typeParams.reverse
+      fieldInfos.foreach: field =>
         val startingVariance = if field.mutable then Variance.Invariant else Variance.Covariant
         val checker = CheckVariance(ctxVariances, startingVariance)
         checker.apply(field.tpe)
@@ -1173,7 +1202,35 @@ object TypeChecker:
               TypeError.GeneralError(
                 s"Type parameter defined to be ${showVariance(ctxVariances(idx))} but used as ${showVariance(used)} in ${mutableStr}field ${field.name} of type ${field.tpe.show(using ctx1)}"
               ).withPos(targ.pos)
-      StructInfo(binders, variances, fields)
+      StructInfo(typeParams, variances, fieldInfos)
+
+  def checkStructDef(d: Syntax.Definition.StructDef)(using Context): Result[StructInfo] =
+    hopefully:
+      val binders = checkTypeParamList(d.targs.map(_.toTypeParam)).!!
+      val variances = d.targs.map(_.variance).map(getVariance)
+      checkStructFields(binders, variances, d.fields, d.pos).!!
+      // val ctx1 = ctx.extend(binders)
+      // val fieldNames = d.fields.map(_.name)
+      // if fieldNames.distinct.length != fieldNames.length then
+      //   sorry(TypeError.GeneralError("Duplicated field name").withPos(d.pos))
+      // val fields = d.fields.map: fieldDef =>
+      //   val fieldType = checkType(fieldDef.tpe)(using ctx1).!!
+      //   FieldInfo(fieldDef.name, fieldType, fieldDef.isVar)
+      // val ctxVariances = variances.reverse
+      // val ctxTArgs = d.targs.reverse
+      // fields.foreach: field =>
+      //   val startingVariance = if field.mutable then Variance.Invariant else Variance.Covariant
+      //   val checker = CheckVariance(ctxVariances, startingVariance)
+      //   checker.apply(field.tpe)
+      //   checker.mismatches.foreach:
+      //     case CheckVariance.Mismatch(idx, used) =>
+      //       val targ = ctxTArgs(idx)
+      //       def mutableStr = if field.mutable then "mutable " else ""
+      //       sorry:
+      //         TypeError.GeneralError(
+      //           s"Type parameter defined to be ${showVariance(ctxVariances(idx))} but used as ${showVariance(used)} in ${mutableStr}field ${field.name} of type ${field.tpe.show(using ctx1)}"
+      //         ).withPos(targ.pos)
+      // StructInfo(binders, variances, fields)
 
   def checkTypeDef(d: Syntax.Definition.TypeDef)(using Context): Result[TypeDefInfo] =
     hopefully:
@@ -1319,6 +1376,13 @@ object TypeChecker:
           val variances = d.targs.map(_.variance).map(getVariance)
           val info = TypeDefInfo(tparams, variances, Type.NoType())
           TypeDefSymbol(d.name, info, m).withPosFrom(d)
+        case d: Syntax.Definition.EnumDef =>
+          val tparams = checkTypeParamList(d.targs.map(_.toTypeParam)).!!
+          val variances = d.targs.map(_.variance).map(getVariance)
+          val variantSymbols = d.variants.map: caseDef =>
+            StructSymbol(caseDef.name, StructInfo(tparams, variances, Nil), m)
+          val info = EnumInfo(tparams, variances, variantSymbols)
+          EnumSymbol(d.name, info, m).withPosFrom(d)
 
   /** Elaborate symbols with their declared types. */
   def elaborateType(d: Syntax.Definition, sym: Symbol, allSyms: List[Symbol])(using Context): Result[Unit] =
@@ -1358,7 +1422,7 @@ object TypeChecker:
         (m0.defs `zip` syms).foreach: (d, sym) =>
           elaborateType(d, sym, allSyms).!!
       // Typecheck type-related definitions in each module
-      val ctxWithAllSyms = ctx.addSymbols(allSyms)
+      var ctxWithAllSyms = ctx.addSymbols(allSyms)
       (modules `zip` mods `zip` modSyms).foreach: 
         case ((m0, m), syms) =>
           // Typecheck struct and type definitions
@@ -1371,6 +1435,10 @@ object TypeChecker:
               val info1 = checkTypeDef(d)(using ctxWithAllSyms).!!
               sym.info = info1
               Definition.TypeDef(sym).withPosFrom(d)
+            case (d: Syntax.Definition.EnumDef, sym: EnumSymbol) =>
+              // TODO: typecheck enum definitions
+              checkEnumDef(d, sym)(using ctxWithAllSyms).!!
+              Definition.EnumDef(sym).withPosFrom(d)
           // Done
           m.defns = typeDefs
       // Typecheck the rest of the definitions in each module

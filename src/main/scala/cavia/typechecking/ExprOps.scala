@@ -196,6 +196,24 @@ class ExprPrinter extends IndentedPrinter:
             print(", ")
         print(")")
         newline()
+      case Definition.EnumDef(sym) =>
+        print("enum ")
+        print(sym.name)
+        val info = sym.info
+        val binders = info.targs
+        val variances = info.variances
+        val binderStrs = showBindersWithVariances(binders, variances)
+        if binders.nonEmpty then
+          print("[")
+          print(binderStrs.mkString(", "))
+          print("]")
+        print(" {")
+        newline()
+        indented:
+          info.variants.foreach: variantSymbol =>
+            showDefinition(Definition.StructDef(variantSymbol))
+        print("}")
+        newline()
       case Definition.ExtensionDef(sym) =>
         print("extension ")
         print(sym.name)
