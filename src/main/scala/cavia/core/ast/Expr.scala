@@ -452,7 +452,7 @@ object Expr:
   object Symbol:
     private var nextSymbolId: Int = 0
   sealed trait Symbol extends Positioned:
-    private val id: Int =
+    val id: Int =
       Symbol.nextSymbolId += 1
       Symbol.nextSymbolId
     val name: String
