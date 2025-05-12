@@ -51,6 +51,8 @@ object Syntax:
 
   case class FieldDef(name: String, isVar: Boolean, tpe: Type) extends Positioned
 
+  case class EnumVariantDef(name: String, fields: List[FieldDef]) extends Positioned
+
   /** A type parameter for a type constructor.
    * The main difference with type parameters of lambdas is that
    * they can be annotated with variance.
@@ -82,6 +84,14 @@ object Syntax:
     case ExtensionDef(name: String, typeArgs: List[TypeParam | CaptureParam], selfArg: TermParam, methods: List[DefDef])
     /** A type definition, like type Arr[X] = array[X] */
     case TypeDef(name: String, targs: List[ConstructorTypeParam], body: Type)
+    /** An enum definition, like
+     * ```
+     * enum Option[T]:
+     *   case Some(value: T)
+     *   case None()
+     * ```
+     */
+    case EnumDef(name: String, targs: List[ConstructorTypeParam], variants: List[EnumVariantDef])
 
     val name: String
   import Definition.*
