@@ -551,16 +551,17 @@ object TypeChecker:
           tpe.derivedCapturing(core, tpe.isReadOnly, ref.asSingletonType.singletonCaptureSet)
       ref.withPosFrom(t).withTpe(tpe1).withCV(cv)
 
-  def destructMatchableType(scrutineeType: Type, srcPos: SourcePos)(using Context): Result[(EnumSymbol, List[Type | CaptureSet])] =
+  def destructMatchableType(scrutineeType: Type, srcPos: SourcePos)(using Context): Result[(EnumSymbol | StructSymbol, List[Type | CaptureSet])] =
     hopefully:
-      def go(tpe: Type): (EnumSymbol, List[Type | CaptureSet]) =
+      def go(tpe: Type): (EnumSymbol | StructSymbol, List[Type | CaptureSet]) =
         tpe match
           case Type.RefinedType(base, _) => go(base)
           case Type.SymbolRef(sym: EnumSymbol) => (sym, Nil)
+          case Type.SymbolRef(sym: StructSymbol) => (sym, Nil)
           case Type.AppliedType(base, targs) =>
             val (sym, targs1) = go(base)
             (sym, targs1 ++ targs)
-          case _ => sorry(TypeError.GeneralError(s"cannot match on a non-`enum` type ${scrutineeType.show}").withPos(srcPos))
+          case _ => sorry(TypeError.GeneralError(s"cannot match on a non-`enum` and non-`struct` type ${scrutineeType.show}").withPos(srcPos))
       go(scrutineeType.simplify)
 
   def checkPattern(pat: Syntax.Pattern, scrutineeType: Type)(using Context): Result[Pattern] =
@@ -571,19 +572,30 @@ object TypeChecker:
         case Syntax.Pattern.Bind(name, pat) => 
           val pat1 = checkPattern(pat, scrutineeType).!!
           val binder1 = TermBinder(name, scrutineeType, isConsume = false).withPosFrom(pat)
+          //println(s"binder ${binder1.name} -> ${scrutineeType.show}")
           Pattern.Bind(binder1.asInstanceOf[TermBinder], pat1).withPosFrom(pat).withTpe(scrutineeType)
         case Syntax.Pattern.EnumVariant(constructor, fields) => 
           val (enumSym, typeArgs) = destructMatchableType(scrutineeType, pat.pos).!!
           val variantSymbol = lookupStructSymbol(constructor) match
             case None => sorry(TypeError.UnboundVariable(constructor).withPos(pat.pos))
             case Some(sym: StructSymbol) => sym
-          if !enumSym.info.variants.exists(_ eq variantSymbol) then
-            sorry(TypeError.GeneralError(s"not a valid variant name: $constructor").withPos(pat.pos))
+          enumSym match
+            case enumSym: EnumSymbol =>
+              if !enumSym.info.variants.exists(_ eq variantSymbol) then
+                sorry(TypeError.GeneralError(s"not a valid variant name: $constructor").withPos(pat.pos))
+            case classSym: StructSymbol =>
+              if !(classSym eq variantSymbol) then
+                sorry:
+                  val err = TypeError.GeneralError:
+                    s"match case is disjoint: scrutinee is of type ${scrutineeType.show} but the pattern expects a struct of ${variantSymbol.name}"
+                  err.withPos(pat.pos)
           val numFields = variantSymbol.info.fields.length
           if fields.length != numFields then
             sorry(TypeError.GeneralError(s"expected ${numFields} fields, but got ${fields.length}").withPos(pat.pos))
           val fieldTypes = variantSymbol.info.fields.map: fieldInfo =>
-            substituteType(fieldInfo.tpe, typeArgs, isParamType = false)
+            getFieldInfo(scrutineeType, fieldInfo.name) match
+              case Some(fieldInfo) => fieldInfo.tpe
+              case None => assert(false)
           val fieldPatterns = (fields `zip` fieldTypes).map: (fieldPat, fieldType) =>
             checkPattern(fieldPat, fieldType).!!
           Pattern.EnumVariant(variantSymbol, fieldPatterns).withPosFrom(pat).withTpe(scrutineeType)
