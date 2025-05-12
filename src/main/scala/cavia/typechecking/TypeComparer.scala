@@ -109,6 +109,8 @@ object TypeComparer:
         modeCompatible && checkSubcapture(tp1.captureSet, captureSet) && checkSubtype(tp1, inner)
       case (tp1: Type.SymbolRef, tp2) if !(tp1.eval eq tp1) => checkSubtype(tp1.eval, tp2)
       case (tp1, tp2: Type.SymbolRef) if !(tp2.eval eq tp2) => checkSubtype(tp1, tp2.eval)
+      case (Type.SymbolRef(sym1: StructSymbol), Type.SymbolRef(sym2: EnumSymbol)) =>
+        sym2.info.variants.exists(_ eq sym1)
       case (Type.TermArrow(params1, result1), Type.TermArrow(params2, result2)) => 
         def go(ps1: List[TermBinder], ps2: List[TermBinder])(using Context): Boolean = (ps1, ps2) match
           case (Nil, Nil) => true
