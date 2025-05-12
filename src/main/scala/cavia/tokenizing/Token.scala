@@ -35,6 +35,7 @@ enum Token extends Positioned:
   case LESS_EQUAL() // <=
   case GREATER_EQUAL()  // >=
   case DOUBLE_PLUS()  // ++
+  case AT()  // @
   case EOF()  // End of file
   case INDENT()  // >>> indent
   case DEDENT()  // <<< dedent

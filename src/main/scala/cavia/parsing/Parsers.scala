@@ -202,7 +202,7 @@ object Parsers:
 
   private val opParsers = mutable.Map[Int, Parser[Term]]()
   def getParserOf(prec: Int): Parser[Term] =
-    if prec >= parseTable.size then applyP  // the base case
+    if prec >= parseTable.size then matchP  // the base case // used to be `applyP`
     else
       opParsers.get(prec) match
         case Some(p) => p
@@ -268,6 +268,32 @@ object Parsers:
 
   def unitLitP: Parser[Term] =
     (tokenP[Token.LPAREN], tokenP[Token.RPAREN]).p.map(_ => Term.UnitLit()).positioned
+
+  def patternP: Parser[Pattern] = lazyP:
+    val variantP =
+      (tokenP[Token.IDENT], tokenP[Token.LPAREN], patternP.sepBy(tokenP[Token.COMMA]), tokenP[Token.RPAREN]).p.map: (nameTk, _, fields, _) =>
+        Pattern.EnumVariant(nameTk.name, fields)
+    val bindP = (tokenP[Token.IDENT], tokenP[Token.AT], patternP).p.map: (nameTk, _, pat) =>
+      Pattern.Bind(nameTk.name, pat)
+    val idP = tokenP[Token.IDENT].map: t =>
+      if t.name == "_" then Pattern.Wildcard() else Pattern.Bind(t.name, Pattern.Wildcard().withPosFrom(t))
+    val p = longestMatch(variantP, bindP, idP)
+    p.positioned.withWhat("a pattern")
+
+  def matchCaseP: Parser[MatchCase] =
+    val p = (keywordP("case"), patternP, tokenP[Token.FAT_ARROW], termP).p.map: (_, pat, _, body) =>
+      MatchCase(pat, body)
+    p.positioned.withWhat("a match case")
+
+  def matchP: Parser[Term] =
+    val casesP = matchCaseP.sepBy(tokenP[Token.NEWLINE]).surroundedBy(tokenP[Token.INDENT], tokenP[Token.DEDENT].optional)
+    val matchClauseP = (keywordP("match"), casesP).p.map: (_, cases) =>
+      cases
+    val p = (applyP, matchClauseP.optional).p.map: (scrutinee, maybeCases) =>
+      maybeCases match
+        case Some(cases) => Term.Match(scrutinee, cases)
+        case None => scrutinee
+    p.positioned.withWhat("a match expression")
 
   def ifP: Parser[Term] =
     val elseBranchP = (tokenP[Token.NEWLINE].optional, keywordP("else"), termP).p.map: (_, _, elseBranch) =>

@@ -164,6 +164,8 @@ class Tokenizer(source: SourceFile):
                     Token.CHAR('\t')
                   else if expectChar('\\') then
                     Token.CHAR('\\')
+                  else if expectChar('0') then
+                    Token.CHAR('\u0000')
                   else
                     Error(s"Unrecognised escape character")
                 if token.isInstanceOf[Error] then
@@ -190,6 +192,7 @@ class Tokenizer(source: SourceFile):
           case ':' => Token.COLON()
           case ',' => Token.COMMA()
           case '.' => Token.DOT()
+          case '@' => Token.AT()
           case '{' => Token.LBRACE()
           case '}' => Token.RBRACE()
           case '^' => Token.HAT()
