@@ -7,4 +7,8 @@ def baz(x: Error[i32]^): i32 = -1
 def test1(x: Ok[i32]^): Result[i32]^{x} = x
 def test2(x: Error[i32]^): Result[i32]^{x} = x
 def main(): Unit =
+  foo(Ok[i32](0))
+  foo(Error[i32]())
+  bar(Ok[i32](0))
+  bar(Error[i32]())   // error
   ()
