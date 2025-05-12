@@ -124,7 +124,7 @@ object Parsers:
     val p = capP `or` typP
     p.positioned.withWhat("a struct type parameter")
 
-  def structP: Parser[Definition] =
+  def structFieldsP: Parser[List[FieldDef]] =
     val inlineFieldsP = fieldDefP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
     val listFieldsP = 
       (
@@ -132,10 +132,26 @@ object Parsers:
         fieldListDefP.sepBy(tokenP[Token.NEWLINE]).surroundedBy(tokenP[Token.INDENT], tokenP[Token.DEDENT].optional)
       ).p.map: (_, fields) =>
         fields
-    val fieldsP: Parser[List[FieldDef]] = inlineFieldsP `or` listFieldsP
+    val p = inlineFieldsP `or` listFieldsP
+    p.withWhat("a struct field list")
+
+  def enumVariantP: Parser[EnumVariantDef] =
+    val p = (keywordP("case"), tokenP[Token.IDENT], structFieldsP).p.map: (_, nameTk, fields) =>
+      EnumVariantDef(nameTk.name, fields)
+    p.positioned.withWhat("an enum variant definition")
+
+  def enumP: Parser[Definition] =
+    val variantsP = enumVariantP.sepBy(tokenP[Token.NEWLINE]).surroundedBy(tokenP[Token.INDENT], tokenP[Token.DEDENT].optional)
+    val paramsP = structTypeParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
+    val p = (keywordP("enum"), tokenP[Token.IDENT], paramsP.optional, tokenP[Token.COLON], variantsP).p.map: (_, nameTk, maybeParams, _, variants) =>
+      val targs = maybeParams.getOrElse(Nil)
+      Definition.EnumDef(nameTk.name, targs, variants)
+    p.positioned.withWhat("an enum definition")
+
+  def structP: Parser[Definition] =
     val paramP: Parser[ConstructorTypeParam] = structTypeParamP
     val paramsP = paramP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LBRACK], tokenP[Token.RBRACK])
-    val p = (keywordP("struct"), tokenP[Token.IDENT], paramsP.optional, fieldsP).p.map: (_, nameTk, maybeParams, fields) =>
+    val p = (keywordP("struct"), tokenP[Token.IDENT], paramsP.optional, structFieldsP).p.map: (_, nameTk, maybeParams, fields) =>
       Definition.StructDef(nameTk.name, maybeParams.getOrElse(Nil), fields)
     p.positioned.withWhat("a struct definition")
 
@@ -147,7 +163,7 @@ object Parsers:
     p.positioned.withWhat("a type definition")
 
   def definitionP: Parser[Definition] = 
-    valDefP `or` defDefP `or` structP `or` extensionDefP `or` typeDefP
+    valDefP `or` defDefP `or` structP `or` extensionDefP `or` typeDefP `or` enumP
 
   def moduleNameP: Parser[ModuleName] =
     val moreP = (tokenP[Token.DOT], tokenP[Token.IDENT]).p.map((_, nameTk) => nameTk)
