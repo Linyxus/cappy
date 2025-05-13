@@ -166,6 +166,15 @@ object Wasm:
     val Memory = fresh("__memory")
     val PutChar = fresh("__putchar")
     val PerfCounter = fresh("__perf_counter")
+    val EnumClass = fresh("__enum")
+    val Tag = fresh("__tag")
+  
+  object Tag:
+    private var nextId = 0
+    def fresh(): Int =
+      val id = nextId
+      nextId += 1
+      id
 
   val I32PrintlnType = FuncType(List(ValType.I32), None)
   val I32ReadType = FuncType(List(), Some(ValType.I32))

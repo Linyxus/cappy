@@ -1320,9 +1320,10 @@ object TypeChecker:
     hopefully:
       val typeParams = checkTypeParamList(d.targs.map(_.toTypeParam)).!!
       val variances = d.targs.map(_.variance).map(getVariance)
-      (d.variants `zip` symbol.info.variants).foreach: (caseDef, symbol) =>
+      (d.variants `zip` symbol.info.variants).foreach: (caseDef, vSym) =>
         val info = checkStructFields(typeParams, variances, caseDef.fields, caseDef.pos).!!
-        symbol.info = info
+        val info1 = info.copy(enumSymbol = Some(symbol))
+        vSym.info = info1
 
   def checkStructFields(
     typeParams: List[TypeBinder | CaptureBinder], 

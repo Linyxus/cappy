@@ -38,7 +38,7 @@ object CodeGenerator:
     case LazyFuncDef(body: Expr.Closure)
     case GlobalDef(globalSym: Symbol)
 
-  case class StructInfo(sym: Symbol, nameMap: Map[String, Symbol])
+  case class StructInfo(sym: Symbol, nameMap: Map[String, Symbol], tagNumber: Option[Int] = None)
 
   case class ExtensionInfo(methodMap: Map[String, MethodInfo])
   case class MethodInfo(sym: Symbol, tpe: FuncType)
@@ -242,7 +242,7 @@ object CodeGenerator:
         val Expr.Term.Select(base, fieldInfo) :: rhs :: Nil = args: @unchecked
         val rhsInstrs = genTerm(rhs)
         val AppliedStructType(classSym, typeArgs) = base.tpe.stripCaptures: @unchecked
-        val StructInfo(structSym, fieldMap) = createStructType(classSym, typeArgs)
+        val StructInfo(structSym, fieldMap, _) = createStructType(classSym, typeArgs)
         val fieldSym = fieldMap(fieldInfo.name)
         val baseInstrs = genTerm(base)
         val setFieldInstrs = List(Instruction.StructSet(structSym, fieldSym))
@@ -372,7 +372,7 @@ object CodeGenerator:
         val arrSym = createArrayType(arrType)
         ValType.TypedRef(arrSym)
       case AppliedStructType(sym, targs) =>
-        val StructInfo(structSym, _) = createStructType(sym, targs)
+        val StructInfo(structSym, _, _) = createStructType(sym, targs)
         ValType.TypedRef(structSym)
       case AppliedEnumType(sym, targs) => ValType.AnyRef
       case Expr.Type.BinderRef(idx) =>
@@ -687,7 +687,7 @@ object CodeGenerator:
         val localBinderInfo = BinderInfo.Sym(binder, localSym)
         (bindInstr :: patInstrs, localBinderInfo :: patBinderInfos)
       case Pattern.EnumVariant(constructor, typeArgs, enumSym, fields) =>
-        val StructInfo(structSym, fieldMap) = createStructType(constructor, typeArgs)
+        val StructInfo(structSym, fieldMap, _) = createStructType(constructor, typeArgs)
         val localSym = Symbol.fresh(constructor.name)
         val valType = ValType.TypedRef(structSym)
         emitLocal(localSym, valType)
@@ -719,7 +719,7 @@ object CodeGenerator:
       case Pattern.Wildcard() => Instruction.Drop :: thenBranch
       case Pattern.Bind(binder, pat) => genPatternMatcher(pat, thenBranch, elseBranch, resType)
       case Pattern.EnumVariant(constructor, typeArgs, enumSym, fields) =>
-        val StructInfo(structSym, fieldMap) = createStructType(constructor, typeArgs)
+        val StructInfo(structSym, fieldMap, _) = createStructType(constructor, typeArgs)
         val localSym = Symbol.fresh(constructor.name)
         val localType = ValType.TypedRef(structSym)
         emitLocal(localSym, localType)
@@ -777,15 +777,19 @@ object CodeGenerator:
     scrutineeInstrs ++ setLocalInstrs ++ caseInstrs
 
   def genStructInit(classSym: Expr.StructSymbol, targs: List[Expr.Type | Expr.CaptureSet], args: List[Expr.Term])(using Context): List[Instruction] =
-    val StructInfo(structSym, _) = createStructType(classSym, targs)
-    val argInstrs = args.flatMap(genTerm)
+    val StructInfo(structSym, _, tagNumber) = createStructType(classSym, targs)
+    var argInstrs = args.flatMap(genTerm)
+    tagNumber match
+      case Some(num) =>
+        argInstrs = Instruction.I32Const(num) :: argInstrs
+      case None =>
     val createStructInstrs = List(Instruction.StructNew(structSym))
     argInstrs ++ createStructInstrs
 
   def genSelect(base: Expr.Term, fieldInfo: Expr.FieldInfo)(using Context): List[Instruction] =
     base.tpe.strip.simplify(using ctx.typecheckerCtx) match
       case AppliedStructType(classSym, targs) =>
-        val StructInfo(structSym, nameMap) = createStructType(classSym, targs)
+        val StructInfo(structSym, nameMap, _) = createStructType(classSym, targs)
         val fieldName = fieldInfo.name
         val fieldSym = nameMap(fieldName)
         val baseInstrs = genTerm(base)
@@ -840,11 +844,18 @@ object CodeGenerator:
           val tpe = translateType(fieldType)(using ctx1)
           val info = FieldType(fieldSym, tpe, mutable = fieldMut)
           (fieldName, info)
-        val structType = StructType(fields.map(_._2), subClassOf = None)
+        val structType = 
+          classSym.info.enumSymbol match
+            case None =>
+              StructType(fields.map(_._2), subClassOf = None)
+            case Some(_) =>
+              val fieldTypes = FieldType(Symbol.Tag, ValType.I32, mutable = false) :: fields.map(_._2)
+              StructType(fieldTypes, subClassOf = Some(Symbol.EnumClass))
         val typeDef = TypeDef(structSym, structType)
         val nameMap = Map.from(fields.map((n, f) => (n, f.sym)))
         emitType(typeDef)
-        val structInfo = StructInfo(structSym, nameMap)
+        val tagNumber = classSym.info.enumSymbol.map(_ => Tag.fresh())  // Create tag number for enum variants
+        val structInfo = StructInfo(structSym, nameMap, tagNumber)
         specMap += (specSig -> structInfo)
         structInfo
 
@@ -995,6 +1006,13 @@ object CodeGenerator:
     val memory = Memory(Symbol.Memory, 1)
     emitMemory(memory)
 
+  def emitDefaultTypes()(using Context): Unit =
+    val td = TypeDef(
+      Symbol.EnumClass, 
+      StructType(List(FieldType(Symbol.Tag, ValType.I32, mutable = false)), subClassOf = None)
+    )
+    emitType(td)
+
   def locateMainFunction(ms: List[Expr.Module])(using Context): Option[Expr.DefSymbol] =
     ms.flatMap(_.defns).find(isValidMain) match
       case Some(Definition.ValDef(sym, _)) => Some(sym)
@@ -1005,6 +1023,7 @@ object CodeGenerator:
     val allDefns = ms.flatMap(_.defns)
     val mainSym = locateMainFunction(ms).getOrElse(assert(false, "No valid main function in module"))
     // First of all, emit imports and default memory
+    emitDefaultTypes()
     emitDefaultImports()
     emitDefaultMemory()
     // (1) create symbols for all the definitions
