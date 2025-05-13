@@ -585,7 +585,6 @@ object TypeChecker:
         case Syntax.Pattern.Bind(name, pat) => 
           val pat1 = checkPattern(pat, scrutineeType).!!
           val binder1 = TermBinder(name, scrutineeType, isConsume = false).withPosFrom(pat)
-          //println(s"binder ${binder1.name} -> ${scrutineeType.show}")
           Pattern.Bind(binder1.asInstanceOf[TermBinder], pat1).withPosFrom(pat).withTpe(scrutineeType)
         case Syntax.Pattern.EnumVariant(constructor, fields) => 
           val (enumSym, typeArgs) = destructMatchableType(scrutineeType, pat.pos).!!
@@ -649,7 +648,11 @@ object TypeChecker:
     hopefully:
       val pat1 = checkPattern(pat.pat, scrutineeType).!!
       val binders = bindersInPattern(pat1)
-      val ctx1 = ctx.extend(binders)
+      val binders1 = binders.zipWithIndex.map: (oldBinder, idx) =>
+        val oldTpe = oldBinder.tpe
+        val newTpe = oldTpe.shift(idx)
+        oldBinder.copy(tpe = newTpe).withPosFrom(oldBinder)
+      val ctx1 = ctx.extend(binders1)
       val body1 = checkTerm(pat.body, expected)(using ctx1).!!
       // Avoid locally-bound binders
       var outCV = body1.cv
@@ -1055,6 +1058,7 @@ object TypeChecker:
    * Returns the arguments, the result type, and the consumed capabilities in this apply.
    */
   def checkFunctionApply(funType: Type, args: List[Syntax.Term], srcPos: SourcePos, isDependent: Boolean = true)(using Context): Result[(List[Term], Type, CaptureSet)] =
+    //println(s"checkFunctionApply($funType, $args, $isDependent)")
     hopefully:
       funType.simplify match
         case Type.TermArrow(formals, resultType) =>
