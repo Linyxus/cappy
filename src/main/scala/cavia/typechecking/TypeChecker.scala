@@ -602,22 +602,32 @@ object TypeChecker:
                   val err = TypeError.GeneralError:
                     s"match case is disjoint: scrutinee is of type ${scrutineeType.show} but the pattern expects a struct of ${variantSymbol.name}"
                   err.withPos(pat.pos)
+          val isNarrowing = !(enumSym eq variantSymbol)
           val numFields = variantSymbol.info.fields.length
           if fields.length != numFields then
             sorry(TypeError.GeneralError(s"expected ${numFields} fields, but got ${fields.length}").withPos(pat.pos))
-          val fieldTypes = variantSymbol.info.fields.map: fieldInfo =>
-            getFieldInfo(scrutineeType, fieldInfo.name) match
-              case Some(fieldInfo) => fieldInfo.tpe
-              case None => assert(false)
+          val fieldTypes = 
+            if isNarrowing then
+              variantSymbol.info.fields.map: fieldInfo =>
+                val fieldType = substituteType(fieldInfo.tpe, typeArgs, isParamType = false)
+                fieldType
+            else
+              variantSymbol.info.fields.map: fieldInfo =>
+                getFieldInfo(scrutineeType, fieldInfo.name) match
+                  case Some(fieldInfo) => fieldInfo.tpe
+                  case None => assert(false)
           val fieldPatterns = (fields `zip` fieldTypes).map: (fieldPat, fieldType) =>
             checkPattern(fieldPat, fieldType).!!
-          Pattern.EnumVariant(variantSymbol, fieldPatterns).withPosFrom(pat).withTpe(scrutineeType)
+          val enumSym1 = enumSym match
+            case enumSym: EnumSymbol => Some(enumSym)
+            case _ => None
+          Pattern.EnumVariant(variantSymbol, typeArgs, enumSym1, fieldPatterns).withPosFrom(pat).withTpe(scrutineeType)
 
   def bindersInPattern(pat: Pattern): List[TermBinder] =
     pat match
       case Pattern.Wildcard() => Nil
       case Pattern.Bind(binder, pat) => binder :: bindersInPattern(pat)
-      case Pattern.EnumVariant(_, fields) => fields.flatMap(bindersInPattern)
+      case Pattern.EnumVariant(_, _, _, fields) => fields.flatMap(bindersInPattern)
 
   def findCommonType(tp1: Type, tp2: Type)(using Context): Option[Type] =
     if TypeComparer.checkSubtype(tp1, tp2) then

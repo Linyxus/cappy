@@ -46,6 +46,7 @@ object Wasm:
     case I64Eqz
     case LocalSet(sym: Symbol)
     case LocalGet(sym: Symbol)
+    case LocalTee(sym: Symbol)
     case GlobalSet(sym: Symbol)
     case GlobalGet(sym: Symbol)
     case RefCast(typeSym: Symbol)
@@ -68,6 +69,8 @@ object Wasm:
     case I32Load(memorySym: Symbol)
     case I32Store(memorySym: Symbol)
     case MemorySize(memorySym: Symbol)
+    case Drop
+    case Unreachable
 
     def showIfSimple: Option[String] = this match
       case I32Const(value) => Some(s"i32.const $value")
@@ -98,6 +101,7 @@ object Wasm:
       case I64Eqz => Some("i64.eqz")
       case LocalSet(sym) => Some(s"local.set ${sym.show}")
       case LocalGet(sym) => Some(s"local.get ${sym.show}")
+      case LocalTee(sym) => Some(s"local.tee ${sym.show}")
       case GlobalSet(sym) => Some(s"global.set ${sym.show}")
       case GlobalGet(sym) => Some(s"global.get ${sym.show}")
       case RefCast(typeSym) => Some(s"ref.cast (ref ${typeSym.show})")
@@ -122,6 +126,8 @@ object Wasm:
         Some(s"i32.store ${memorySym.show}")
       case MemorySize(memorySym) =>
         Some(s"memory.size ${memorySym.show}")
+      case Drop => Some("drop")
+      case Unreachable => Some("unreachable")
       case _ => None
 
   enum ExportKind:

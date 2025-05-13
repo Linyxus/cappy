@@ -13,6 +13,7 @@ import Wasm.*
 import typechecking.*
 import Expr.{PrimitiveOp, Definition, ArrayPrimitiveOp}
 import reporting.trace
+import cavia.core.ast.Expr.Pattern
 
 object CodeGenerator:
   case class ClosureTypeInfo(funcTypeSym: Symbol, closTypeSym: Symbol)
@@ -355,6 +356,7 @@ object CodeGenerator:
       case Expr.Type.Base(Expr.BaseType.UnitType) => ValType.I32
       case Expr.Type.Base(Expr.BaseType.BoolType) => ValType.I32
       case Expr.Type.Base(Expr.BaseType.CharType) => ValType.I32
+      case Expr.Type.Base(Expr.BaseType.AnyType) => ValType.AnyRef
       case Expr.Type.Capturing(inner, _, _) => translateType(inner)
       case Expr.Type.Boxed(core) => translateType(core)
       case Expr.Type.TermArrow(params, result) =>
@@ -413,7 +415,11 @@ object CodeGenerator:
     case Term.If(cond, thenBranch, elseBranch) =>
       freeLocalBinders(cond) ++ freeLocalBinders(thenBranch) ++ freeLocalBinders(elseBranch)
     case Term.ResolveExtension(sym, targs, field) => Set.empty
-    case Term.Match(scrutinee, cases) => ???
+    case Term.Match(scrutinee, cases) =>
+      freeLocalBinders(scrutinee) ++ cases.flatMap: cas =>
+        val bodyFree = freeLocalBinders(cas.body)
+        val binders = TypeChecker.bindersInPattern(cas.pat)
+        dropLocalBinders(bodyFree, binders.size)
 
   /** Translate a closure of `funType` with a given parameter list and body.
    * Returns the instructions for creating the closure and the symbol of the worker function.
@@ -659,7 +665,94 @@ object CodeGenerator:
       genStructInit(classSym, targs, args)
     case Term.Select(base, fieldInfo) =>
       genSelect(base, fieldInfo)
+    case Term.Match(scrutinee, cases) =>
+      genMatch(scrutinee, cases)
     case _ => assert(false, s"Don't know how to translate this term: $t")
+
+  /** Generate code for a pattern.
+   * Assume that the scrutinee is on the top of the stack.
+   * Generates instructions for getting the fields of each pattern along with the corresponding binder infos.
+   */
+  def genPatternExtractor(pat: Expr.Pattern)(using Context): (List[Instruction], List[BinderInfo]) =
+    pat match
+      case Pattern.Wildcard() =>
+        (List(Instruction.Drop), Nil)
+      case Pattern.Bind(binder, pat) =>
+        val valType = translateType(binder.tpe)
+        val localSym = Symbol.fresh(binder.name)
+        emitLocal(localSym, valType)
+        val (patInstrs, patBinderInfos) = genPatternExtractor(pat)
+        val bindInstr = Instruction.LocalTee(localSym)
+        val localBinderInfo = BinderInfo.Sym(binder, localSym)
+        (bindInstr :: patInstrs, localBinderInfo :: patBinderInfos)
+      case Pattern.EnumVariant(constructor, typeArgs, enumSym, fields) =>
+        val localSym = Symbol.fresh(constructor.name)
+        val valType = translateType(pat.tpe)
+        emitLocal(localSym, valType)
+        val setLocalInstr = Instruction.LocalSet(localSym)
+        val StructInfo(structSym, fieldMap) = createStructType(constructor, typeArgs)
+        val fieldResults = (constructor.info.fields `zip` fields).map: (fieldInfo, field) =>
+          val (instrs, binders) = genPatternExtractor(field)
+          val fieldName = fieldInfo.name
+          val getFieldInstrs = List(
+            Instruction.LocalGet(localSym),
+            Instruction.StructGet(structSym, fieldMap(fieldName)),
+          )
+          (getFieldInstrs ++ instrs, binders)
+        val (instrs, binders) = fieldResults.unzip
+        (setLocalInstr :: instrs.flatten, binders.flatten)
+
+  /** Generate WASM instructions for checking whether the scrutinee matches the pattern.
+   * Assume that the scrutinee is on the top of the stack.
+   * It will always consume that scrutinee and enter either `thenBranch` or `elseBranch` based on the result.
+   */
+  def genPatternMatcher(pat: Expr.Pattern, thenBranch: List[Instruction], elseBranch: List[Instruction])(using Context): List[Instruction] =
+    pat match
+      case Pattern.Wildcard() => Instruction.Drop :: thenBranch
+      case Pattern.Bind(binder, pat) => genPatternMatcher(pat, thenBranch, elseBranch)
+      case Pattern.EnumVariant(constructor, typeArgs, enumSym, fields) =>
+        val StructInfo(structSym, fieldMap) = createStructType(constructor, typeArgs)
+        val localSym = Symbol.fresh(constructor.name)
+        val localType = translateType(pat.tpe)
+        emitLocal(localSym, localType)
+        val setLocalInstr = Instruction.LocalSet(localSym)
+        val getLocalInstr = Instruction.LocalGet(localSym)
+        def go(fields: List[(Expr.FieldInfo, Expr.Pattern)]): List[Instruction] = fields match
+          case (fieldInfo, field) :: rest =>
+            val fieldSym = fieldMap(fieldInfo.name)
+            val projFieldInstrs = List(
+              getLocalInstr,
+              Instruction.StructGet(structSym, fieldSym),
+            )
+            projFieldInstrs ++ genPatternMatcher(field, go(rest), elseBranch)
+          case Nil => thenBranch
+        val fieldInstrs = go(constructor.info.fields `zip` fields)
+        // Skip checking here for now
+        setLocalInstr :: fieldInstrs
+
+  // def genMatchCase(cas: Expr.MatchCase)(using Context): List[Instruction] =
+  //   val (patInstrs, patBinderInfos) = genPatternExtractor(cas.pat)
+  //   val bodyInstrs = genTerm(cas.body)(using ctx.withMoreBinderInfos(patBinderInfos))
+  //   patInstrs ++ bodyInstrs
+
+  def genMatch(scrutinee: Expr.Term, cases: List[Expr.MatchCase])(using Context): List[Instruction] =
+    val scrutineeInstrs = genTerm(scrutinee)
+    val localSym = Symbol.fresh("match_scrutinee")
+    val localType = translateType(scrutinee.tpe)
+    emitLocal(localSym, localType)
+    val setLocalInstrs = List(Instruction.LocalSet(localSym))
+    def go(cases: List[Expr.MatchCase]): List[Instruction] = cases match
+      case Nil => List(Instruction.Unreachable)
+      case cas :: rest =>
+        val getLocalInstrs = List(Instruction.LocalGet(localSym))
+        val (patInstrs, patBinderInfos) = genPatternExtractor(cas.pat)
+        val bodyInstrs = genTerm(cas.body)(using ctx.withMoreBinderInfos(patBinderInfos))
+        val thenBranch = getLocalInstrs ++ patInstrs ++ bodyInstrs
+        val elseBranch = go(rest)
+        val matcherInstrs = genPatternMatcher(cas.pat, thenBranch, elseBranch)
+        getLocalInstrs ++ matcherInstrs
+    val caseInstrs = go(cases)
+    scrutineeInstrs ++ setLocalInstrs ++ caseInstrs
 
   def genStructInit(classSym: Expr.StructSymbol, targs: List[Expr.Type | Expr.CaptureSet], args: List[Expr.Term])(using Context): List[Instruction] =
     val StructInfo(structSym, _) = createStructType(classSym, targs)

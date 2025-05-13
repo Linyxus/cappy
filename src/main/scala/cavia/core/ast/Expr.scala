@@ -431,7 +431,7 @@ object Expr:
   enum Pattern extends Positioned, Typed:
     case Wildcard()
     case Bind(binder: TermBinder, pat: Pattern)
-    case EnumVariant(constructor: StructSymbol, fields: List[Pattern])
+    case EnumVariant(constructor: StructSymbol, typeArgs: List[Type | CaptureSet], enumSym: Option[EnumSymbol], fields: List[Pattern])
 
   case class MatchCase(pat: Pattern, body: Term) extends Positioned, Typed
 

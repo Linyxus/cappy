@@ -180,7 +180,7 @@ class ExprPrinter extends IndentedPrinter:
         print(binder.name)
         print(" @ ")
         showPattern(pat)
-      case Pattern.EnumVariant(constructor, fields) =>
+      case Pattern.EnumVariant(constructor, _, _, fields) =>
         print(constructor.name)
         print("(")
         fields.zipWithIndex.foreach: (field, idx) =>
