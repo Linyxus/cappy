@@ -129,7 +129,7 @@ object Expr:
 
       def solve(): CaptureSet =
         mySolved = true
-        CaptureSet(elems)
+        CaptureSet(absorbed.toList)
 
       def absorb(ref: QualifiedRef): Unit =
         absorbed += ref
