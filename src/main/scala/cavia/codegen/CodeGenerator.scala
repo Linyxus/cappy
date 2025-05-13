@@ -374,7 +374,7 @@ object CodeGenerator:
       case AppliedStructType(sym, targs) =>
         val StructInfo(structSym, _, _) = createStructType(sym, targs)
         ValType.TypedRef(structSym)
-      case AppliedEnumType(sym, targs) => ValType.AnyRef
+      case AppliedEnumType(sym, targs) => ValType.TypedRef(Symbol.EnumClass)
       case Expr.Type.BinderRef(idx) =>
         //println(s"translateType: BinderRef($idx), binderInfos = ${ctx.binderInfos}")
         ctx.binderInfos(idx) match
@@ -719,7 +719,7 @@ object CodeGenerator:
       case Pattern.Wildcard() => Instruction.Drop :: thenBranch
       case Pattern.Bind(binder, pat) => genPatternMatcher(pat, thenBranch, elseBranch, resType)
       case Pattern.EnumVariant(constructor, typeArgs, enumSym, fields) =>
-        val StructInfo(structSym, fieldMap, _) = createStructType(constructor, typeArgs)
+        val StructInfo(structSym, fieldMap, maybeTag) = createStructType(constructor, typeArgs)
         val localSym = Symbol.fresh(constructor.name)
         val localType = ValType.TypedRef(structSym)
         emitLocal(localSym, localType)
@@ -735,14 +735,18 @@ object CodeGenerator:
             projFieldInstrs ++ genPatternMatcher(field, go(rest), elseBranch, resType)
           case Nil => thenBranch
         val fieldInstrs = go(constructor.info.fields `zip` fields)
-        // Skip checking here for now
-        // setLocalInstrs ++ fieldInstrs
         enumSym match
           case None => setLocalInstrs ++ fieldInstrs
           case Some(_) =>
             val originalSym = Symbol.fresh("original")
-            emitLocal(originalSym, ValType.AnyRef)
-            val testInstrs = List(Instruction.LocalTee(originalSym), Instruction.RefTest(structSym))
+            emitLocal(originalSym, ValType.TypedRef(Symbol.EnumClass))
+            val testInstrs = 
+              List(
+                Instruction.LocalTee(originalSym), 
+                Instruction.StructGet(Symbol.EnumClass, Symbol.Tag),
+                Instruction.I32Const(maybeTag.get),
+                Instruction.I32Eq,
+              )
             val castInstrs = List(Instruction.LocalGet(originalSym), Instruction.RefCast(structSym))
             val ifInstr = Instruction.If(
               resType,
