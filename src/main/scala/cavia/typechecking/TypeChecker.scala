@@ -99,6 +99,9 @@ object TypeChecker:
       case _ => Message.simple(show, pos)
 
   def ctx(using myCtx: Context): Context = myCtx
+
+  def withinNewInferenceScope[T](body: Context ?=> T)(using Context): T =
+    body(using ctx.newInferenceScope)
   
   type Result[+A] = Either[TypeError, A]
 
@@ -428,15 +431,22 @@ object TypeChecker:
     val binder1 = TermBinder(binder.name, tpe1, binder.isConsume).maybeWithPosFrom(binder).asInstanceOf[TermBinder]
     (binder1, createdCaps)
 
-  def checkStructInit(classSym: StructSymbol, targs: List[Syntax.Type | Syntax.CaptureSet], args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
+  def checkStructInit(
+    classSym: StructSymbol, 
+    targs: Either[List[Syntax.Type | Syntax.CaptureSet], List[Type | CaptureSet]], 
+    args: List[Syntax.Term], 
+    expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     val tformals = classSym.info.targs
     val fields = classSym.info.fields
     hopefully:
-      if targs.length != tformals.length then
-        sorry(TypeError.GeneralError(s"Constructor type argument number mismatch, expected ${tformals.length}, but got ${targs.length}").withPos(srcPos))
       if args.length != fields.length then
         sorry(TypeError.GeneralError(s"Constructor argument number mismatch, expected ${fields.length}, but got ${args.length}").withPos(srcPos))
-      val typeArgs = checkTypeArgs(targs, tformals, srcPos).!!
+      val typeArgs = targs match
+        case Left(targs) => 
+          if targs.length != tformals.length then
+            sorry(TypeError.GeneralError(s"Constructor type argument number mismatch, expected ${tformals.length}, but got ${targs.length}").withPos(srcPos))
+          checkTypeArgs(targs, tformals, srcPos).!!
+        case Right(targs) => targs
       val fields1: List[(String, Type, Boolean)] = fields.map: field =>
         val tpe = field.tpe
         val fieldType = substituteType(tpe, typeArgs, isParamType = true)
@@ -800,10 +810,29 @@ object TypeChecker:
         checkPolyPrimOp(primOp, targs, args, expected, t.pos).map(instantiateFresh)
       case Syntax.Term.Apply(Syntax.Term.TypeApply(Syntax.Term.Ident(name), targs), args) if lookupStructSymbol(name).isDefined =>
         val classSym = lookupStructSymbol(name).get
-        checkStructInit(classSym, targs, args, expected, t.pos).map(instantiateFresh)
+        checkStructInit(classSym, Left(targs), args, expected, t.pos).map(instantiateFresh)
       case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if lookupStructSymbol(name).isDefined =>
-        val classSym = lookupStructSymbol(name).get
-        checkStructInit(classSym, targs = Nil, args, expected, t.pos).map(instantiateFresh)
+        withinNewInferenceScope:
+          hopefully:
+            val classSym = lookupStructSymbol(name).get
+            val classTypeParams = classSym.info.targs
+            val targs: Either[List[Syntax.Type | Syntax.CaptureSet], List[Type | CaptureSet]] =
+              if classTypeParams.isEmpty then Left(Nil)
+              else
+                Right:
+                  classTypeParams.map:
+                    case binder: TypeBinder => 
+                      val tv = Inference.createTypeVar(binder.bound)
+                      tv
+                    case binder: CaptureBinder => CaptureSet.empty
+            val outTerm = checkStructInit(classSym, targs, args, expected, t.pos).!!
+            Inference.solveTypeVars()
+            Inference.state.localVars.foreach: tv =>
+              val inst = tv.instance
+              if !inst.isPure then
+                sorry(TypeError.GeneralError(s"Type argument ${inst.show} is not pure. This type argument was inferred based on the term arguments.").withPos(t.pos))
+            val outTerm1 = instantiateFresh(outTerm)
+            outTerm1
       case Syntax.Term.Apply(fun, args) => 
         checkApply(fun, args, expected, t.pos).map(instantiateFresh)
       case Syntax.Term.TypeApply(term, targs) => 
