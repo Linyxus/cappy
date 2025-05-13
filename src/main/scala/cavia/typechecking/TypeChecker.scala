@@ -6,7 +6,6 @@ import scala.util.boundary, boundary.break
 import core.*
 import ast.*
 import reporting.*
-import cavia.core.ast.Syntax.ModuleName
 
 object TypeChecker:
   import Expr.*
@@ -1546,8 +1545,8 @@ object TypeChecker:
 
   def getModuleName(name: Syntax.ModuleName): String =
     name match
-      case ModuleName.Root() => "<root>"
-      case ModuleName.Qualified(ModuleName.Root(), name) => name
+      case Syntax.ModuleName.Root() => "<root>"
+      case Syntax.ModuleName.Qualified(Syntax.ModuleName.Root(), name) => name
       case _ => assert(false, "Qualified module names are not yet supported")
 
   // def checkModule(module: Syntax.Module)(using Context): Result[Module] =
