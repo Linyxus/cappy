@@ -413,6 +413,7 @@ object CodeGenerator:
     case Term.If(cond, thenBranch, elseBranch) =>
       freeLocalBinders(cond) ++ freeLocalBinders(thenBranch) ++ freeLocalBinders(elseBranch)
     case Term.ResolveExtension(sym, targs, field) => Set.empty
+    case Term.Match(scrutinee, cases) => ???
 
   /** Translate a closure of `funType` with a given parameter list and body.
    * Returns the instructions for creating the closure and the symbol of the worker function.
@@ -905,6 +906,9 @@ object CodeGenerator:
               ctx.defInfos += (sym -> DefInfo.GlobalDef(globalSym))
         case Definition.StructDef(sym) =>
           ctx.typeInfos += (sym -> mutable.Map.empty)
+        case Definition.EnumDef(sym) =>
+          sym.info.variants.foreach: vSym =>
+            ctx.typeInfos += (vSym -> mutable.Map.empty)
         case Definition.ExtensionDef(sym) =>
           ctx.extensionInfos += (sym -> mutable.Map.empty)
         case Definition.TypeDef(sym) =>

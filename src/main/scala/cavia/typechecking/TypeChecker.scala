@@ -346,7 +346,7 @@ object TypeChecker:
           go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
     go(params, Nil)
 
-  private def dropLocalParams(crefs: List[QualifiedRef], numParams: Int): (Boolean, List[QualifiedRef]) = 
+  private def dropLocalParams(crefs: List[QualifiedRef], numParams: Int, paramCapInsts: List[CaptureRef.CapInst]): (Boolean, List[QualifiedRef]) = 
     var existsLocalParams = false
     val newCrefs = crefs.flatMap: ref =>
       ref.core match
@@ -360,6 +360,7 @@ object TypeChecker:
                 existsLocalParams = true
                 None
             case _ => Some(ref)
+        case capInst: CaptureRef.CapInst if paramCapInsts.contains(capInst) => None  // Drop cap instances that comes from parameters
         case _ => Some(ref)
     (existsLocalParams, newCrefs)
 
@@ -393,10 +394,12 @@ object TypeChecker:
           sorry(TypeError.GeneralError(s"Type argument number mismatch: expected ${formals.length}, but got ${targs.length}").withPos(srcPos))
       go(targs, formalTypes, Nil)
 
-  def instantiateCaps(tpe: Type, isFresh: Boolean)(using Context): Type =
+  def instantiateCaps(tpe: Type, isFresh: Boolean)(using Context): (Type, List[CaptureRef.CapInst]) =
+    var createdCaps: List[CaptureRef.CapInst] = Nil
     val curLevel = ctx.freshLevel
     val capKind = if isFresh then CapKind.Fresh(curLevel) else CapKind.Sep(curLevel)
     val tm1 = CapInstantiation(() => CaptureRef.makeCapInst(capKind, fromInst = None))
+    createdCaps = tm1.localCaps
     val tpe1 = tm1.apply(tpe)
     val rootCapInst = tpe1.captureSet match
       case CaptureSet.Const((QualifiedRef(_, c: CaptureRef.CapInst)) :: Nil) if tm1.localCaps.contains(c) => Some(c)
@@ -411,18 +414,19 @@ object TypeChecker:
             val fieldCapKind = capKind  // fields inherit the fresh-ness status from its root cap
             val tm2 = CapInstantiation(() => CaptureRef.makeCapInst(fieldCapKind, fromInst = Some(rootCap.capId)))
             val fieldType = tm2.apply(fieldInfo.tpe)
+            createdCaps = createdCaps ++ tm2.localCaps
             if tm2.localCaps.isEmpty then
               None
             else
               val info = FieldInfo(fieldName, fieldType, fieldInfo.mutable)
               Some(info)
-    if fieldInfos.isEmpty then tpe1
-    else tpe1.refined(fieldInfos)
+    if fieldInfos.isEmpty then (tpe1, createdCaps)
+    else (tpe1.refined(fieldInfos), createdCaps)
 
-  def instantiateBinderCaps(binder: TermBinder)(using Context): TermBinder =
-    val tpe1 = instantiateCaps(binder.tpe, isFresh = binder.isConsume)
+  def instantiateBinderCaps(binder: TermBinder)(using Context): (TermBinder, List[CaptureRef.CapInst]) =
+    val (tpe1, createdCaps) = instantiateCaps(binder.tpe, isFresh = binder.isConsume)
     val binder1 = TermBinder(binder.name, tpe1, binder.isConsume).maybeWithPosFrom(binder).asInstanceOf[TermBinder]
-    binder1
+    (binder1, createdCaps)
 
   def checkStructInit(classSym: StructSymbol, targs: List[Syntax.Type | Syntax.CaptureSet], args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     val tformals = classSym.info.targs
@@ -478,13 +482,13 @@ object TypeChecker:
   def checkTermAbstraction(params: List[TermBinder], checkBody: Context ?=> Result[Term], srcPos: SourcePos)(using Context): Result[Term] = 
     inNewFreshLevel:
       hopefully:
-        val params1 = params.map(instantiateBinderCaps)
+        val (params1, createdCaps) = params.map(instantiateBinderCaps).unzip
         val ctx1 = ctx.extend(params1)
         val body1 = checkBody(using ctx1).!!
         val bodyCV = body1.cv
         if bodyCV.elems.contains(CaptureRef.CAP()) then
           sorry(TypeError.GeneralError("A `cap` that is not nameable is captured by the body of this lambda; try naming `cap`s explicitly with capture parameters").withPos(srcPos))
-        val (_, outCV) = dropLocalParams(bodyCV.elems.toList, params.length)
+        val (_, outCV) = dropLocalParams(bodyCV.elems.toList, params.length, createdCaps.flatten)
         val outCV1 = dropLocalFreshCaps(outCV, srcPos).!!
         val outTerm = Term.TermLambda(params, body1, skolemizedBinders = params1).withPos(srcPos)
         val outType = Type.Capturing(Type.TermArrow(params, body1.tpe), isReadOnly = false, CaptureSet(outCV1.distinct))
@@ -498,7 +502,7 @@ object TypeChecker:
         val bodyCV = body1.cv
         if bodyCV.elems.contains(CaptureRef.CAP()) then
           sorry(TypeError.GeneralError("A `cap` that is not nameable is captured by the body of this lambda; try naming `cap`s explicitly with capture parameters").withPos(srcPos))
-        val (existsLocalParams, outCV) = dropLocalParams(bodyCV.elems.toList, params.length)
+        val (existsLocalParams, outCV) = dropLocalParams(bodyCV.elems.toList, params.length, Nil)
         if existsLocalParams then
           sorry(TypeError.GeneralError("local capture parameters captured by the body of a the lambda"))
         val outCV1 = dropLocalFreshCaps(outCV, srcPos).!!
@@ -611,7 +615,12 @@ object TypeChecker:
       val binders = bindersInPattern(pat1)
       val ctx1 = ctx.extend(binders)
       val body1 = checkTerm(pat.body, expected)(using ctx1).!!
-      MatchCase(pat1, body1).withPosFrom(pat).withTpe(body1.tpe).withCV(body1.cv)
+      // Avoid locally-bound binders
+      var outCV = body1.cv
+      for binder <- binders.reverse do
+        val tm = AvoidLocalBinder(binder.tpe)
+        outCV = tm.mapCaptureSet(outCV)
+      MatchCase(pat1, body1).withPosFrom(pat).withTpe(body1.tpe).withCV(outCV)
 
   def checkMatch(scrutinee: Syntax.Term, cases: List[Syntax.MatchCase], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
@@ -1028,7 +1037,7 @@ object TypeChecker:
   /** Instantiate fresh capabilities in the result of a function apply. */
   def instantiateFresh(t: Term)(using Context): Term =
     val tpe = t.tpe
-    val tpe1 = instantiateCaps(tpe, isFresh = true)
+    val (tpe1, _) = instantiateCaps(tpe, isFresh = true)
     val t1 = t.withTpe(tpe1)
     t1
 
@@ -1213,6 +1222,9 @@ object TypeChecker:
       val (args1, outType, consumedSet) = checkFunctionApply(arrConsFunction, args, pos, isDependent = false).!!
       Term.PrimOp(PrimitiveOp.ArrayNew, elemType :: Nil, args1).withPos(pos).withTpe(outType).withCVFrom(args1*)
 
+  /** `boundary` and `break` have been dropped due to lack of support in the backend
+   * But we keep the code here for future reference
+   */
   // def checkBoundary(returnType: Type, runner: Syntax.Term, srcPos: SourcePos)(using Context): Result[Term] =
   //   hopefully:
   //     val breakCapType = Definitions.breakCapabilityType(returnType)
@@ -1286,28 +1298,6 @@ object TypeChecker:
       val binders = checkTypeParamList(d.targs.map(_.toTypeParam)).!!
       val variances = d.targs.map(_.variance).map(getVariance)
       checkStructFields(binders, variances, d.fields, d.pos).!!
-      // val ctx1 = ctx.extend(binders)
-      // val fieldNames = d.fields.map(_.name)
-      // if fieldNames.distinct.length != fieldNames.length then
-      //   sorry(TypeError.GeneralError("Duplicated field name").withPos(d.pos))
-      // val fields = d.fields.map: fieldDef =>
-      //   val fieldType = checkType(fieldDef.tpe)(using ctx1).!!
-      //   FieldInfo(fieldDef.name, fieldType, fieldDef.isVar)
-      // val ctxVariances = variances.reverse
-      // val ctxTArgs = d.targs.reverse
-      // fields.foreach: field =>
-      //   val startingVariance = if field.mutable then Variance.Invariant else Variance.Covariant
-      //   val checker = CheckVariance(ctxVariances, startingVariance)
-      //   checker.apply(field.tpe)
-      //   checker.mismatches.foreach:
-      //     case CheckVariance.Mismatch(idx, used) =>
-      //       val targ = ctxTArgs(idx)
-      //       def mutableStr = if field.mutable then "mutable " else ""
-      //       sorry:
-      //         TypeError.GeneralError(
-      //           s"Type parameter defined to be ${showVariance(ctxVariances(idx))} but used as ${showVariance(used)} in ${mutableStr}field ${field.name} of type ${field.tpe.show(using ctx1)}"
-      //         ).withPos(targ.pos)
-      // StructInfo(binders, variances, fields)
 
   def checkTypeDef(d: Syntax.Definition.TypeDef)(using Context): Result[TypeDefInfo] =
     hopefully:
