@@ -701,6 +701,12 @@ object AppliedStructType:
     case Type.AppliedType(Type.SymbolRef(sym: StructSymbol), typeArgs) => Some((sym, typeArgs))
     case _ => None
 
+object AppliedEnumType:
+  def unapply(tpe: Type): Option[(EnumSymbol, List[Type | CaptureSet])] = tpe match
+    case Type.SymbolRef(sym: EnumSymbol) => Some((sym, Nil))
+    case Type.AppliedType(Type.SymbolRef(sym: EnumSymbol), typeArgs) => Some((sym, typeArgs))
+    case _ => None
+
 extension (tpe: Type)
   def refined(refinements: List[FieldInfo]): Type = 
     if refinements.isEmpty then tpe

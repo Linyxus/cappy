@@ -374,6 +374,7 @@ object CodeGenerator:
       case AppliedStructType(sym, targs) =>
         val StructInfo(structSym, _) = createStructType(sym, targs)
         ValType.TypedRef(structSym)
+      case AppliedEnumType(sym, targs) => ValType.AnyRef
       case Expr.Type.BinderRef(idx) =>
         //println(s"translateType: BinderRef($idx), binderInfos = ${ctx.binderInfos}")
         ctx.binderInfos(idx) match
@@ -666,7 +667,7 @@ object CodeGenerator:
     case Term.Select(base, fieldInfo) =>
       genSelect(base, fieldInfo)
     case Term.Match(scrutinee, cases) =>
-      genMatch(scrutinee, cases)
+      genMatch(scrutinee, cases, t.tpe)
     case _ => assert(false, s"Don't know how to translate this term: $t")
 
   /** Generate code for a pattern.
@@ -686,11 +687,18 @@ object CodeGenerator:
         val localBinderInfo = BinderInfo.Sym(binder, localSym)
         (bindInstr :: patInstrs, localBinderInfo :: patBinderInfos)
       case Pattern.EnumVariant(constructor, typeArgs, enumSym, fields) =>
-        val localSym = Symbol.fresh(constructor.name)
-        val valType = translateType(pat.tpe)
-        emitLocal(localSym, valType)
-        val setLocalInstr = Instruction.LocalSet(localSym)
         val StructInfo(structSym, fieldMap) = createStructType(constructor, typeArgs)
+        val localSym = Symbol.fresh(constructor.name)
+        val valType = ValType.TypedRef(structSym)
+        emitLocal(localSym, valType)
+        val setLocalInstrs =
+          enumSym match
+            case None => List(Instruction.LocalSet(localSym))
+            case Some(_) =>
+              List(
+                Instruction.RefCast(structSym),
+                Instruction.LocalSet(localSym),
+              )
         val fieldResults = (constructor.info.fields `zip` fields).map: (fieldInfo, field) =>
           val (instrs, binders) = genPatternExtractor(field)
           val fieldName = fieldInfo.name
@@ -700,22 +708,22 @@ object CodeGenerator:
           )
           (getFieldInstrs ++ instrs, binders)
         val (instrs, binders) = fieldResults.unzip
-        (setLocalInstr :: instrs.flatten, binders.flatten)
+        (setLocalInstrs ++ instrs.flatten, binders.flatten)
 
   /** Generate WASM instructions for checking whether the scrutinee matches the pattern.
    * Assume that the scrutinee is on the top of the stack.
    * It will always consume that scrutinee and enter either `thenBranch` or `elseBranch` based on the result.
    */
-  def genPatternMatcher(pat: Expr.Pattern, thenBranch: List[Instruction], elseBranch: List[Instruction])(using Context): List[Instruction] =
+  def genPatternMatcher(pat: Expr.Pattern, thenBranch: List[Instruction], elseBranch: List[Instruction], resType: ValType)(using Context): List[Instruction] =
     pat match
       case Pattern.Wildcard() => Instruction.Drop :: thenBranch
-      case Pattern.Bind(binder, pat) => genPatternMatcher(pat, thenBranch, elseBranch)
+      case Pattern.Bind(binder, pat) => genPatternMatcher(pat, thenBranch, elseBranch, resType)
       case Pattern.EnumVariant(constructor, typeArgs, enumSym, fields) =>
         val StructInfo(structSym, fieldMap) = createStructType(constructor, typeArgs)
         val localSym = Symbol.fresh(constructor.name)
-        val localType = translateType(pat.tpe)
+        val localType = ValType.TypedRef(structSym)
         emitLocal(localSym, localType)
-        val setLocalInstr = Instruction.LocalSet(localSym)
+        val setLocalInstrs = List(Instruction.LocalSet(localSym))
         val getLocalInstr = Instruction.LocalGet(localSym)
         def go(fields: List[(Expr.FieldInfo, Expr.Pattern)]): List[Instruction] = fields match
           case (fieldInfo, field) :: rest =>
@@ -724,18 +732,32 @@ object CodeGenerator:
               getLocalInstr,
               Instruction.StructGet(structSym, fieldSym),
             )
-            projFieldInstrs ++ genPatternMatcher(field, go(rest), elseBranch)
+            projFieldInstrs ++ genPatternMatcher(field, go(rest), elseBranch, resType)
           case Nil => thenBranch
         val fieldInstrs = go(constructor.info.fields `zip` fields)
         // Skip checking here for now
-        setLocalInstr :: fieldInstrs
+        // setLocalInstrs ++ fieldInstrs
+        enumSym match
+          case None => setLocalInstrs ++ fieldInstrs
+          case Some(_) =>
+            val originalSym = Symbol.fresh("original")
+            emitLocal(originalSym, ValType.AnyRef)
+            val testInstrs = List(Instruction.LocalTee(originalSym), Instruction.RefTest(structSym))
+            val castInstrs = List(Instruction.LocalGet(originalSym), Instruction.RefCast(structSym))
+            val ifInstr = Instruction.If(
+              resType,
+              thenBranch = castInstrs ++ setLocalInstrs ++ fieldInstrs,
+              elseBranch = elseBranch,
+            )
+            testInstrs ++ List(ifInstr)
 
   // def genMatchCase(cas: Expr.MatchCase)(using Context): List[Instruction] =
   //   val (patInstrs, patBinderInfos) = genPatternExtractor(cas.pat)
   //   val bodyInstrs = genTerm(cas.body)(using ctx.withMoreBinderInfos(patBinderInfos))
   //   patInstrs ++ bodyInstrs
 
-  def genMatch(scrutinee: Expr.Term, cases: List[Expr.MatchCase])(using Context): List[Instruction] =
+  def genMatch(scrutinee: Expr.Term, cases: List[Expr.MatchCase], tpe: Expr.Type)(using Context): List[Instruction] =
+    val resType = translateType(tpe)
     val scrutineeInstrs = genTerm(scrutinee)
     val localSym = Symbol.fresh("match_scrutinee")
     val localType = translateType(scrutinee.tpe)
@@ -749,7 +771,7 @@ object CodeGenerator:
         val bodyInstrs = genTerm(cas.body)(using ctx.withMoreBinderInfos(patBinderInfos))
         val thenBranch = getLocalInstrs ++ patInstrs ++ bodyInstrs
         val elseBranch = go(rest)
-        val matcherInstrs = genPatternMatcher(cas.pat, thenBranch, elseBranch)
+        val matcherInstrs = genPatternMatcher(cas.pat, thenBranch, elseBranch, resType)
         getLocalInstrs ++ matcherInstrs
     val caseInstrs = go(cases)
     scrutineeInstrs ++ setLocalInstrs ++ caseInstrs

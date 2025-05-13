@@ -50,6 +50,7 @@ object Wasm:
     case GlobalSet(sym: Symbol)
     case GlobalGet(sym: Symbol)
     case RefCast(typeSym: Symbol)
+    case RefTest(typeSym: Symbol)
     case RefFunc(funcSym: Symbol)
     case RefNull(typeSym: Symbol)
     case RefNullAny
@@ -105,6 +106,7 @@ object Wasm:
       case GlobalSet(sym) => Some(s"global.set ${sym.show}")
       case GlobalGet(sym) => Some(s"global.get ${sym.show}")
       case RefCast(typeSym) => Some(s"ref.cast (ref ${typeSym.show})")
+      case RefTest(typeSym) => Some(s"ref.test (ref ${typeSym.show})")
       case RefFunc(funcSym) => Some(s"ref.func ${funcSym.show}")
       case StructGet(sym, fieldSym) => Some(s"struct.get ${sym.show} ${fieldSym.show}")
       case StructSet(sym, fieldSym) => Some(s"struct.set ${sym.show} ${fieldSym.show}")

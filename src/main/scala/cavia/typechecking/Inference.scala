@@ -132,5 +132,5 @@ object Inference:
       val inst =
         if lb.exists then lb
         else if ub.exists then ub
-        else Definitions.anyType
+        else Definitions.nothingType
       tv.instance = inst

@@ -832,7 +832,8 @@ object TypeChecker:
                 Right:
                   classTypeParams.map:
                     case binder: TypeBinder => 
-                      val tv = Inference.createTypeVar(binder.bound)
+                      val bound = if TypeComparer.checkSubtype(Definitions.anyType, binder.bound) then Type.NoType() else binder.bound
+                      val tv = Inference.createTypeVar(bound)
                       tv
                     case binder: CaptureBinder => CaptureSet.empty
             val outTerm = checkStructInit(classSym, targs, args, expected, t.pos).!!
