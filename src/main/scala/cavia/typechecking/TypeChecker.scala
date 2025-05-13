@@ -609,6 +609,22 @@ object TypeChecker:
       case Pattern.Bind(binder, pat) => binder :: bindersInPattern(pat)
       case Pattern.EnumVariant(_, fields) => fields.flatMap(bindersInPattern)
 
+  def findCommonType(tp1: Type, tp2: Type)(using Context): Option[Type] =
+    if TypeComparer.checkSubtype(tp1, tp2) then
+      Some(tp2)
+    else if TypeComparer.checkSubtype(tp2, tp1) then
+      Some(tp1)
+    else
+      None
+
+  def findCommonTypeAmong(tpes: List[Type])(using Context): Option[Type] = boundary:
+    var result: Type = Definitions.nothingType
+    for tp <- tpes do
+      findCommonType(result, tp) match
+        case Some(tp1) => result = tp1
+        case None => break(None)
+    Some(result)
+
   def checkMatchCase(pat: Syntax.MatchCase, scrutineeType: Type, expected: Type)(using Context): Result[MatchCase] =
     hopefully:
       val pat1 = checkPattern(pat.pat, scrutineeType).!!
@@ -617,10 +633,12 @@ object TypeChecker:
       val body1 = checkTerm(pat.body, expected)(using ctx1).!!
       // Avoid locally-bound binders
       var outCV = body1.cv
+      var outType = body1.tpe
       for binder <- binders.reverse do
         val tm = AvoidLocalBinder(binder.tpe)
         outCV = tm.mapCaptureSet(outCV)
-      MatchCase(pat1, body1).withPosFrom(pat).withTpe(body1.tpe).withCV(outCV)
+        outType = tm.apply(outType)
+      MatchCase(pat1, body1).withPosFrom(pat).withTpe(outType).withCV(outCV)
 
   def checkMatch(scrutinee: Syntax.Term, cases: List[Syntax.MatchCase], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
@@ -631,7 +649,10 @@ object TypeChecker:
       val outType = 
         if expected.exists then 
           expected 
-        else Definitions.anyType  // TODO: compute the union type as the output type
+        else
+          findCommonTypeAmong(cases1.map(_.body.tpe)) match
+            case Some(tp) => tp
+            case None => sorry(TypeError.GeneralError("Cannot find a common upper type for all match cases").withPos(srcPos))
       val outTerm = Term.Match(scrutinee1, cases1).withPos(srcPos).withTpe(outType).withCVFrom(scrutinee1 :: cases1*)
       outTerm
 
