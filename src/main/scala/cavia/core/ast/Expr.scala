@@ -493,7 +493,7 @@ object Expr:
 
   /** Denotation of struct types. */
   case class FieldInfo(name: String, tpe: Type, mutable: Boolean)
-  case class StructInfo(targs: List[TypeBinder | CaptureBinder], variances: List[Variance], fields: List[FieldInfo])
+  case class StructInfo(targs: List[TypeBinder | CaptureBinder], variances: List[Variance], fields: List[FieldInfo], enumSymbol: Option[EnumSymbol] = None)
 
   /** Denotation of enum types. */
   case class EnumInfo(targs: List[TypeBinder | CaptureBinder], variances: List[Variance], variants: List[StructSymbol])

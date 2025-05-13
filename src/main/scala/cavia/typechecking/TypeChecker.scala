@@ -1507,10 +1507,12 @@ object TypeChecker:
         case d: Syntax.Definition.EnumDef =>
           val tparams = checkTypeParamList(d.targs.map(_.toTypeParam)).!!
           val variances = d.targs.map(_.variance).map(getVariance)
+          val enumSymbol = EnumSymbol(d.name, null, m).withPosFrom(d)
           val variantSymbols = d.variants.map: caseDef =>
-            StructSymbol(caseDef.name, StructInfo(tparams, variances, Nil), m)
+            StructSymbol(caseDef.name, StructInfo(tparams, variances, Nil, Some(enumSymbol)), m)
           val info = EnumInfo(tparams, variances, variantSymbols)
-          EnumSymbol(d.name, info, m).withPosFrom(d)
+          enumSymbol.info = info
+          enumSymbol
 
   /** Elaborate symbols with their declared types. */
   def elaborateType(d: Syntax.Definition, sym: Symbol, allSyms: List[Symbol])(using Context): Result[Unit] =
