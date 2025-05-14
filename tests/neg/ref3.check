@@ -1,4 +1,4 @@
 8 |   swap1(() => () => a, () => () => b)
   |         ^^^^^^^^^^^^^
 
-    Type mismatch: expected () -> () ->{cap} Ref^{cap}, but got () ->{} () ->{a} Ref^{a}
+    ERROR: Type mismatch, expected () -> () ->{cap} Ref^{cap}, but got () ->{} () ->{a} Ref^{a}

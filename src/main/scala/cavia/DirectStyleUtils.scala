@@ -14,5 +14,5 @@ extension [E, X](mx: Either[E, X])
     case Left(_) => other
     case Right(value) => Right(value)
 
-def sorry[E, X](err: E)(using l: Label[Either[E, X]]): X = Left(err).!!
+def sorry[E, X](err: E)(using l: Label[Either[List[E], X]]): X = Left(List(err)).!!
   

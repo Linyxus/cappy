@@ -1,4 +1,4 @@
 4 |   val t2 = f(42, f)
   |                  ^
 
-    Type mismatch: expected i64, but got (a: i64, b: i64) ->{} i64
+    ERROR: Type mismatch, expected i64, but got (a: i64, b: i64) ->{} i64

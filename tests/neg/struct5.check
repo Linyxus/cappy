@@ -1,14 +1,14 @@
 12 |     sep1(t3, p)
    |     ^^^^^^^^^^^
 
-     Separation error: {p} and {t3} are not separated, where
+     ERROR(separation): {p} and {t3} are not separated, where
 
 12 |     sep1(t3, p)
    |              ^
 
-     {p} comes from this argument
+     ... {p} comes from this argument
 
 12 |     sep1(t3, p)
    |          ^^
 
-     and {t3} comes from this argument
+     ... and {t3} comes from this argument

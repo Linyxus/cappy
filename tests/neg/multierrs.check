@@ -1,0 +1,29 @@
+4 |   sep(a, a)
+  |   ^^^^^^^^^
+
+    ERROR(separation): {a} and {a} are not separated, where
+
+4 |   sep(a, a)
+  |          ^
+
+    ... {a} comes from this argument
+
+4 |   sep(a, a)
+  |       ^
+
+    ... and {a} comes from this argument
+
+7 |   sep(b, b)
+  |   ^^^^^^^^^
+
+    ERROR(separation): {b} and {b} are not separated, where
+
+7 |   sep(b, b)
+  |          ^
+
+    ... {b} comes from this argument
+
+7 |   sep(b, b)
+  |       ^
+
+    ... and {b} comes from this argument

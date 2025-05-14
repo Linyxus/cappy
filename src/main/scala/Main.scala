@@ -35,7 +35,8 @@ import java.nio.file.*
       val mods = TypeChecker.checkModules(parsedModules)(using TypeChecker.Context.empty)
       mods match
         case Left(err) => 
-          println(err.asMessage.show)
+          err.foreach: e =>
+            println(e.asMessage.show)
         case Right(mods) =>
           mods.init.foreach: mod =>  // Don't print the stdlib
             println(ExprPrinter.show(mod)(using TypeChecker.Context.empty))

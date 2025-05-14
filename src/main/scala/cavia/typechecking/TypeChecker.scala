@@ -8,8 +8,8 @@ import ast.*
 import reporting.*
 
 object TypeChecker:
-  import Expr.*
   import Syntax.AccessMode
+  import Expr.*
   import Binder.*
   import Inference.*
 
@@ -75,24 +75,24 @@ object TypeChecker:
     case GeneralError(msg: String)
 
     def show: String = this match
-      case UnboundVariable(name, addenda) => s"Unbound variable: $name$addenda"
-      case TypeMismatch(expected, actual) => s"Type mismatch: expected $expected, but got $actual"
-      case LeakingLocalBinder(tp) => s"Leaking local binder: $tp"
-      case SeparationError(cs1, cs2) => s"Separation error: $cs1 and $cs2 are not separated"
+      case UnboundVariable(name, addenda) => s"ERROR: $name$addenda"
+      case TypeMismatch(expected, actual) => s"ERROR: Type mismatch, expected $expected, but got $actual"
+      case LeakingLocalBinder(tp) => s"ERROR: Leaking local binder: $tp"
+      case SeparationError(cs1, cs2) => s"ERROR: Separation error, $cs1 and $cs2 are not separated"
       case GeneralError(msg) => msg
-      case ConsumedError(cs, consumedPos) => s"This uses a consumed capability: $cs"
+      case ConsumedError(cs, consumedPos) => s"ERROR: This uses a consumed capability: $cs"
 
     def asMessage: Message = this match
       case SeparationError(entity1, entity2) =>
         val parts = List(
-          MessagePart(List(s"Separation error: ${entity1.entity} and ${entity2.entity} are not separated, where"), this.pos),
-          MessagePart(List(s"${entity1.entity} comes from ${entity1.provenance}"), entity1.provenancePos),
-          MessagePart(List(s"and ${entity2.entity} comes from ${entity2.provenance}"), entity2.provenancePos),
+          MessagePart(List(s"ERROR(separation): ${entity1.entity} and ${entity2.entity} are not separated, where"), this.pos),
+          MessagePart(List(s"... ${entity1.entity} comes from ${entity1.provenance}"), entity1.provenancePos),
+          MessagePart(List(s"... and ${entity2.entity} comes from ${entity2.provenance}"), entity2.provenancePos),
         )
         Message(parts)
       case ConsumedError(cs, consumedPos) =>
         val parts = List(
-          MessagePart(List(s"This uses a consumed capability $cs"), pos),
+          MessagePart(List(s"ERROR(consume): This uses a consumed capability $cs"), pos),
         ) ++ consumedPos.map: pos =>
           MessagePart(List("... which was consumed here"), pos)
         Message(parts)
@@ -103,7 +103,7 @@ object TypeChecker:
   def withinNewInferenceScope[T](body: Context ?=> T)(using Context): T =
     body(using ctx.newInferenceScope)
   
-  type Result[+A] = Either[TypeError, A]
+  type Result[+A] = Either[List[TypeError], A]
 
   def lookupBinder(name: String)(using ctx: Context): Option[(Binder, Int)] =
     ctx.binders.zipWithIndex.find((binder, _) => binder.name == name).map: (bd, idx) =>
@@ -157,7 +157,7 @@ object TypeChecker:
           if TypeComparer.checkSubcapture(cs, CaptureSet.empty) then
             Right(tpe1)
           else
-            Left(TypeError.GeneralError(s"Type parameter ${param.name} has a non-pure bound type: ${tpe1.show}, consider boxing it").withPos(param.pos))
+            Left(List(TypeError.GeneralError(s"Type parameter ${param.name} has a non-pure bound type: ${tpe1.show}, consider boxing it").withPos(param.pos)))
     bound.map: tpe =>
       val binder: TypeBinder = TypeBinder(param.name, tpe)
       binder.maybeWithPosFrom(param)
@@ -186,8 +186,8 @@ object TypeChecker:
     else lookupAll(ref.name) match
       case Some(sym: DefSymbol) => Right(CaptureRef.Ref(Type.Var(Term.SymbolRef(sym))).maybeWithPosFrom(ref))
       case Some((binder: (Binder.CaptureBinder | Binder.TermBinder), idx)) => Right(CaptureRef.Ref(Type.Var(Term.BinderRef(idx))).maybeWithPosFrom(ref))
-      case Some((binder: Binder.TypeBinder, idx)) => Left(TypeError.UnboundVariable(ref.name, s"I found a type name, but was looking for either a term or capture name").withPos(ref.pos))
-      case _ => Left(TypeError.UnboundVariable(ref.name).withPos(ref.pos))
+      case Some((binder: Binder.TypeBinder, idx)) => Left(List(TypeError.UnboundVariable(ref.name, s"I found a type name, but was looking for either a term or capture name").withPos(ref.pos)))
+      case _ => Left(List(TypeError.UnboundVariable(ref.name).withPos(ref.pos)))
 
   def checkCaptureSet(captureSet: Syntax.CaptureSet)(using ctx: Context): Result[CaptureSet] =
     val checkElems: List[Result[QualifiedRef]] = captureSet.elems.map(checkCaptureRef)
@@ -265,12 +265,12 @@ object TypeChecker:
     case Syntax.Type.Ident(name) => 
       def tryBaseType: Result[Type] = findBaseType(name) match
         case Some(baseType) => Right(baseType.maybeWithPosFrom(tpe))
-        case None => Left(TypeError.UnboundVariable(name).withPos(tpe.pos))
+        case None => Left(List(TypeError.UnboundVariable(name).withPos(tpe.pos)))
       def tryBinder: Result[Type] = lookupBinder(name) match
         case Some((binder: Binder.TypeBinder, idx)) => Right(Type.BinderRef(idx).withKind(TypeKind.Star).maybeWithPosFrom(tpe))
         case Some((binder: Binder, idx)) => 
-          Left(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a type").maybeWithPosFrom(tpe))
-        case None => Left(TypeError.UnboundVariable(name).maybeWithPosFrom(tpe))
+          Left(List(TypeError.UnboundVariable(name, s"I found a ${binder.kindStr} name, but was looking for a type").maybeWithPosFrom(tpe)))
+        case None => Left(List(TypeError.UnboundVariable(name).maybeWithPosFrom(tpe)))
       def trySymbol: Result[Type] = lookupSymbol(name) match
         case Some(sym: StructSymbol) => 
           val argVariances = sym.info.variances
@@ -287,7 +287,7 @@ object TypeChecker:
           val argVariances = sym.info.variances
           val kind = if argVariances.isEmpty then TypeKind.Star else TypeKind.Arrow(argVariances, TypeKind.Star)
           Right(Type.SymbolRef(sym).withKind(kind).maybeWithPosFrom(tpe))
-        case _ => Left(TypeError.UnboundVariable(name).maybeWithPosFrom(tpe))
+        case _ => Left(List(TypeError.UnboundVariable(name).maybeWithPosFrom(tpe)))
       tryBaseType || tryBinder || trySymbol
     case Syntax.Type.Arrow(params, result) =>
       def go(ps: List[Syntax.TermParam], acc: List[TermBinder])(using Context): Result[List[TermBinder]] = ps match
@@ -704,7 +704,8 @@ object TypeChecker:
         else
           findCommonTypeAmong(cases1.map(_.tpe)) match
             case Some(tp) => tp
-            case None => sorry(TypeError.GeneralError("Cannot find a common upper type for all match cases").withPos(srcPos))
+            case None => 
+              sorry(TypeError.GeneralError("Cannot find a common upper type for all match cases").withPos(srcPos))
       val outTerm = Term.Match(scrutinee1, cases1).withPos(srcPos).withTpe(outType).withCVFrom(scrutinee1 :: cases1*)
       outTerm
 
@@ -1037,7 +1038,7 @@ object TypeChecker:
         val primOp = PrimitiveOp.BoolOr
         checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
       case op =>
-        Left(TypeError.GeneralError(s"Unsupported infix operation: $op").withPos(srcPos))
+        Left(List(TypeError.GeneralError(s"Unsupported infix operation: $op").withPos(srcPos)))
 
   def checkPrefix(op: Syntax.PrefixOp, term: Syntax.Term, expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     op match
@@ -1201,7 +1202,7 @@ object TypeChecker:
       case (arg :: args, formal :: formals) =>
         checkTerm(arg, expected = Type.Base(formal).withKind(TypeKind.Star)).flatMap: arg1 =>
           go(args, formals, arg1 :: acc)
-      case _ => Left(TypeError.GeneralError(s"Argument number mismatch for primitive operation, expected ${formals.length}, but got ${args.length}").withPos(pos))
+      case _ => Left(List(TypeError.GeneralError(s"Argument number mismatch for primitive operation, expected ${formals.length}, but got ${args.length}").withPos(pos)))
     go(args, formals, Nil).map: args1 =>
       Term.PrimOp(op, Nil, args1).withPos(pos).withTpe(Type.Base(resType).withKind(TypeKind.Star)).withCVFrom(args1*)
 
@@ -1495,7 +1496,7 @@ object TypeChecker:
       case Nil => 
         d.resultType match
           case None => 
-            if requireExplictType then Left(TypeError.GeneralError("Explicit type annotation is required for top-level definitions").withPos(d.pos))
+            if requireExplictType then Left(List(TypeError.GeneralError("Explicit type annotation is required for top-level definitions").withPos(d.pos)))
             else Right(Definitions.anyType)
           case Some(resultType) => checkType(resultType)
       case (ps: Syntax.TermParamList) :: pss =>
@@ -1514,7 +1515,7 @@ object TypeChecker:
 
   def extractValType(d: Syntax.Definition.ValDef)(using Context): Result[Type] = 
     d.tpe match
-      case None => Left(TypeError.GeneralError("Explicit type annotation is required for top-level definitions").withPos(d.pos))
+      case None => Left(List(TypeError.GeneralError("Explicit type annotation is required for top-level definitions").withPos(d.pos)))
       case Some(expected) => checkType(expected)
 
   def extractDefnType(d: Syntax.ValueDef)(using Context): Result[Type] = d match
@@ -1573,6 +1574,17 @@ object TypeChecker:
           sym.info = ExtensionInfo(typeArgs, selfArgBinder.tpe, methodInfos)
         case _ => // do nothing
 
+  def mergeResults[A](mxs: List[Result[A]]): Result[List[A]] =
+    var errors: List[TypeError] = Nil
+    var results: List[A] = Nil
+    for mx <- mxs do mx match
+      case Left(es1) => errors = errors ++ es1
+      case Right(x) => results = results :+ x
+    if errors.isEmpty then
+      Right(results)
+    else
+      Left(errors)
+
   def checkModules(modules: List[Syntax.Module])(using Context): Result[List[Module]] =
     hopefully:
       // Create all modules
@@ -1592,42 +1604,49 @@ object TypeChecker:
       (modules `zip` mods `zip` modSyms).foreach: 
         case ((m0, m), syms) =>
           // Typecheck struct and type definitions
-          val typeDefs: List[Definition] = (m0.defs `zip` syms).collect:
+          val typeDefResults: List[Result[Definition]] = (m0.defs `zip` syms).collect:
             case (d: Syntax.Definition.StructDef, sym: StructSymbol) => 
-              val info1 = checkStructDef(d)(using ctxWithAllSyms).!!
-              sym.info = info1
-              Definition.StructDef(sym).withPosFrom(d)
+              hopefully:
+                val info1 = checkStructDef(d)(using ctxWithAllSyms).!!
+                sym.info = info1
+                Definition.StructDef(sym).withPosFrom(d)
             case (d: Syntax.Definition.TypeDef, sym: TypeDefSymbol) =>
-              val info1 = checkTypeDef(d)(using ctxWithAllSyms).!!
-              sym.info = info1
-              Definition.TypeDef(sym).withPosFrom(d)
+              hopefully:
+                val info1 = checkTypeDef(d)(using ctxWithAllSyms).!!
+                sym.info = info1
+                Definition.TypeDef(sym).withPosFrom(d)
             case (d: Syntax.Definition.EnumDef, sym: EnumSymbol) =>
-              // TODO: typecheck enum definitions
-              checkEnumDef(d, sym)(using ctxWithAllSyms).!!
-              Definition.EnumDef(sym).withPosFrom(d)
+              hopefully:
+                checkEnumDef(d, sym)(using ctxWithAllSyms).!!
+                Definition.EnumDef(sym).withPosFrom(d)
           // Done
+          val typeDefs = mergeResults(typeDefResults).!!
           m.defns = typeDefs
       // Typecheck the rest of the definitions in each module
       (modules `zip` mods `zip` modSyms).foreach: 
         case ((m0, m), syms) =>
           // Typecheck extension definitions
-          val extensionDefs: List[Definition] = (m0.defs `zip` syms).collect:
+          val extensionDefsResults: List[Result[Definition]] = (m0.defs `zip` syms).collect:
             case (d: Syntax.Definition.ExtensionDef, sym: ExtensionSymbol) =>
-              val info1 = checkExtensionDef(d, sym)(using ctxWithAllSyms).!!
-              sym.info = info1
-              Definition.ExtensionDef(sym).withPosFrom(d)
+              hopefully:
+                val info1 = checkExtensionDef(d, sym)(using ctxWithAllSyms).!!
+                sym.info = info1
+                Definition.ExtensionDef(sym).withPosFrom(d)
           // Typecheck value definitions, i.e. `val` and `def`
-          val valueDefs: List[Definition] = (m0.defs `zip` syms).collect:
+          val valueDefsResults: List[Result[Definition]] = (m0.defs `zip` syms).collect:
             case (d: Syntax.Definition.ValDef, sym: DefSymbol) =>
-              val (bd, expr) = checkDef(d)(using ctxWithAllSyms).!!
-              if !d.tpe.isDefined then
-                sym.tpe = expr.tpe
-              Definition.ValDef(sym, expr).withPosFrom(d)
+              hopefully:
+                val (bd, expr) = checkDef(d)(using ctxWithAllSyms).!!
+                if !d.tpe.isDefined then
+                  sym.tpe = expr.tpe
+                Definition.ValDef(sym, expr).withPosFrom(d)
             case (d: Syntax.Definition.DefDef, sym: DefSymbol) =>
-              val (bd, expr) = checkDef(d)(using ctxWithAllSyms).!!
-              Definition.ValDef(sym, expr).withPosFrom(d)
+              hopefully:
+                val (bd, expr) = checkDef(d)(using ctxWithAllSyms).!!
+                Definition.ValDef(sym, expr).withPosFrom(d)
+          val moreDefs = mergeResults(extensionDefsResults ++ valueDefsResults).!!
           // Done
-          val allDefs = m.defns ++ extensionDefs ++ valueDefs
+          val allDefs = m.defns ++ moreDefs
           m.defns = allDefs
       // Return all typechecked modules
       mods
@@ -1637,118 +1656,6 @@ object TypeChecker:
       case Syntax.ModuleName.Root() => "<root>"
       case Syntax.ModuleName.Qualified(Syntax.ModuleName.Root(), name) => name
       case _ => assert(false, "Qualified module names are not yet supported")
-
-  // def checkModule(module: Syntax.Module)(using Context): Result[Module] =
-  //   val defns = module.defs
-  //   val mod = Expr.Module(name = getModuleName(module.name), Nil)
-  //   def hasDuplicatedName: Boolean =
-  //     val names = defns.map(_.name)
-  //     names.distinct.length != names.length
-  //   if hasDuplicatedName then
-  //     Left(TypeError.GeneralError("Duplicated definition name").withPos(defns.head.pos))
-  //   else
-  //     hopefully:
-  //       // Create symbols for all definitions
-  //       val syms = defns.map: defn =>
-  //         defn match
-  //           case defn: (Syntax.Definition.ValDef | Syntax.Definition.DefDef) => 
-  //             //val tpe = extractDefnType(defn).!!
-  //             DefSymbol(defn.name, Definitions.anyType, mod).withPosFrom(defn)
-  //           case sd: Syntax.Definition.StructDef =>
-  //             val tparams = checkTypeParamList(sd.targs.map(_.toTypeParam)).!!
-  //             val variances = sd.targs.map(_.variance).map(getVariance)
-  //             StructSymbol(defn.name, StructInfo(tparams, variances, Nil), mod).withPosFrom(defn)
-  //           case ed: Syntax.Definition.ExtensionDef =>
-  //             val tparams = checkTypeParamList(ed.typeArgs).!!
-  //             val info = ExtensionInfo(tparams, Definitions.anyType, Nil)
-  //             ExtensionSymbol(defn.name, info, mod).withPosFrom(ed)
-  //           case td: Syntax.Definition.TypeDef =>
-  //             val tparams = checkTypeParamList(td.targs.map(_.toTypeParam)).!!
-  //             val variances = td.targs.map(_.variance).map(getVariance)
-  //             TypeDefSymbol(defn.name, TypeDefInfo(tparams, variances, Type.NoType()), mod).withPosFrom(td)
-  //       def checkDefns(defns: List[(DefSymbol, Syntax.ValueDef)]): Result[List[Expr.Definition]] = defns match
-  //         case Nil => Right(Nil)
-  //         case (sym, defn) :: defns =>
-  //           val ctx1 = 
-  //             if defn.isInstanceOf[Syntax.Definition.ValDef] then
-  //               // val defs may only depend on previous definitions
-  //               ctx.addSymbols(syms.takeWhile(_.name != defn.name))
-  //             else
-  //               ctx.addSymbols(syms)
-  //           checkDef(defn)(using ctx1).flatMap: (bd, expr) =>
-  //             val d = Definition.ValDef(sym, expr)
-  //             defn match
-  //               case defn: Syntax.Definition.ValDef if !defn.tpe.isDefined =>
-  //                 sym.tpe = expr.tpe
-  //               case _ =>
-  //             checkDefns(defns).map: defns1 =>
-  //               d :: defns1
-  //       def checkExtensionDef(extSym: ExtensionSymbol, extDefn: Syntax.Definition.ExtensionDef)(using Context): Result[Definition.ExtensionDef] =
-  //         hopefully:
-  //           val ctx1 = ctx.addSymbols(syms).extend(extSym.info.typeParams)
-  //           val methodInfos = extDefn.methods.map: method =>
-  //             val method1 =
-  //               method.copy(paramss = Syntax.TermParamList(List(extDefn.selfArg)) :: method.paramss).withPosFrom(method)
-  //             val (bd, expr) = checkDef(method1)(using ctx1).!!
-  //             ExtensionMethod(method.name, bd.tpe, expr)
-  //           val newInfo = extSym.info.copy(methods = methodInfos)
-  //           extSym.info = newInfo
-  //           Definition.ExtensionDef(extSym)
-  //       // Typecheck struct definitions
-  //       val structDefTodos: List[(StructSymbol, Syntax.Definition.StructDef)] = (syms `zip` defns).flatMap:
-  //         case (sym: StructSymbol, defn: Syntax.Definition.StructDef) => Some((sym, defn))
-  //         case _ => None
-  //       val structDefns: List[Definition.StructDef] = structDefTodos.map: (sym, defn) =>
-  //         val ctx1 = ctx.addSymbols(syms)
-  //         val info = checkStructDef(defn)(using ctx1).!!
-  //         sym.info = info
-  //         Definition.StructDef(sym)
-  //       val allClassSyms = structDefns.map(_.sym)
-  //       var ctxWithClasses = ctx.addSymbols(allClassSyms)
-  //       // Typecheck type definitions
-  //       val typeDefTodos: List[(TypeDefSymbol, Syntax.Definition.TypeDef)] = (syms `zip` defns).flatMap:
-  //         case (sym: TypeDefSymbol, defn: Syntax.Definition.TypeDef) => Some((sym, defn))
-  //         case _ => None
-  //       val typeDefns: List[Definition.TypeDef] = typeDefTodos.map: (sym, defn) =>
-  //         val ctx1 = ctx.addSymbols(syms)
-  //         val info = checkTypeDef(defn)(using ctx1).!!
-  //         sym.info = info
-  //         Definition.TypeDef(sym)
-  //       val allTypeDefSyms = typeDefns.map(_.sym)
-  //       ctxWithClasses = ctxWithClasses.addSymbols(allTypeDefSyms)
-  //       // Assign declared types to value definitions and extension definitions
-  //       for ((sym, defn) <- syms `zip` defns) do
-  //         (sym, defn) match
-  //           case (sym: DefSymbol, defn: Syntax.Definition.ValDef) =>
-  //             val defnType = (extractDefnType(defn)(using ctxWithClasses) || Right(Definitions.anyType)).!!
-  //             sym.tpe = defnType
-  //           case (sym: DefSymbol, defn: Syntax.Definition.DefDef) =>
-  //             val defnType = extractDefnType(defn)(using ctxWithClasses).!!
-  //             sym.tpe = defnType
-  //           case (sym: ExtensionSymbol, extDefn: Syntax.Definition.ExtensionDef) =>
-  //             val typeArgs = sym.info.typeParams
-  //             val ctx1 = ctxWithClasses.extend(typeArgs)
-  //             val selfArgBinder = checkTermParam(extDefn.selfArg)(using ctx1).!!
-  //             val extMethods = extDefn.methods.map: defn =>
-  //               val defn1 = defn.copy(paramss = Syntax.TermParamList(List(extDefn.selfArg)) :: defn.paramss).withPosFrom(defn)
-  //               val methodType = extractDefnType(defn1)(using ctx1).!!
-  //               ExtensionMethod(defn1.name, methodType, body = null)
-  //             sym.info = ExtensionInfo(typeArgs, selfArgBinder.tpe, extMethods)
-  //           case _ =>
-  //       // Typecheck extension definitions
-  //       val extensionDefTodos: List[(ExtensionSymbol, Syntax.Definition.ExtensionDef)] = (syms `zip` defns).flatMap:
-  //         case (sym: ExtensionSymbol, defn: Syntax.Definition.ExtensionDef) => Some((sym, defn))
-  //         case _ => None
-  //       val extensionDefns = extensionDefTodos.map: (sym, defn) =>
-  //         checkExtensionDef(sym, defn)(using ctxWithClasses).!!
-  //       // Typecheck value definitions
-  //       val valueDefTodos: List[(DefSymbol, Syntax.ValueDef)] = (syms `zip` defns).flatMap:
-  //         case (sym: DefSymbol, defn: Syntax.ValueDef) => Some((sym, defn))
-  //         case _ => None
-  //       val valueDefns = checkDefns(valueDefTodos).!!
-  //       // Done
-  //       mod.defns = structDefns ++ typeDefns ++ extensionDefns ++ valueDefns
-  //       mod
 
   def isStablePath(t: Term): Boolean = t match
     case Term.Select(base, fieldInfo) => isStablePath(base) && !fieldInfo.mutable
@@ -1802,7 +1709,7 @@ object TypeChecker:
   def checkSelect(base: Syntax.Term, field: String, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
       val base1 = checkTerm(base).!!
-      def fail: Result[Nothing] = Left(TypeError.TypeMismatch(s"a type with the field $field", base1.tpe.show).withPosFrom(base))
+      def fail: Result[Nothing] = Left(List(TypeError.TypeMismatch(s"a type with the field $field", base1.tpe.show).withPosFrom(base)))
       def tryPrimArray: Result[Term] =
         hopefully:
           base1.tpe.simplify match
