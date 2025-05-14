@@ -628,13 +628,42 @@ object TypeChecker:
       case Pattern.Bind(binder, pat) => binder :: bindersInPattern(pat)
       case Pattern.EnumVariant(_, _, _, fields) => fields.flatMap(bindersInPattern)
 
+  /** Given `tp1` and `tp2` who are not subtypes of each other, compute their least upper bound. */
+  def computeLub(tp1: Type, tp2: Type)(using Context): Option[Type] = //trace(s"computeLub(${tp1.show}, ${tp2.show})"):
+    def trySame: Option[Type] = if tp1 == tp2 then Some(tp1) else None
+    def tryStripCaptures: Option[Type] =
+      val tp11 = tp1.stripCaptures
+      val tp21 = tp2.stripCaptures
+      if !((tp11 eq tp1) && (tp21 eq tp21)) then
+        computeLub(tp11, tp21).map: core => 
+          tp1.derivedCapturing(core, tp1.isReadOnly || tp2.isReadOnly, tp1.captureSet ++ tp2.captureSet)
+      else None
+    def tryStripRefinements: Option[Type] =
+      val tp11 = tp1.stripRefinements
+      val tp21 = tp2.stripRefinements
+      if !((tp11 eq tp1) && (tp21 eq tp2)) then
+        computeLub(tp11, tp21)
+      else None
+    def tryEnum: Option[Type] =
+      (tp1, tp2) match
+        case (AppliedEnumType(enumSym1, targs1), AppliedStructType(structSym2, targs2)) if structSym2.info.enumSymbol == Some(enumSym1) && targs1 == targs2 =>
+          Some(tp1)
+        case (AppliedStructType(structSym1, targs1), AppliedEnumType(enumSym2, targs2)) if structSym1.info.enumSymbol == Some(enumSym2) && targs1 == targs2 =>
+          Some(tp2)
+        case (AppliedStructType(structSym1, targs1), AppliedStructType(structSym2, targs2)) if targs1 == targs2 =>
+          if structSym1.info.enumSymbol.isDefined && structSym1.info.enumSymbol == structSym2.info.enumSymbol then
+            Some(AppliedEnumType(structSym1.info.enumSymbol.get, targs1))
+          else None
+        case _ => None
+    trySame `orElse` tryStripCaptures `orElse` tryStripRefinements `orElse` tryEnum
+
   def findCommonType(tp1: Type, tp2: Type)(using Context): Option[Type] =
     if TypeComparer.checkSubtype(tp1, tp2) then
       Some(tp2)
     else if TypeComparer.checkSubtype(tp2, tp1) then
       Some(tp1)
     else
-      None
+      computeLub(tp1, tp2)
 
   def findCommonTypeAmong(tpes: List[Type])(using Context): Option[Type] = boundary:
     var result: Type = Definitions.nothingType
@@ -653,7 +682,7 @@ object TypeChecker:
         val newTpe = oldTpe.shift(idx)
         oldBinder.copy(tpe = newTpe).withPosFrom(oldBinder)
       val ctx1 = ctx.extend(binders1)
-      val body1 = checkTerm(pat.body, expected)(using ctx1).!!
+      val body1 = checkTerm(pat.body)(using ctx1).!!
       // Avoid locally-bound binders
       var outCV = body1.cv
       var outType = body1.tpe
@@ -673,7 +702,7 @@ object TypeChecker:
         if expected.exists then 
           expected 
         else
-          findCommonTypeAmong(cases1.map(_.body.tpe)) match
+          findCommonTypeAmong(cases1.map(_.tpe)) match
             case Some(tp) => tp
             case None => sorry(TypeError.GeneralError("Cannot find a common upper type for all match cases").withPos(srcPos))
       val outTerm = Term.Match(scrutinee1, cases1).withPos(srcPos).withTpe(outType).withCVFrom(scrutinee1 :: cases1*)
@@ -904,9 +933,11 @@ object TypeChecker:
         case None => Definitions.unitType
       val cond1 = checkTerm(cond, expected = Definitions.boolType).!!
       val thenBranch1 = checkTerm(thenBranch, expected = expected1).!!
-      val expected2 = if expected1.exists then expected1 else thenBranch1.tpe
-      val elseBranch1 = checkTerm(elseBranch, expected = expected2).!!
-      val finalTpe = thenBranch1.tpe
+      //val expected2 = if expected1.exists then expected1 else thenBranch1.tpe
+      val elseBranch1 = checkTerm(elseBranch, expected = expected1).!!
+      val finalTpe = findCommonType(thenBranch1.tpe, elseBranch1.tpe) match
+        case Some(tpe) => tpe
+        case None => sorry(TypeError.GeneralError("Cannot find a common type for the `then` and `else` branches").withPos(srcPos))
       // TODO: tighten the screws of if typing
       // We probably need to find a union type
       Term.If(cond1, thenBranch1, elseBranch1).withPos(srcPos).withTpe(finalTpe).withCVFrom(cond1, thenBranch1, elseBranch1)

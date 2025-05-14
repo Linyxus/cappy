@@ -870,8 +870,8 @@ object CodeGenerator:
         val funcSym = Symbol.fresh(sym.name)
         val workerSym = Symbol.fresh(s"worker_${sym.name}")
         emitElemDeclare(ExportKind.Func, workerSym)
-        genModuleFunction(sym.tpe, funcSym, Some(workerSym), body.asInstanceOf[Expr.Term])
         ctx.defInfos += (sym -> DefInfo.FuncDef(funcSym, workerSym))
+        genModuleFunction(sym.tpe, funcSym, Some(workerSym), body.asInstanceOf[Expr.Term])
         DefInfo.FuncDef(funcSym, workerSym)
       case _ => 
         assert(false, "this is absurd: expecting a function symbol, but got a global value")
