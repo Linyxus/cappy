@@ -8,12 +8,11 @@ import mutable.ArrayBuffer
 
 import core.*
 import ast.{Expr, Wasm}
-import Expr.Term
+import Expr.{Term, Pattern}
 import Wasm.*
 import typechecking.*
 import Expr.{PrimitiveOp, Definition, ArrayPrimitiveOp}
 import reporting.trace
-import cavia.core.ast.Expr.Pattern
 
 object CodeGenerator:
   case class ClosureTypeInfo(funcTypeSym: Symbol, closTypeSym: Symbol)
@@ -781,11 +780,6 @@ object CodeGenerator:
             )
             testInstrs ++ List(ifInstr)
 
-  // def genMatchCase(cas: Expr.MatchCase)(using Context): List[Instruction] =
-  //   val (patInstrs, patBinderInfos) = genPatternExtractor(cas.pat)
-  //   val bodyInstrs = genTerm(cas.body)(using ctx.withMoreBinderInfos(patBinderInfos))
-  //   patInstrs ++ bodyInstrs
-
   def genMatch(scrutinee: Expr.Term, cases: List[Expr.MatchCase], tpe: Expr.Type)(using Context): List[Instruction] =
     val resType = translateType(tpe)
     val scrutineeInstrs = genTerm(scrutinee)
@@ -826,20 +820,6 @@ object CodeGenerator:
         val getFieldInstrs = List(Instruction.StructGet(structSym, fieldSym))
         baseInstrs ++ getFieldInstrs
       case _ => assert(false, "impossible, otherwise a bug in the typechecker")
-
-  // def genStructDef(sym: Expr.StructSymbol)(using Context): TypeInfo =
-  //   val structSym = Symbol.fresh(sym.name)
-  //   val info = sym.info
-  //   val fields = info.fields.map: field =>
-  //     val Expr.FieldInfo(name, tpe, mutable) = field
-  //     val fieldSym = Symbol.fresh(name)
-  //     val fieldType = translateType(tpe)
-  //     FieldType(fieldSym, fieldType, mutable)
-  //   val structType = StructType(fields, subClassOf = None)
-  //   val typeDef = TypeDef(structSym, structType)
-  //   val nameMap = Map.from((info.fields `zip` fields).map((s, t) => (s.name, t.sym)))
-  //   emitType(typeDef)
-  //   TypeInfo.StructDef(structSym, nameMap)
 
   def translateTypeArgs(targs: List[Expr.Type | Expr.CaptureSet])(using Context): SpecSig =
     val valTypes = targs.flatMap:
