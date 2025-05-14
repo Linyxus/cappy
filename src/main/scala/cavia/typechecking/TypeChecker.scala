@@ -1452,7 +1452,7 @@ object TypeChecker:
         (bd.asInstanceOf[TermBinder], expr1)
     case Syntax.Definition.DefDef(name, _, paramss, resultType, expr) => 
       hopefully:
-        def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): Result[Term] = pss match
+        def go(pss: List[Syntax.TermParamList | Syntax.TypeParamList], isInitClause: Boolean = false)(using Context): Result[Term] = pss match
           case Nil => 
             val expectedBodyType = resultType match
               case None => Type.NoType()
@@ -1491,12 +1491,19 @@ object TypeChecker:
             checkTermAbstraction(params1, checkBody, srcPos = d.pos)
           case Syntax.TypeParamList(params) :: pss =>
             val params1 = checkTypeParamList(params).!!
+            val maybeTypeBinder = params1.find:
+              case binder: TypeBinder => true
+              case _ => false
+            maybeTypeBinder match
+              case Some(binder) if !isInitClause =>
+                sorry(TypeError.GeneralError("Type parameters are only allowed in the first parameter clause").withPos(binder.pos))
+              case _ =>
             def checkBody(using Context): Result[Term] = go(pss)
             checkTypeAbstraction(params1, checkBody, srcPos = d.pos)
         val pss1: List[Syntax.TermParamList | Syntax.TypeParamList] = paramss match
           case Nil => List(Syntax.TypeParamList(Nil))
           case pss => pss
-        val expr1 = go(pss1).!!
+        val expr1 = go(pss1, isInitClause = true).!!
         val bd = TermBinder(name, expr1.tpe, isConsume = false).withPos(d.pos)
         (bd.asInstanceOf[TermBinder], expr1)
 

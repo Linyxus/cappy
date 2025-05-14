@@ -33,8 +33,16 @@ object CodeGenerator:
     /** Retrieve the source binder. */
     val binder: Expr.Binder
 
+  /** Target langauge denotation of top level `val` or `def` definitions. */
   enum DefInfo:
+    /** A non-polymorphic function in the source is translated directly to a function in the target. */
     case FuncDef(funcSym: Symbol, workerSym: Symbol)
+    /** A polymorphic function in the source is translated to a family function in the target, each being specialised to a concrete signature. */
+    case PolyFuncDef(
+      typeParams: List[Expr.Binder],
+      body: Expr.Term,
+      specMap: mutable.Map[SpecSig, FuncDef],
+    )
     case LazyFuncDef(body: Expr.Closure)
     case GlobalDef(globalSym: Symbol)
 
@@ -276,6 +284,16 @@ object CodeGenerator:
         val ctx1 = ctx.withMoreBinderInfos(BinderInfo.Inaccessible(p) :: Nil)
         paramType :: translateParamTypes(ps)(using ctx1)
 
+  def computePolyFuncType(tpe: Expr.Type, typeBinderInfos: List[BinderInfo], isClosure: Boolean = true)(using Context): FuncType =
+    val Expr.Type.TypeArrow(tparams, result) = tpe.strip: @unchecked
+    val paramTypes =
+      if isClosure then
+        ValType.AnyRef :: Nil
+      else
+        Nil
+    val resultType = translateType(result)(using ctx.withMoreBinderInfos(typeBinderInfos))
+    FuncType(paramTypes, Some(resultType))
+
   def computeFuncType(tpe: Expr.Type, isClosure: Boolean = true)(using Context): FuncType = tpe match
     case Expr.Type.TermArrow(params, result) =>
       var paramTypes = translateParamTypes(params)
@@ -435,7 +453,8 @@ object CodeGenerator:
     val isTypeLambda = funType.strip match
       case Expr.Type.TypeArrow(_, _) => true
       case _ => false
-    val funcType = computeFuncType(funType)
+    val funcType = 
+      computeFuncType(funType)
     val closureInfo = createClosureTypes(funcType)
     val funName: String = selfBinder match
       case Some(bd) => bd.name
@@ -614,11 +633,17 @@ object CodeGenerator:
           getSelfInstrs ++ createClosureInstrs
         case DefInfo.GlobalDef(globalSym) =>
           List(Instruction.GlobalGet(globalSym))
+        case _: DefInfo.PolyFuncDef =>
+          assert(false, "Type-polymorphic def cannot be used as first-class value. This is a restriction in the code generator.")
     case Term.Apply(Term.SymbolRef(sym), args) =>
       val DefInfo.FuncDef(funcSym, _) = createModuleFunction(sym)
       val argInstrs = args.flatMap(genTerm)
       val callInstrs = List(Instruction.Call(funcSym))
       argInstrs ++ callInstrs
+    case Term.TypeApply(Term.SymbolRef(sym), typeArgs) if isPolySymbol(sym) =>
+      val DefInfo.FuncDef(funcSym, _) = createPolyModuleFunction(sym, typeArgs)
+      val callInstrs = List(Instruction.Call(funcSym))
+      callInstrs
     case Term.TypeApply(Term.SymbolRef(sym), _) =>
       val DefInfo.FuncDef(funcSym, _) = createModuleFunction(sym)
       val callInstrs = List(Instruction.Call(funcSym))
@@ -864,6 +889,11 @@ object CodeGenerator:
         specMap += (specSig -> structInfo)
         structInfo
 
+  def isPolySymbol(sym: Expr.DefSymbol)(using Context): Boolean =
+    ctx.defInfos(sym) match
+      case DefInfo.PolyFuncDef(_, _, _) => true
+      case _ => false
+
   def createModuleFunction(sym: Expr.DefSymbol)(using Context): DefInfo.FuncDef =
     ctx.defInfos(sym) match
       case i: DefInfo.FuncDef => i
@@ -874,8 +904,28 @@ object CodeGenerator:
         ctx.defInfos += (sym -> DefInfo.FuncDef(funcSym, workerSym))
         genModuleFunction(sym.tpe, funcSym, Some(workerSym), body.asInstanceOf[Expr.Term])
         DefInfo.FuncDef(funcSym, workerSym)
+      case DefInfo.PolyFuncDef(_, _, _) =>
+        assert(false)
       case _ => 
         assert(false, "this is absurd: expecting a function symbol, but got a global value")
+
+  def createPolyModuleFunction(sym: Expr.DefSymbol, targs: List[Expr.Type | Expr.CaptureSet])(using Context): DefInfo.FuncDef =
+    val DefInfo.PolyFuncDef(typeParams, body, specMap) = ctx.defInfos(sym): @unchecked
+    val specSig = translateTypeArgs(targs)
+    specMap.get(specSig) match
+      case Some(info) => info
+      case None =>
+        val encodedName = nameEncode(s"${sym.name}$$${specSig.encodedName}")
+        val funcSym = Symbol.fresh(encodedName)
+        val workerSym = Symbol.fresh(s"worker_${encodedName}")
+        emitElemDeclare(ExportKind.Func, workerSym)
+        val funcDef: DefInfo.FuncDef = DefInfo.FuncDef(funcSym, workerSym)
+        specMap += (specSig -> funcDef)
+        val typeBinderInfos = (typeParams `zip` targs).map:
+          case (bd, tpe: Expr.Type) => BinderInfo.Specialized(bd, translateType(tpe))
+          case (bd, tpe: Expr.CaptureSet) => BinderInfo.Inaccessible(bd)
+        genModuleFunction(sym.tpe, funcSym, Some(workerSym), body.asInstanceOf[Expr.Term], typeBinderInfos = Some(typeBinderInfos))
+        funcDef
 
   def maybeAddReturnCall(body: List[Instruction])(using Context): List[Instruction] =
     def goInstrs(instrs: List[Instruction]): Option[List[Instruction]] =
@@ -902,13 +952,28 @@ object CodeGenerator:
       case _ => None
     goInstrs(body).getOrElse(body)
 
-  def genModuleFunction(funType: Expr.Type, funSymbol: Symbol, workerSymbol: Option[Symbol], expr: Expr.Term)(using Context): Unit = //trace(s"genModuleFunction($funType, $funSymbol, $workerSymbol, $expr)"):
+  /** Generates code for a module-level function.
+   * @param funType type of the module function
+   * @param funSymbol output symbol for the function
+   * @param workerSymbol output symbol for the worker function that wraps the module function as a first-class value
+   * @param expr source language term of the function
+   * @param typeBinderInfos specialized type binder infos when generating type-polymorphic functions
+   */
+  def genModuleFunction(
+    funType: Expr.Type,
+    funSymbol: Symbol,
+    workerSymbol: Option[Symbol],
+    expr: Expr.Term,
+    typeBinderInfos: Option[List[BinderInfo]] = None,
+  )(using Context): Unit = //trace(s"genModuleFunction($funType, $funSymbol, $workerSymbol, $expr)"):
     val (ps: List[Expr.Binder], body: Expr.Term, isTypeLambda: Boolean) = expr match
       case Term.TermLambda(ps, body, _) => (ps, body, false)
       case Term.TypeLambda(ps, body) => (ps, body, true)
       case _ => assert(false, "absurd")
-    val funcType = computeFuncType(funType, isClosure = false)
-    val workerType = computeFuncType(funType, isClosure = true)
+    val (funcType, workerType) =
+      typeBinderInfos match
+        case Some(infos) => (computePolyFuncType(funType, infos, isClosure = false), computePolyFuncType(funType, infos, isClosure = true))
+        case None => (computeFuncType(funType, isClosure = false), computeFuncType(funType, isClosure = true))
     val paramSymbols = 
       if isTypeLambda then Nil
       else ps.map(p => Symbol.fresh(p.name))
@@ -919,8 +984,11 @@ object CodeGenerator:
       newLocalsScope:
         val binderInfos = 
           if isTypeLambda then 
-            ps.map: bd =>
-              BinderInfo.Abstract(bd)
+            typeBinderInfos match
+              case Some(infos) => infos
+              case None =>
+                ps.map: bd =>
+                  BinderInfo.Abstract(bd)
           else 
             (ps `zip` paramSymbols).map: (bd, sym) =>
               BinderInfo.Sym(bd, sym)
@@ -1031,15 +1099,20 @@ object CodeGenerator:
     emitDefaultTypes()
     emitDefaultImports()
     emitDefaultMemory()
-    // (1) create symbols for all the definitions
+    // Next, create symbols for all the definitions
     //   for struct symbols, we create the type as well
+    //   for function symbols, we create placeholders, either lazy or polymorphic
     allDefns.foreach: defn =>
       defn match
         case Definition.ValDef(sym, body) =>
           body match
             case body: Expr.Closure =>
               // Do nothing for now, we emit the function lazily
-              ctx.defInfos += (sym -> DefInfo.LazyFuncDef(body))
+              body match
+                case TypePolymorphism(typeParams, _) =>
+                  ctx.defInfos += (sym -> DefInfo.PolyFuncDef(typeParams, body, mutable.Map.empty))
+                case _ =>
+                  ctx.defInfos += (sym -> DefInfo.LazyFuncDef(body))
             case _ =>
               val globalSym = Symbol.fresh(sym.name)
               ctx.defInfos += (sym -> DefInfo.GlobalDef(globalSym))
@@ -1052,17 +1125,7 @@ object CodeGenerator:
           ctx.extensionInfos += (sym -> mutable.Map.empty)
         case Definition.TypeDef(sym) =>
           // Type definitions do not have runtime representation
-    // (2) emit func definitions
-    // allDefns.foreach: defn =>
-    //   defn match
-    //     case Definition.ValDef(sym, body) =>
-    //       body match
-    //         case body: Term.TermLambda =>
-    //           val DefInfo.FuncDef(funcSym, workerSym) = ctx.defInfos(sym): @unchecked
-    //           genModuleFunction(sym.tpe, funcSym, Some(workerSym), body)
-    //         case _ =>
-    //     case _ =>
-    // (3) emit global definitions
+    // Next, emit global definitions
     allDefns.foreach: defn =>
       defn match
         case Definition.ValDef(sym, body) =>
@@ -1076,7 +1139,7 @@ object CodeGenerator:
               val g = Global(globalSym, valType, mutable = true, defaultVal)
               emitGlobal(g)
         case _ =>
-    // (4) emit the start function
+    // Next, emit the start function
     val startFuncSymbol = Symbol.fresh("init")
     val startFunc =
       newLocalsScope:

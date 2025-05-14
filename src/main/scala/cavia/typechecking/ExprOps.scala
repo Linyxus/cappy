@@ -395,3 +395,18 @@ extension (self: Term)
 
 def makeUnitLit(srcPos: SourcePos)(using Context): Term =
   Term.UnitLit().withPos(srcPos).withTpe(Definitions.unitType).withCV(CaptureSet.empty)
+
+extension (self: Term)
+  def isTypePolymorphic: Boolean =
+    self match
+      case Term.TypeLambda(params, _) => params.exists:
+        case binder: Binder.TypeBinder => true
+        case _ => false
+      case _ => false
+
+object TypePolymorphism:
+  def unapply(t: Term): Option[(List[Binder.TypeBinder | Binder.CaptureBinder], Term)] =
+    t match
+      case Term.TypeLambda(params, body) if t.isTypePolymorphic => 
+        Some((params, body))
+      case _ => None
