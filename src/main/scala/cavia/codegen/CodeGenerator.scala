@@ -22,6 +22,11 @@ object CodeGenerator:
     case Sym(binder: Expr.Binder, sym: Symbol)
     /** A binder that is created for a closure. */
     case ClosureSym(binder: Expr.Binder, sym: Symbol, funSymbol: Symbol)
+    /** A binder that is bound to a type-polymorphic function. 
+     * `generator` is a function that takes a list of specialised type binders and produces the closure.
+     * `specMap` maps specialisation signatures to the pair of (worker symbol, function symbol).
+    */
+    case PolyClosureSym(binder: Expr.Binder.TermBinder, params: List[Expr.Binder], generator: List[BinderInfo] => (List[Instruction], Symbol), specMap: mutable.Map[SpecSig, (Symbol, Symbol)])
     /** This binder is inaccessible. It may be a variable not accessed by a closure. Or it is a capture binder. */
     case Inaccessible(binder: Expr.Binder)
     /** This is a type binder specialized to a concrete value type in the target. */
@@ -79,6 +84,9 @@ object CodeGenerator:
 
     def withClosureSym(binder: Expr.Binder, sym: Symbol, funSym: Symbol): Context =
       copy(binderInfos = BinderInfo.ClosureSym(binder, sym, funSym) :: binderInfos)
+
+    def withPolyClosureSym(binder: Expr.Binder.TermBinder, params: List[Expr.Binder], generator: List[BinderInfo] => (List[Instruction], Symbol)): Context =
+      copy(binderInfos = BinderInfo.PolyClosureSym(binder, params, generator, mutable.Map.empty) :: binderInfos)
     
     def usingBinderInfos(binderInfos: List[BinderInfo]): Context =
       copy(binderInfos = binderInfos)
@@ -448,12 +456,15 @@ object CodeGenerator:
     params: List[Expr.Binder],   // parameters of the source function
     body: Expr.Term,   // body of the source function
     selfBinder: Option[Expr.Binder] = None,  // whether the source function is self-recursive
+    typeBinderInfos: Option[List[BinderInfo]] = None  // specialised type arguments
   )(using Context): (List[Instruction], Symbol) =
     val isTypeLambda = funType.strip match
       case Expr.Type.TypeArrow(_, _) => true
       case _ => false
-    val funcType = 
-      computeFuncType(funType)
+    val funcType =
+      typeBinderInfos match
+        case Some(infos) => computePolyFuncType(funType, infos, isClosure = true)
+        case None => computeFuncType(funType, isClosure = true)
     val closureInfo = createClosureTypes(funcType)
     val funName: String = selfBinder match
       case Some(bd) => bd.name
@@ -532,8 +543,9 @@ object CodeGenerator:
             case (binder, (sym, _)) =>
               ctx1 = ctx1.withLocalSym(binder, sym)
         else
-          val binderInfos = params.map: bd =>
-            BinderInfo.Abstract(bd)
+          val binderInfos = typeBinderInfos.getOrElse:
+            params.map: bd =>
+              BinderInfo.Abstract(bd)
           ctx1 = ctx1.withMoreBinderInfos(binderInfos)
         val bodyInstrs = genTerm(body)(using ctx1)
         val bodyInstrs1 = maybeAddReturnCall(bodyInstrs)
@@ -560,12 +572,41 @@ object CodeGenerator:
       case BinderInfo.Sym(binder, sym) => List(Instruction.LocalGet(sym))
       case BinderInfo.ClosureSym(_, sym, _) => List(Instruction.LocalGet(sym))
       case BinderInfo.Inaccessible(binder) => assert(false, s"Inaccessible binder: $binder")
+      case BinderInfo.PolyClosureSym(_, _, _, _) => 
+        assert(false, "Type-polymorphic function cannot be used as a first-class value. This is a restriction in the code generator.")
       case _ => assert(false, "absurd binder info")
 
   def isClosureSym(binderIdx: Int)(using Context): Boolean =
     ctx.binderInfos(binderIdx) match
-      case BinderInfo.ClosureSym(_, _, _) => true
+      case _: BinderInfo.ClosureSym => true
       case _ => false
+
+  def isPolyClosureSym(binderIdx: Int)(using Context): Boolean =
+    ctx.binderInfos(binderIdx) match
+      case _: BinderInfo.PolyClosureSym => true
+      case _ => false
+
+  def createPolyClosure(
+    typeArgs: List[Expr.Type | Expr.CaptureSet],
+    info: BinderInfo.PolyClosureSym
+  )(using Context): (List[Instruction], (Symbol, Symbol)) =
+    val specSig = translateTypeArgs(typeArgs)
+    info.specMap.get(specSig) match
+      case Some(res) => (Nil, res)
+      case None =>
+        val typeBinderInfos = (info.params `zip` typeArgs).map:
+          case (param: Expr.Binder.TypeBinder, typeArg: Expr.Type) =>
+            BinderInfo.Specialized(param, translateType(typeArg))
+          case (param: Expr.Binder.CaptureBinder, typeArg: Expr.CaptureSet) =>
+            BinderInfo.Inaccessible(param)
+          case _ => assert(false)
+        val funcSym = Symbol.fresh("polyclos")
+        val funcType = computePolyFuncType(info.binder.tpe, typeBinderInfos, isClosure = true)
+        val closureInfo = createClosureTypes(funcType)
+        emitLocal(funcSym, ValType.TypedRef(closureInfo.closTypeSym))
+        val (instrs, workerSym) = info.generator(typeBinderInfos)
+        val outInstrs = instrs ++ List(Instruction.LocalSet(funcSym))
+        (outInstrs, (funcSym, workerSym))
 
   def genTerm(t: Expr.Term)(using Context): List[Instruction] = t match
     case Term.IntLit(value) => 
@@ -601,13 +642,20 @@ object CodeGenerator:
       val (params, body, isTypeLambda) = clos match
         case Term.TermLambda(params, body, _) => (params, body, false)
         case Term.TypeLambda(params, body) => (params, body, true)
-      val localSym = Symbol.fresh(binder.name)
-      val localType = translateType(binder.tpe)
-      emitLocal(localSym, localType)
-      val (closureInstrs, workerSym) = genClosure(binder.tpe, params, body, if isRecursive then Some(binder) else None)
-      val setLocalInstrs = List(Instruction.LocalSet(localSym))
-      val bodyInstrs = genTerm(expr)(using ctx.withClosureSym(binder, localSym, workerSym))
-      closureInstrs ++ setLocalInstrs ++ bodyInstrs
+      if clos.isTypePolymorphic then
+        def generator(typeBinderInfos: List[BinderInfo]): (List[Instruction], Symbol) =
+          genClosure(binder.tpe, params, body, if isRecursive then Some(binder) else None, Some(typeBinderInfos))
+        val ctx1 = ctx.withPolyClosureSym(binder, params, generator)
+        val bodyInstrs = genTerm(expr)(using ctx1)
+        bodyInstrs
+      else
+        val localSym = Symbol.fresh(binder.name)
+        val localType = translateType(binder.tpe)
+        emitLocal(localSym, localType)
+        val (closureInstrs, workerSym) = genClosure(binder.tpe, params, body, if isRecursive then Some(binder) else None)
+        val setLocalInstrs = List(Instruction.LocalSet(localSym))
+        val bodyInstrs = genTerm(expr)(using ctx.withClosureSym(binder, localSym, workerSym))
+        closureInstrs ++ setLocalInstrs ++ bodyInstrs
     case Term.Bind(binder, false, bound, body) =>
       val localSym = Symbol.fresh(binder.name)
       val localType = translateType(binder.tpe)
@@ -660,6 +708,12 @@ object CodeGenerator:
       val argInstrs = args.flatMap(genTerm)
       val callWorkerInstrs = List(Instruction.Call(funSym))
       getSelfInstrs ++ argInstrs ++ callWorkerInstrs
+    case Term.TypeApply(Term.BinderRef(idx), typeArgs) if isPolyClosureSym(idx) =>
+      val info = ctx.binderInfos(idx).asInstanceOf[BinderInfo.PolyClosureSym]
+      val (instrs, (funcSym, workerSym)) = createPolyClosure(typeArgs, info)
+      val getSelfInstrs = List(Instruction.LocalGet(funcSym))
+      val callWorkerInstrs = List(Instruction.Call(workerSym))
+      instrs ++ getSelfInstrs ++ callWorkerInstrs
     case Term.Apply(fun, args) =>
       val localSym = Symbol.fresh("fun")
       val funcType = computeFuncType(fun.tpe)
