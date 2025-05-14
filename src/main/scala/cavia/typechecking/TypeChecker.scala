@@ -7,6 +7,7 @@ import core.*
 import ast.*
 import reporting.*
 
+/** Type checker. */
 object TypeChecker:
   import Syntax.AccessMode
   import Expr.*
@@ -15,11 +16,17 @@ object TypeChecker:
 
   /** Type checking context. */
   case class Context(
+    /** Binders in scope. */
     binders: List[Binder], 
+    /** Symbols in scope. */
     symbols: List[Symbol], 
+    /** State for type inference. */
     inferenceState: InferenceState, 
+    /** Capabilities that have been consumed. */
     consumedPeaks: CaptureSet = CaptureSet.empty, 
+    /** Level of freshness. */
     freshLevel: Int = 0, 
+    /** Deprecated: `return` has been dropped. */
     // defReturnType: Option[Type] = None,
   ):
     /** Extend the context with a list of binders. */
@@ -32,9 +39,11 @@ object TypeChecker:
         copy(binders = newBinders)
     def extend(bd: Binder): Context = extend(bd :: Nil)
 
+    /** Add a symbol to the context. */
     def addSymbol(sym: Symbol): Context =
       copy(symbols = sym :: symbols)
 
+    /** Add a list of symbols to the context. */
     def addSymbols(syms: List[Symbol]): Context =
       if syms.isEmpty then this
       else
@@ -43,12 +52,17 @@ object TypeChecker:
           newSymbols = sym :: newSymbols
         copy(symbols = newSymbols)
 
+    /** Create a new scope in type inference. See [[InferenceState]]. */
     def newInferenceScope: Context =
       copy(inferenceState = InferenceState.empty)
 
+    /** Enter a new fresh level.
+     * This happens when we are entering a new closure.
+     */
     def newFreshLevel: Context =
       copy(freshLevel = freshLevel + 1)
 
+    /** Add a set of consumed peaks to the context. */
     def moreConsumedPeaks(peaks: CaptureSet): Context =
       copy(consumedPeaks = consumedPeaks ++ peaks)
 

@@ -11,6 +11,7 @@ import Expr.*
 object Inference:
   import TypeChecker.*
 
+  /** State for type inference. */
   case class InferenceState(
     // A directory of local type variables
     localVars: mutable.ArrayBuffer[Type.TypeVar],

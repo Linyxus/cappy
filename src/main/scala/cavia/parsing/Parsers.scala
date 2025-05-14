@@ -8,19 +8,26 @@ object Parsers:
   import Syntax.*
   import Parser.*
 
+  /** Associativity of operators. */
   enum Assoc:
     case Left, Right, Non
+  /** Parsing rule. */
   enum OpRule:
     case Infix(assoc: Assoc, op: Parser[InfixOp])
     case Prefix(op: Parser[PrefixOp])
+  /** Group of parsing rules of the same precedence. */
   enum OpGroup:
     case InfixGroup(rules: List[OpRule.Infix])
     case PrefixGroup(rules: List[OpRule.Prefix])
+  /** Helper functions to create parsing rules. */
   object OpGroup:
     def infix(rules: OpRule.Infix*): OpGroup = OpGroup.InfixGroup(rules.toList)
     def prefix(rules: OpRule.Prefix*): OpGroup = OpGroup.PrefixGroup(rules.toList)
   import OpRule.*, OpGroup.*
+
+  /** Parse table for all operators. */
   val parseTable: List[OpGroup] = List(
+    /** `return` has been dropped */
     // prefix(
     //   Prefix(keywordP("return").map(_ => PrefixOp.Return).positioned),
     // ),
