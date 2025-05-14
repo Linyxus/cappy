@@ -388,5 +388,10 @@ extension (self: Term)
       case Term.ResolveExtension(sym1, targs1, methodName1) if (sym1 eq sym) && (targs1 eq targs) && (methodName1 == methodName) => self
       case _ => Term.ResolveExtension(sym, targs, methodName).like(self)
 
+  def derivedMatch(scrutinee: Term, cases: List[MatchCase])(using Context): Term =
+    self match
+      case Term.Match(scrutinee1, cases1) if (scrutinee1 eq scrutinee) && (cases1 eq cases) => self
+      case _ => Term.Match(scrutinee, cases).like(self)
+
 def makeUnitLit(srcPos: SourcePos)(using Context): Term =
   Term.UnitLit().withPos(srcPos).withTpe(Definitions.unitType).withCV(CaptureSet.empty)

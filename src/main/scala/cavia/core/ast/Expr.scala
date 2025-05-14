@@ -433,7 +433,12 @@ object Expr:
     case Bind(binder: TermBinder, pat: Pattern)
     case EnumVariant(constructor: StructSymbol, typeArgs: List[Type | CaptureSet], enumSym: Option[EnumSymbol], fields: List[Pattern])
 
-  case class MatchCase(pat: Pattern, body: Term) extends Positioned, Typed
+  case class MatchCase(pat: Pattern, body: Term) extends Positioned, Typed:
+    def derivedMatchCase(pat1: Pattern, body1: Term): MatchCase =
+      if (pat1 eq pat) && (body1 eq body) then
+        this
+      else
+        MatchCase(pat1, body1).withPosFrom(this).withTpe(this.tpe)
 
   enum Term extends Positioned, Typed, HasMetadata:
     case BinderRef(idx: Int)

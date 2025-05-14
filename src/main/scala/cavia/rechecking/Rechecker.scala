@@ -71,6 +71,19 @@ abstract class Rechecker:
 
   def recheckResolveExtension(old: Term, sym: ExtensionSymbol, targs: List[Type | CaptureSet], methodName: String)(using Context): Term = old
 
+  def recheckPattern(old: Pattern)(using Context): Pattern = old
+
+  def recheckMatchCase(old: MatchCase, pat: Pattern, body: Term)(using Context): MatchCase =
+    val pat1 = recheckPattern(pat)
+    val body1 = recheck(body)
+    old.derivedMatchCase(pat1, body1)
+
+  def recheckMatch(old: Term, scrutinee: Term, cases: List[Expr.MatchCase])(using Context): Term =
+    val scrutinee1 = recheck(scrutinee)
+    val cases1 = cases.map: cas =>
+      recheckMatchCase(cas, cas.pat, cas.body)
+    old.derivedMatch(scrutinee1, cases1)
+
   def recheck(expr: Term)(using Context): Expr.Term = expr match
     case Term.BinderRef(idx) => recheckBinderRef(expr, idx)
     case Term.SymbolRef(sym) => recheckSymbolRef(expr, sym)
@@ -89,3 +102,4 @@ abstract class Rechecker:
     case Term.Select(base, fieldInfo) => recheckSelect(expr, base, fieldInfo)
     case Term.If(cond, thenBranch, elseBranch) => recheckIf(expr, cond, thenBranch, elseBranch)
     case Term.ResolveExtension(sym, targs, methodName) => recheckResolveExtension(expr, sym, targs, methodName)
+    case Term.Match(scrutinee, cases) => recheckMatch(expr, scrutinee, cases)
