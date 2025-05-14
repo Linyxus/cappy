@@ -75,7 +75,7 @@ abstract class Rechecker:
 
   def recheckMatchCase(old: MatchCase, pat: Pattern, body: Term)(using Context): MatchCase =
     val pat1 = recheckPattern(pat)
-    val body1 = recheck(body)
+    val body1 = recheck(body)  // TODO: add binders to the context when checking the body
     old.derivedMatchCase(pat1, body1)
 
   def recheckMatch(old: Term, scrutinee: Term, cases: List[Expr.MatchCase])(using Context): Term =
