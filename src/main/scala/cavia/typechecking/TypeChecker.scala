@@ -1507,14 +1507,31 @@ object TypeChecker:
         val bd = TermBinder(name, expr1.tpe, isConsume = false).withPos(d.pos)
         (bd.asInstanceOf[TermBinder], expr1)
 
+  def isTypePolymorphicParamList(ps: Syntax.TermParamList | Syntax.TypeParamList)(using Context): Boolean = ps match
+    case Syntax.TermParamList(_) => false
+    case Syntax.TypeParamList(params) => params.exists:
+      case Syntax.TypeParam(_, _) => true
+      case _ => false
+
+  def splitExtensionParamLists(
+    pss: List[Syntax.TermParamList | Syntax.TypeParamList])(using Context): (List[Syntax.TypeParamList], List[Syntax.TypeParamList | Syntax.TermParamList]) =
+    pss match
+      case Nil => (Nil, pss)
+      case p :: pss =>
+        if isTypePolymorphicParamList(p) then
+          (p.asInstanceOf[Syntax.TypeParamList] :: Nil, pss)
+        else
+          (Nil, p :: pss)
+
   def checkExtensionDef(d: Syntax.Definition.ExtensionDef, sym: ExtensionSymbol)(using Context): Result[ExtensionInfo] =
     hopefully:
       val typeArgs = sym.info.typeParams
       val ctx1 = ctx.extend(typeArgs)
       val selfArgBinder = checkTermParam(d.selfArg)(using ctx1).!!
       val methodInfos = d.methods.map: method =>
+        val (typeParamss, restParamss) = splitExtensionParamLists(method.paramss)
         val method1 =
-          method.copy(paramss = Syntax.TermParamList(List(d.selfArg)) :: method.paramss).withPosFrom(method)
+          method.copy(paramss = typeParamss ++ (Syntax.TermParamList(List(d.selfArg)) :: restParamss)).withPosFrom(method)
         val (bd, expr) = checkDef(method1)(using ctx1).!!
         ExtensionMethod(method.name, bd.tpe, expr)
       ExtensionInfo(typeArgs, selfArgBinder.tpe, methodInfos)
@@ -1595,8 +1612,9 @@ object TypeChecker:
           val ctx2 = ctx1.extend(typeArgs)
           val selfArgBinder = checkTermParam(d.selfArg)(using ctx2).!!
           val methodInfos = d.methods.map: method =>
+            val (typeParamss, restParamss) = splitExtensionParamLists(method.paramss)
             val method1 =
-              method.copy(paramss = Syntax.TermParamList(List(d.selfArg)) :: method.paramss).withPosFrom(method)
+              method.copy(paramss = typeParamss ++ (Syntax.TermParamList(List(d.selfArg)) :: restParamss)).withPosFrom(method)
             val methodType = extractDefnType(method1)(using ctx2).!!
             ExtensionMethod(method.name, methodType, body = null)
           sym.info = ExtensionInfo(typeArgs, selfArgBinder.tpe, methodInfos)
