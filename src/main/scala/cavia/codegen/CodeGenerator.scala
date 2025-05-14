@@ -339,6 +339,7 @@ object CodeGenerator:
         val typeName = nameEncode(s"array_of_${mutStr}${elemTypeStr}")
         val typeSym = Symbol.fresh(typeName)
         emitType(TypeDef(typeSym, arrType))
+        ctx.arrayTypes += (arrType -> typeSym)
         typeSym
       case Some(symbol) => symbol
 
