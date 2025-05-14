@@ -772,6 +772,13 @@ object TypeChecker:
       case Syntax.Term.TypeLambda(params, body) =>
         hopefully:
           val params1 = checkTypeParamList(params).!!
+          val maybeTypeBinder = params1.find:
+            case binder: TypeBinder => true
+            case _ => false
+          maybeTypeBinder match
+            case Some(binder) =>
+              sorry(TypeError.GeneralError("Only capture parameters are allowed in first-class type lambdas").withPos(binder.pos))
+            case None =>
           def checkBody(using Context): Result[Term] =
             checkTerm(body)
           checkTypeAbstraction(params1, checkBody, t.pos).!!
