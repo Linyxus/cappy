@@ -1794,8 +1794,6 @@ object TypeChecker:
             case Some((extSym, typeArgs)) =>
               val method = extSym.info.methods.find(_.name == field).get
               val funType = substituteType(method.tpe, typeArgs, isParamType = false)
-              // val (args, outType, consumedSet) = checkFunctionApply(funType, List(base), srcPos, isDependent = true).!!
-              // val appliedTerm = Term.Apply(resolvedTerm, args).withPos(srcPos).withTpe(outType).withCVFrom(resolvedTerm :: args*)
               val resolvedTerm = Term.ResolveExtension(extSym, typeArgs, method.name).withPos(srcPos).withTpe(funType).withCV(CaptureSet.empty)
               val maybeTypedApplied = 
                 if inputTypeArgs.isEmpty then
