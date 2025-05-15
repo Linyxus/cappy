@@ -237,7 +237,7 @@ object Expr:
 
     val id: Int =
       Type.nextId += 1
-      //assert(Type.nextId != 20, "Gotcha!")  // for debugging
+      //assert(Type.nextId != 1237, "Gotcha!")  // for debugging
       Type.nextId
 
     def exists: Boolean = this match
@@ -537,6 +537,15 @@ object Expr:
     def structConstructorType(sym: StructSymbol): Type =
       val variances = sym.info.variances
       val kind = 
+        if variances.isEmpty then
+          TypeKind.Star
+        else
+          TypeKind.Arrow(variances, TypeKind.Star)
+      Type.SymbolRef(sym).withKind(kind)
+
+    def enumConstructorType(sym: EnumSymbol): Type =
+      val variances = sym.info.variances
+      val kind =
         if variances.isEmpty then
           TypeKind.Star
         else

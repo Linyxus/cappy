@@ -102,7 +102,7 @@ class TypeMap:
     val argVariances = tycon1.kind match
       case TypeKind.Arrow(argVariances, _) => argVariances
       case _ => List()
-    assert(argVariances.length == tp.args.length)
+    assert(argVariances.length == tp.args.length, s"$tp (id=${tp.id})")
     val args1 = tp.args.zip(argVariances).map: (arg, v) =>
       withVariance(variance * v):
         mapTypeArg(arg)
@@ -598,7 +598,7 @@ object AppliedEnumType:
     case _ => None
 
   def apply(enumSym: EnumSymbol, typeArgs: List[Type | CaptureSet]): Type =
-    Type.AppliedType(Type.SymbolRef(enumSym), typeArgs)
+    Type.AppliedType(Definitions.enumConstructorType(enumSym), typeArgs)
 
 extension (tpe: Type)
   def refined(refinements: List[FieldInfo]): Type = 
