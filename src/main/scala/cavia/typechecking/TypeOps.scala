@@ -553,7 +553,7 @@ class TypeSubstitutionMap(targs: List[Type | CaptureSet], startingVariance: Vari
           // must be a capture set, otherwise the substitution is malformed
         arg.shift(localBinders.size)
       else
-        Type.Var(Term.BinderRef(idx - ctxArgs.size)).asInstanceOf[CaptureSet]
+        CaptureSet(ref.derivedQualifiedRef(core1 = CaptureRef.Ref(Type.Var(Term.BinderRef(idx - ctxArgs.size)))) :: Nil)
     case _ => super.mapCaptureRef(ref)
 
   override def mapVar(tp: Type.Var): Type = tp match

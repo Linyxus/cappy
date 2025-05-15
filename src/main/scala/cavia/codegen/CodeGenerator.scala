@@ -53,7 +53,14 @@ object CodeGenerator:
   case class StructInfo(sym: Symbol, nameMap: Map[String, Symbol], tagNumber: Option[Int] = None)
 
   case class ExtensionInfo(methodMap: Map[String, MethodInfo])
-  case class MethodInfo(sym: Symbol, tpe: FuncType)
+  enum MethodInfo:
+    case SimpleMethod(sym: Symbol, tpe: FuncType)
+    case PolyMethod(
+      baseName: String, 
+      computeType: (List[Expr.Type | Expr.CaptureSet]) => FuncType,
+      generator: (List[Expr.Type | Expr.CaptureSet], Symbol) => Unit, 
+      specMap: mutable.Map[SpecSig, SimpleMethod]
+    )
 
   /** Signature of a specialisation of a struct or a method. */
   case class SpecSig(targs: List[ValType]):
@@ -698,10 +705,17 @@ object CodeGenerator:
     case Term.Apply(Term.ResolveExtension(extSym, targs, field), args) =>
       val ExtensionInfo(methodMap) = createExtensionInfo(extSym, targs)
       val methodInfo = methodMap(field)
-      val methodSym = methodInfo.sym
+      val methodSym = methodInfo match
+        case MethodInfo.SimpleMethod(sym, _) => sym
+        case _: MethodInfo.PolyMethod => assert(false)
       val argInstrs = args.flatMap(genTerm)
       val callInstrs = List(Instruction.Call(methodSym))
       argInstrs ++ callInstrs
+    case Term.TypeApply(Term.ResolveExtension(extSym, targs, field), typeArgs) =>
+      val extInfo = createExtensionInfo(extSym, targs)
+      val MethodInfo.SimpleMethod(sym, _) = getPolyMethodInfo(extInfo, field, typeArgs)
+      val callInstrs = List(Instruction.Call(sym))
+      callInstrs
     case Term.Apply(fun @ Term.BinderRef(idx), args) if isClosureSym(idx) =>
       val BinderInfo.ClosureSym(_, sym, funSym) = ctx.binderInfos(idx): @unchecked
       val getSelfInstrs = genBinderRef(idx)
@@ -1069,20 +1083,53 @@ object CodeGenerator:
             BinderInfo.Inaccessible(bd)
         val ctx1 = ctx.usingBinderInfos(binderInfos.reverse)
         // Create symbols
-        val methodSyms: List[Symbol] = extInfo.methods.map: method =>
-          val methodName = nameEncode(s"${extSym.name}$$$sigName$$${method.name}")
-          Symbol.fresh(methodName)
-        val methodInfos: List[MethodInfo] = (methodSyms `zip` extInfo.methods).map: (sym, method) =>
-          MethodInfo(sym, computeFuncType(method.tpe, isClosure = false)(using ctx1))
+        val methodBaseNames: List[String] = extInfo.methods.map: method =>
+          nameEncode(s"${extSym.name}$$$sigName$$${method.name}")
+        val methodInfos: List[MethodInfo] = (methodBaseNames `zip` extInfo.methods).map: (baseName, method) =>
+          if method.body.isTypePolymorphic then
+            val TypePolymorphism(typeParams, _) = method.body: @unchecked
+            def generator(targs: List[Expr.Type | Expr.CaptureSet], sym: Symbol): Unit =
+              val typeBinderInfos = (typeParams `zip` targs).map:
+                case (bd, tpe: Expr.Type) => BinderInfo.Specialized(bd, translateType(tpe))
+                case (bd, tpe: Expr.CaptureSet) => BinderInfo.Inaccessible(bd)
+              genModuleFunction(method.tpe, sym, workerSymbol = None, expr = method.body, Some(typeBinderInfos))(using ctx1)
+            def computeType(targs: List[Expr.Type | Expr.CaptureSet]): FuncType =
+              val typeBinderInfos = (typeParams `zip` targs).map:
+                case (bd, tpe: Expr.Type) => BinderInfo.Specialized(bd, translateType(tpe))
+                case (bd, tpe: Expr.CaptureSet) => BinderInfo.Inaccessible(bd)
+              computePolyFuncType(method.tpe, typeBinderInfos, isClosure = false)(using ctx1)
+            MethodInfo.PolyMethod(baseName, computeType, generator, mutable.Map.empty)
+          else
+            val funcSym = Symbol.fresh(baseName)
+            MethodInfo.SimpleMethod(funcSym, computeFuncType(method.tpe, isClosure = false)(using ctx1))
         val methodMap = Map.from:
           (extInfo.methods `zip` methodInfos).map: (m, i) =>
             (m.name -> i)
         // Put symbols into the context
         specMap += (specSig -> ExtensionInfo(methodMap))
-        // Generate method definitions
+        // Generate method definitions for simple methods
         (methodInfos `zip` extInfo.methods).foreach: (methodInfo, method) =>
-          genModuleFunction(method.tpe, methodInfo.sym, workerSymbol = None, expr = method.body)(using ctx1)
+          methodInfo match
+            case MethodInfo.SimpleMethod(sym, _) =>
+              genModuleFunction(method.tpe, sym, workerSymbol = None, expr = method.body)(using ctx1)
+            case _: MethodInfo.PolyMethod =>
         specMap(specSig)
+
+  def getPolyMethodInfo(extInfo: ExtensionInfo, name: String, targs: List[Expr.Type | Expr.CaptureSet])(using Context): MethodInfo.SimpleMethod =
+    extInfo.methodMap(name) match
+      case simp: MethodInfo.SimpleMethod => simp
+      case poly: MethodInfo.PolyMethod =>
+        val specSig = translateTypeArgs(targs)
+        poly.specMap.get(specSig) match
+          case Some(info) => info
+          case None =>
+            val funcName = nameEncode(s"${poly.baseName}$$${specSig.encodedName}")
+            val funcSym = Symbol.fresh(funcName)
+            val funcType = poly.computeType(targs)
+            val simpleInfo: MethodInfo.SimpleMethod = MethodInfo.SimpleMethod(funcSym, funcType)
+            poly.specMap += (specSig -> simpleInfo)
+            poly.generator(targs, funcSym)
+            simpleInfo
 
   def isValidMain(d: Expr.Definition)(using Context): Boolean = d match
     case Definition.ValDef(sym, body) if sym.name == "main" =>
