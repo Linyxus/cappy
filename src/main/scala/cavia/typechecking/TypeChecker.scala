@@ -753,6 +753,8 @@ object TypeChecker:
       case t @ Syntax.Term.Select(base, field) =>
         // checkStablePath(t) || 
         checkSelect(base, field, t.pos)
+      case t @ Syntax.Term.TypeApply(inner @ Syntax.Term.Select(base, field), targs) =>
+        checkSelect(base, field, t.pos, targs)
       case Syntax.Term.Assign(lhs, rhs) =>
         checkAssign(lhs, rhs, t.pos)
       case Syntax.Term.Infix(op, lhs, rhs) =>
@@ -903,32 +905,7 @@ object TypeChecker:
       case Syntax.Term.TypeApply(term, targs) => 
         hopefully:
           val term1 = checkTerm(term).!!
-          term1.tpe.stripCaptures match
-            case funTpe @ Type.TypeArrow(formals, resultType) => 
-              val typeArgs = checkTypeArgs(targs, formals, t.pos).!!
-              val resultType1 = substituteType(resultType, typeArgs)
-            //println(s"checkTypeApply $resultType --> $resultType1, typeArgs = $typeArgs")
-              val resultTerm = Term.TypeApply(term1, typeArgs).withPosFrom(t).withTpe(resultType1)
-              resultTerm.withCVFrom(term1)
-              term1 match
-                case _: VarRef =>
-                case _ =>
-                  resultTerm.withMoreCV(funTpe.captureSet)
-              val captureArgsWithDesc: List[(CaptureSet, EntityWithProvenance)] = (targs `zip` typeArgs).collect:
-                case (targ: Syntax.CaptureSet, cs: CaptureSet) => 
-                  (cs, EntityWithProvenance(cs.show, targ.pos, "this argument"))
-              val signature = funTpe.signatureCaptureSet
-              val signatureWithDesc = (signature, EntityWithProvenance(signature.show, term.pos, "the function's context"))
-              val todoCaptureSets = signatureWithDesc :: captureArgsWithDesc
-              for i <- 0 until todoCaptureSets.length do
-                for j <- i + 1 until todoCaptureSets.length do
-                  val (cs1, hint1) = todoCaptureSets(i)
-                  val (cs2, hint2) = todoCaptureSets(j)
-                  if !checkSeparation(cs1, cs2) then
-                    sorry(TypeError.SeparationError(hint1, hint2).withPos(t.pos))
-              instantiateFresh(resultTerm)
-            case _ => 
-              sorry(TypeError.GeneralError(s"Expected a type/capture function, but got ${term1.tpe.show}").withPos(t.pos))
+          checkTypeApply(term1, targs, t.pos).!!
 
     hopefully:
       var outTerm = result.!!
@@ -1165,9 +1142,12 @@ object TypeChecker:
         checkUnbox(t, t.pos).!!
       else t
 
-  def checkApply(fun: Syntax.Term, args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
+  def checkApply(fun: Syntax.Term | Term, args: List[Syntax.Term], expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
-      val fun1 = maybeUnbox(checkTerm(fun).!!).!!
+      val fun1 = 
+        fun match
+          case t: Term => maybeUnbox(t).!!
+          case t: Syntax.Term => maybeUnbox(checkTerm(t).!!).!!
       val funType = fun1.tpe
       funType.simplify match
         case Type.TermArrow(formals, resultType) =>
@@ -1200,6 +1180,34 @@ object TypeChecker:
         //     case _ => sorry(TypeError.GeneralError(s"Expect exact one argument, but got ${args.length}").withPos(srcPos))
         case funType =>
           sorry(TypeError.GeneralError(s"Expected a term function, but got ${funType.show}").withPos(fun.pos))
+
+  def checkTypeApply(typeFun: Term, targs: List[Syntax.Type | Syntax.CaptureSet], srcPos: SourcePos)(using Context): Result[Term] =
+    hopefully:
+      typeFun.tpe.stripCaptures match
+        case funTpe @ Type.TypeArrow(formals, resultType) => 
+          val typeArgs = checkTypeArgs(targs, formals, srcPos).!!
+          val resultType1 = substituteType(resultType, typeArgs)
+          val resultTerm = Term.TypeApply(typeFun, typeArgs).withPos(srcPos).withTpe(resultType1)
+          resultTerm.withCVFrom(typeFun)
+          typeFun match
+            case _: VarRef =>
+            case _ =>
+              resultTerm.withMoreCV(funTpe.captureSet)
+          val captureArgsWithDesc: List[(CaptureSet, EntityWithProvenance)] = (targs `zip` typeArgs).collect:
+            case (targ: Syntax.CaptureSet, cs: CaptureSet) => 
+              (cs, EntityWithProvenance(cs.show, targ.pos, "this argument"))
+          val signature = funTpe.signatureCaptureSet
+          val signatureWithDesc = (signature, EntityWithProvenance(signature.show, typeFun.pos, "the function's context"))
+          val todoCaptureSets = signatureWithDesc :: captureArgsWithDesc
+          for i <- 0 until todoCaptureSets.length do
+            for j <- i + 1 until todoCaptureSets.length do
+              val (cs1, hint1) = todoCaptureSets(i)
+              val (cs2, hint2) = todoCaptureSets(j)
+              if !checkSeparation(cs1, cs2) then
+                sorry(TypeError.SeparationError(hint1, hint2).withPos(srcPos))
+          instantiateFresh(resultTerm)
+        case _ => 
+          sorry(TypeError.GeneralError(s"Expected a type/capture function, but got ${typeFun.tpe.show}").withPos(typeFun.pos))
 
   def substitute(tpe: Type, args: List[Term], isParamType: Boolean = false)(using Context): Type =
     val argTypes = args.map: arg =>
@@ -1752,7 +1760,7 @@ object TypeChecker:
   //       sorry(TypeError.GeneralError(s"This uses a consumed capability").withPosFrom(t))
   //     out
 
-  def checkSelect(base: Syntax.Term, field: String, srcPos: SourcePos)(using Context): Result[Term] =
+  def checkSelect(base: Syntax.Term, field: String, srcPos: SourcePos, inputTypeArgs: List[Syntax.Type | Syntax.CaptureSet] = Nil)(using Context): Result[Term] =
     hopefully:
       val base1 = checkTerm(base).!!
       def fail: Result[Nothing] = Left(List(TypeError.TypeMismatch(s"a type with the field $field", base1.tpe.show).withPosFrom(base)))
@@ -1762,6 +1770,8 @@ object TypeChecker:
             case PrimArrayType(elemType) =>
               field match
                 case "size" | "length" =>
+                  if !inputTypeArgs.isEmpty then
+                    sorry(TypeError.TypeMismatch(s"a type/capture function", "the size of an array").withPos(srcPos))
                   Term.PrimOp(PrimitiveOp.ArrayLen, Nil, List(base1)).withPos(srcPos).withTpe(Definitions.i32Type).withCV(base1.cv)
                 case _ => fail.!!
             case _ => fail.!!
@@ -1769,12 +1779,14 @@ object TypeChecker:
         hopefully:
           getFieldInfo(base1.tpe, field) match
             case Some(fieldInfo) =>
-              val outTerm = Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldInfo.tpe).withCV(base1.cv)
+              var outTerm = Term.Select(base1, fieldInfo).withPos(srcPos).withTpe(fieldInfo.tpe).withCV(base1.cv)
               if isStablePath(outTerm) && !outTerm.tpe.isPure then
                 val singletonSet = outTerm.asSingletonType.singletonCaptureSet
                 val narrowedType = Type.Capturing(outTerm.tpe.stripCaptures, isReadOnly = false, singletonSet)
-                outTerm.withTpe(narrowedType).withCV(singletonSet)
-              else outTerm
+                outTerm = outTerm.withTpe(narrowedType).withCV(singletonSet)
+              if !inputTypeArgs.isEmpty then
+                outTerm = checkTypeApply(outTerm, inputTypeArgs, srcPos).!!
+              outTerm
             case _ => fail.!!
       def tryExtension: Result[Term] =
         hopefully:
@@ -1782,9 +1794,14 @@ object TypeChecker:
             case Some((extSym, typeArgs)) =>
               val method = extSym.info.methods.find(_.name == field).get
               val funType = substituteType(method.tpe, typeArgs, isParamType = false)
-              val (args, outType, consumedSet) = checkFunctionApply(funType, List(base), srcPos, isDependent = true).!!
+              // val (args, outType, consumedSet) = checkFunctionApply(funType, List(base), srcPos, isDependent = true).!!
+              // val appliedTerm = Term.Apply(resolvedTerm, args).withPos(srcPos).withTpe(outType).withCVFrom(resolvedTerm :: args*)
               val resolvedTerm = Term.ResolveExtension(extSym, typeArgs, method.name).withPos(srcPos).withTpe(funType).withCV(CaptureSet.empty)
-              val appliedTerm = Term.Apply(resolvedTerm, args).withPos(srcPos).withTpe(outType).withCVFrom(resolvedTerm :: args*)
+              val maybeTypedApplied = 
+                if inputTypeArgs.isEmpty then
+                  resolvedTerm
+                else checkTypeApply(resolvedTerm, inputTypeArgs, srcPos).!!
+              val appliedTerm = checkApply(maybeTypedApplied, List(base), funType, srcPos).!!
               appliedTerm
             case None => fail.!!
       (tryPrimArray || tryStruct || tryExtension).!!
