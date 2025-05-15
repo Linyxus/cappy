@@ -928,7 +928,7 @@ object TypeChecker:
                     sorry(TypeError.SeparationError(hint1, hint2).withPos(t.pos))
               instantiateFresh(resultTerm)
             case _ => 
-              sorry(TypeError.GeneralError(s"Expected a function, but got ${term1.tpe.show}").withPos(t.pos))
+              sorry(TypeError.GeneralError(s"Expected a type/capture function, but got ${term1.tpe.show}").withPos(t.pos))
 
     hopefully:
       var outTerm = result.!!
@@ -1150,7 +1150,7 @@ object TypeChecker:
           consumedSet.elems.foreach: cref =>
             cref.setPos(srcPos)
           (args1, outType, consumedSet)
-        case _ => sorry(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(srcPos))
+        case _ => sorry(TypeError.GeneralError(s"Expected a term function, but got ${funType.show}").withPos(srcPos))
 
   /** Instantiate fresh capabilities in the result of a function apply. */
   def instantiateFresh(t: Term)(using Context): Term =
@@ -1199,7 +1199,7 @@ object TypeChecker:
         //       Term.Apply(fun1, List(arg1)).withPos(srcPos).withTpe(Definitions.nothingType).withCVFrom(fun1, arg1)
         //     case _ => sorry(TypeError.GeneralError(s"Expect exact one argument, but got ${args.length}").withPos(srcPos))
         case funType =>
-          sorry(TypeError.GeneralError(s"Expected a function, but got ${funType.show}").withPos(fun.pos))
+          sorry(TypeError.GeneralError(s"Expected a term function, but got ${funType.show}").withPos(fun.pos))
 
   def substitute(tpe: Type, args: List[Term], isParamType: Boolean = false)(using Context): Type =
     val argTypes = args.map: arg =>
