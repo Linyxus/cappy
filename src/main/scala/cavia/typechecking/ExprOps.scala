@@ -414,7 +414,7 @@ object TypePolymorphism:
 object Synthetics:
   def etaExpand(t: Syntax.Term, binders: List[Binder.TermBinder])(using Context): Syntax.Term = 
     val params = binders.map: binder =>
-      Syntax.TermParam(binder.name, Syntax.Type.Splice(binder.tpe).withPosFrom(binder.tpe), binder.isConsume).withPosFrom(binder)
+      Syntax.TermParam(Fresh.freshName("local"), Syntax.Type.Splice(binder.tpe).withPosFrom(binder.tpe), binder.isConsume).withPosFrom(binder)
     val lambdaBody = Syntax.Term.Apply(t, params.map(p => Syntax.Term.Ident(p.name).withPosFrom(t))).withPosFrom(t)
     val lambda = Syntax.Term.Lambda(params, lambdaBody).withPosFrom(t)
     lambda
