@@ -89,7 +89,7 @@ object TypeChecker:
     case GeneralError(msg: String)
 
     def show: String = this match
-      case UnboundVariable(name, addenda) => s"ERROR: $name$addenda"
+      case UnboundVariable(name, addenda) => s"ERROR: Cannot find the identifier $name ($addenda)"
       case TypeMismatch(expected, actual) => s"ERROR: Type mismatch, expected $expected, but got $actual"
       case LeakingLocalBinder(tp) => s"ERROR: Leaking local binder: $tp"
       case SeparationError(cs1, cs2) => s"ERROR: Separation error, $cs1 and $cs2 are not separated"
@@ -567,6 +567,7 @@ object TypeChecker:
         case Some(sym: DefSymbol) => (Term.SymbolRef(sym): VarRef, sym.tpe)
         case Some((binder: Binder.TermBinder, idx)) => (Term.BinderRef(idx): VarRef, binder.tpe)
         case Some((binder: Binder, idx)) => sorry(TypeError.UnboundVariable(t.name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
+        case _ if PrimitiveOp.fromName(t.name).isDefined => sorry(TypeError.UnboundVariable(t.name, "This is a primitive operator").withPos(t.pos))
         case _ => sorry(TypeError.UnboundVariable(t.name).withPos(t.pos))
 
       val cv = if !tpe.isPure then ref.asSingletonType.singletonCaptureSet.withPos(t.pos) else CaptureSet.empty
