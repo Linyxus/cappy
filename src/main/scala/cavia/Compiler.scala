@@ -10,6 +10,7 @@ import reporting.*
 import Printer.*
 import typechecking.*
 import codegen.*
+import rechecking.*
 import java.nio.file.*
 
 object Compiler:
@@ -28,7 +29,12 @@ object Compiler:
           new Outcome:
             def getOption = None
             def getMessages = errs.map(_.asMessage)
-        case Right(res) => Outcome.simpleSuccess(res)
+        case Right(res) => 
+          val checker = new ArenaSetup
+          res.foreach: m =>
+            if m.name != "std" then
+              checker.recheckModule(m)(using ctx)
+          Outcome.simpleSuccess(res)
 
   class PrintModulesStep(after: String) extends CompilerStep[List[Expr.Module], List[Expr.Module]]:
     def run(modules: List[Expr.Module]): Outcome[List[Expr.Module]] =

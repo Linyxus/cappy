@@ -108,3 +108,12 @@ abstract class Rechecker:
     case Term.If(cond, thenBranch, elseBranch) => recheckIf(expr, cond, thenBranch, elseBranch)
     case Term.ResolveExtension(sym, targs, methodName) => recheckResolveExtension(expr, sym, targs, methodName)
     case Term.Match(scrutinee, cases) => recheckMatch(expr, scrutinee, cases)
+
+  def recheckModule(mod: Module)(using Context): Module =
+    val defns1 = mod.defns.map: d =>
+      d match
+        case Definition.ValDef(sym, body) =>
+          val body1 = recheck(body)(using ctx)
+          Definition.ValDef(sym, body1)
+        case _ => d
+    mod.copy(defns = defns1)

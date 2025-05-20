@@ -14,6 +14,12 @@ object TypeChecker:
   import Binder.*
   import Inference.*
 
+  val PeakConsumed = new MetaKey:
+    type Value = Set[CaptureRef.CapInst]
+
+  val PeakCreated = new MetaKey:
+    type Value = Set[CaptureRef.CapInst]
+
   /** Type checking context. */
   case class Context(
     /** Binders in scope. */
@@ -428,8 +434,8 @@ object TypeChecker:
     val curLevel = ctx.freshLevel
     val capKind = if isFresh then CapKind.Fresh(curLevel) else CapKind.Sep(curLevel)
     val tm1 = CapInstantiation(() => CaptureRef.makeCapInst(capKind, fromInst = None))
-    createdCaps = tm1.localCaps
     val tpe1 = tm1.apply(tpe)
+    createdCaps = tm1.localCaps
     val rootCapInst = tpe1.captureSet match
       case CaptureSet.Const((QualifiedRef(_, c: CaptureRef.CapInst)) :: Nil) if tm1.localCaps.contains(c) => Some(c)
       case _ => None
@@ -1097,6 +1103,14 @@ object TypeChecker:
           case _ => sorry(TypeError.GeneralError(s"Cannot consume ${cref.show}").withPos(srcPos))
       consumedSet
 
+  def getConsumedPeaks(cv: CaptureSet)(using Context): Set[CaptureRef.CapInst] =
+    val pks = computePeak(cv)
+    val pkElems = cv.elems.flatMap: cref =>
+      cref.core match
+        case pk: CaptureRef.CapInst if cref.mode == AccessMode.Consume() => pk :: Nil
+        case _ => Nil
+    pkElems.toSet
+
   def consumedPeaks(cv: CaptureSet)(using Context): CaptureSet =
     val pkElems = cv.elems.flatMap: cref =>
       val pks = computePeak(CaptureSet(cref :: Nil)).elems
@@ -1157,8 +1171,9 @@ object TypeChecker:
   /** Instantiate fresh capabilities in the result of a function apply. */
   def instantiateFresh(t: Term)(using Context): Term =
     val tpe = t.tpe
-    val (tpe1, _) = instantiateCaps(tpe, isFresh = true)
+    val (tpe1, insts) = instantiateCaps(tpe, isFresh = true)
     val t1 = t.withTpe(tpe1)
+    t1.meta.put(PeakCreated, insts.toSet)
     t1
 
   def maybeUnbox(t: Term)(using Context): Result[Term] =
@@ -1186,6 +1201,7 @@ object TypeChecker:
               val cv = fun1.tpe.captureSet.elems.map: cref =>
                 cref.copy().withPos(srcPos)
               resultTerm.withMoreCV(CaptureSet(cv))
+          resultTerm.meta.put(PeakConsumed, getConsumedPeaks(consumedSet))
           resultTerm
         case PrimArrayType(elemType) =>
           args match
@@ -1504,19 +1520,22 @@ object TypeChecker:
                   sorry(TypeError.GeneralError(s"In the returned value of this method, ${ci.show} and ${cj.show} consumes the same capability twice").withPos(resultType.get.pos))
             // Check the level of fresh caps
             val curLevel = ctx.freshLevel
+            var consumedPks = Set.empty[CaptureRef.CapInst]
             css.foreach: cs =>
               val pks = computePeak(cs)
               pks.elems.foreach: cref =>
                 cref.core match
-                  case CaptureRef.CapInst(capId, CapKind.Fresh(level), fromInst) =>
+                  case inst @ CaptureRef.CapInst(capId, CapKind.Fresh(level), fromInst) =>
                     if level < curLevel then
                       sorry(TypeError.GeneralError(s"Treating capabilities ${cs.show} as fresh in the result type but they come from the outside").withPos(expr.pos))
+                    else consumedPks = consumedPks + inst
                   case CaptureRef.CapInst(capId, CapKind.Sep(level), fromInst) =>
                     sorry(TypeError.GeneralError(s"Treating capabilities ${cs.show} as fresh in the result type but they are not fresh").withPos(expr.pos))
                   case _ =>
             outTerm.foreach: t =>
               if expectedBodyType.exists then
                 t.setTpe(expectedBodyType)
+              t.meta.put(PeakConsumed, consumedPks)
             outTerm
           case Syntax.TermParamList(params) :: pss => 
             val params1 = checkTermParamList(params).!!
