@@ -51,6 +51,7 @@ object Syntax:
     case Prefix(op: PrefixOp, term: Term)
     case If(cond: Term, thenBranch: Term, elseBranch: Option[Term])
     case Match(scrutinee: Term, cases: List[MatchCase])
+    case Splice(term: Expr.Term)
   import Term.*
 
   case class TypeParamList(params: List[TypeParam | CaptureParam]) extends Positioned
@@ -113,4 +114,5 @@ object Syntax:
     case Capturing(inner: Type, isReadOnly: Boolean, captureSet: CaptureSet)
     case AppliedType(tycon: Type, args: List[Type | CaptureSet])
     case Boxed(core: Type)
+    case Splice(tp: Expr.Type)
   import Type.*

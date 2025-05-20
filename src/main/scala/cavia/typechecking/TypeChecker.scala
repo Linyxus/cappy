@@ -344,6 +344,7 @@ object TypeChecker:
         val core1 = checkType(core).!!
         if core1.isPure then core1
         else Type.Boxed(core1).withPosFrom(tpe)
+    case Syntax.Type.Splice(tp) => Right(tp.withPosFrom(tpe))
 
   def checkTermParamList(params: List[Syntax.TermParam])(using Context): Result[List[TermBinder]] =
     hopefully:
@@ -561,23 +562,32 @@ object TypeChecker:
         else t
       else t
 
-  def checkIdent(t: Syntax.Term.Ident)(using Context): Result[Term] =
-    hopefully:
-      val (ref, tpe) = lookupAll(t.name) match
-        case Some(sym: DefSymbol) => (Term.SymbolRef(sym): VarRef, sym.tpe)
-        case Some((binder: Binder.TermBinder, idx)) => (Term.BinderRef(idx): VarRef, binder.tpe)
-        case Some((binder: Binder, idx)) => sorry(TypeError.UnboundVariable(t.name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
-        case _ if PrimitiveOp.fromName(t.name).isDefined => sorry(TypeError.UnboundVariable(t.name, "This is a primitive operator").withPos(t.pos))
-        case _ => sorry(TypeError.UnboundVariable(t.name).withPos(t.pos))
-
-      val cv = if !tpe.isPure then ref.asSingletonType.singletonCaptureSet.withPos(t.pos) else CaptureSet.empty
-      val tpe1 = 
-        if tpe.isPure then 
-          tpe 
-        else 
-          val core = tpe.stripCaptures
-          tpe.derivedCapturing(core, tpe.isReadOnly, ref.asSingletonType.singletonCaptureSet)
-      ref.withPosFrom(t).withTpe(tpe1).withCV(cv)
+  def checkIdent(t: Syntax.Term.Ident, pt: Type = Type.NoType())(using Context): Result[Term] =
+    def tryLookup: Result[Term] =
+      hopefully:
+        val (ref, tpe) = lookupAll(t.name) match
+          case Some(sym: DefSymbol) => (Term.SymbolRef(sym): VarRef, sym.tpe)
+          case Some((binder: Binder.TermBinder, idx)) => (Term.BinderRef(idx): VarRef, binder.tpe)
+          case Some((binder: Binder, idx)) => sorry(TypeError.UnboundVariable(t.name, s"I found a ${binder.kindStr} name, but was looking for a term").withPos(t.pos))
+          case _ => sorry(TypeError.UnboundVariable(t.name).withPos(t.pos))
+        val cv = if !tpe.isPure then ref.asSingletonType.singletonCaptureSet.withPos(t.pos) else CaptureSet.empty
+        val tpe1 = 
+          if tpe.isPure then 
+            tpe 
+          else 
+            val core = tpe.stripCaptures
+            tpe.derivedCapturing(core, tpe.isReadOnly, ref.asSingletonType.singletonCaptureSet)
+        ref.withPosFrom(t).withTpe(tpe1).withCV(cv)
+    def tryEtaExpandPrimitive: Result[Term] =
+      hopefully:
+        if PrimitiveOp.fromName(t.name).isDefined then
+          pt match
+            case TermFunctionType(params, resultType) =>
+              val term1 = Synthetics.etaExpand(t, params)
+              checkTerm(term1, pt).!!
+            case _ => sorry(TypeError.UnboundVariable(t.name, "this is the name of a primitive operator").withPos(t.pos))
+        else sorry(TypeError.UnboundVariable(t.name).withPos(t.pos))
+    tryEtaExpandPrimitive || tryLookup
 
   def destructMatchableType(scrutineeType: Type, srcPos: SourcePos)(using Context): Result[(EnumSymbol | StructSymbol, List[Type | CaptureSet])] =
     hopefully:
@@ -728,7 +738,7 @@ object TypeChecker:
     val result: Result[Term] = t match
       case t: Syntax.Term.Ident => 
         hopefully:
-          val outTerm = checkIdent(t).!!
+          val outTerm = checkIdent(t, expected).!!
           val cv = outTerm.cv
           ctx.consumedPeaks.elems.foreach: cref =>
             if !checkSeparation(cv, CaptureSet(cref :: Nil)) then

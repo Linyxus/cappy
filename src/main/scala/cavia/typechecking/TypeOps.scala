@@ -679,3 +679,9 @@ extension (tpe: Type)
     val tpe1 =  tpe.stripCaptures.dealiasTypeVar.eval
     if tpe1 eq tpe then tpe
     else tpe1.simplify
+
+object TermFunctionType:
+  def unapply(tpe: Type): Option[(List[Binder.TermBinder], Type)] = tpe match
+    case Type.TermArrow(params, result) => Some((params, result))
+    case Type.Capturing(base, _, _) => unapply(base)
+    case _ => None
