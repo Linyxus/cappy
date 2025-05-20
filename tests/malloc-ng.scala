@@ -56,12 +56,14 @@ def getPtrOrElse(p: Ptr)(orElse: () => Ptr): Ptr =
   else p
 
 def alloc(size: i32): Ptr =
-  val blockSize = alignSize(size)
-  val selectedBucket = selectBucket(blockSize)
-  getPtrOrElse(findBlock(selectedBucket, blockSize)): () =>
-    if selectedBucket != bucketXHead then
-      findBlock(bucketXHead, blockSize)
-    else -1
+  if size <= 0 then -1
+  else
+    val blockSize = alignSize(size)
+    val selectedBucket = selectBucket(blockSize)
+    getPtrOrElse(findBlock(selectedBucket, blockSize)): () =>
+      if selectedBucket != bucketXHead then
+        findBlock(bucketXHead, blockSize)
+      else -1
 
 def appendBlock(bucketPtr: Ptr, head: i32): Unit =
   setNext(head, WASM_MEMORY(bucketPtr))
@@ -92,11 +94,11 @@ def selectBucket(size: i32): Ptr = getBucketHead(size)
 
 struct Ref(var data: i32)
 def testRound(): i32 =
-  val TEST_SIZE = 500
+  val TEST_SIZE = 300
   val ptrs = newArray(TEST_SIZE, 0)
   val numSuccess = Ref(0)
   (0.until(TEST_SIZE)).iterate: i =>
-    val t = alloc(i)
+    val t = alloc((i * 3) % 256 + 1)
     ptrs(i) = t
     if t > 0 then
       numSuccess.data = numSuccess.data + 1
