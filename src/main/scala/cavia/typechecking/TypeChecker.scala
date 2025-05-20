@@ -25,7 +25,7 @@ object TypeChecker:
     /** Capabilities that have been consumed. */
     consumedPeaks: CaptureSet = CaptureSet.empty, 
     /** Level of freshness. */
-    freshLevel: Int = 0, 
+    freshLevel: Int = 0,
     /** Deprecated: `return` has been dropped. */
     // defReturnType: Option[Type] = None,
   ):
@@ -157,10 +157,18 @@ object TypeChecker:
     val res = bd.shift(idx + 1)
     res
 
-  def checkTermParam(param: Syntax.TermParam)(using ctx: Context): Result[TermBinder] =
-    checkType(param.tpe).map: tpe =>
-      val binder: TermBinder = TermBinder(param.name, tpe, param.isConsume)
-      binder.maybeWithPosFrom(param)
+  def checkTermParam(param: Syntax.TermParam, pt: Type = Type.NoType())(using ctx: Context): Result[TermBinder] =
+    hopefully:
+      param.tpe match
+        case Some(tpe) =>
+          val tpe1 = checkType(tpe).!!
+          val binder: TermBinder = TermBinder(param.name, tpe1, param.isConsume)
+          binder.maybeWithPosFrom(param)
+        case None if pt.exists =>
+          val binder: TermBinder = TermBinder(param.name, pt, param.isConsume)
+          binder.maybeWithPosFrom(param)
+        case None =>
+          sorry(TypeError.GeneralError("Cannot infer type for lambda parameter").withPos(param.pos))
 
   def checkTypeParam(param: Syntax.TypeParam)(using ctx: Context): Result[TypeBinder] =
     val bound: Result[Type] = param.bound match
@@ -346,12 +354,15 @@ object TypeChecker:
         else Type.Boxed(core1).withPosFrom(tpe)
     case Syntax.Type.Splice(tp) => Right(tp.withPosFrom(tpe))
 
-  def checkTermParamList(params: List[Syntax.TermParam])(using Context): Result[List[TermBinder]] =
+  def checkTermParamList(params: List[Syntax.TermParam], pts: Option[List[Type]] = None)(using Context): Result[List[TermBinder]] =
     hopefully:
       var result: ArrayBuffer[TermBinder] = ArrayBuffer.empty
       var nowCtx: Context = ctx
-      for p <- params do
-        val bd = checkTermParam(p)(using nowCtx).!!
+      val expectedTypes = pts match
+        case Some(pts) => pts
+        case None => params.map(_ => Type.NoType())
+      for (p, tpe) <- params zip expectedTypes do
+        val bd = checkTermParam(p, tpe)(using nowCtx).!!
         result += bd
         nowCtx = nowCtx.extend(bd)
       result.toList
@@ -736,7 +747,7 @@ object TypeChecker:
 
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType())(using Context): Result[Term] = 
     val result: Result[Term] = t match
-      case t: Syntax.Term.Ident => 
+      case t: Syntax.Term.Ident =>
         hopefully:
           val outTerm = checkIdent(t, expected).!!
           val cv = outTerm.cv
@@ -778,7 +789,10 @@ object TypeChecker:
         checkMatch(scrutinee, cases, expected, t.pos)
       case Syntax.Term.Lambda(params, body) => 
         hopefully:
-          val ps1 = checkTermParamList(params).!!
+          val pts = expected match
+            case TermFunctionType(params, _) => Some(params.map(_.tpe))
+            case _ => None
+          val ps1 = checkTermParamList(params, pts).!!
           def checkBody(using Context): Result[Term] =
             checkTerm(body)
           checkTermAbstraction(ps1, checkBody, t.pos).!!

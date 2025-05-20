@@ -10,7 +10,7 @@ object Syntax:
     case ReadOnly()
     case Consume()
 
-  case class TermParam(name: String, tpe: Type, isConsume: Boolean) extends Positioned
+  case class TermParam(name: String, tpe: Option[Type], isConsume: Boolean) extends Positioned
   case class TypeParam(name: String, bound: Option[Type]) extends Positioned
   case class CaptureParam(name: String, bound: Option[CaptureSet]) extends Positioned
   case class CaptureRef(name: String, mode: AccessMode) extends Positioned
@@ -51,7 +51,6 @@ object Syntax:
     case Prefix(op: PrefixOp, term: Term)
     case If(cond: Term, thenBranch: Term, elseBranch: Option[Term])
     case Match(scrutinee: Term, cases: List[MatchCase])
-    case Splice(term: Expr.Term)
   import Term.*
 
   case class TypeParamList(params: List[TypeParam | CaptureParam]) extends Positioned

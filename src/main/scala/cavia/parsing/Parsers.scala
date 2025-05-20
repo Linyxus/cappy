@@ -200,6 +200,7 @@ object Parsers:
   def termP: Parser[Term] = lazyP:
     longestMatch(
       termLambdaP,
+      simpleTermLambdaP,
       typeLambdaP,
       ifP,
       //applyP,
@@ -329,6 +330,19 @@ object Parsers:
     termP.surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
   )
 
+  /** Parser for a simple term lambda, `x => x + 1` or `(x, y) => x + y`. */
+  def simpleTermLambdaP: Parser[Term] =
+    val oneParamP = tokenP[Token.IDENT].map: nameTk =>
+      val param = TermParam(nameTk.name, None, isConsume = false).withPosFrom(nameTk)
+      param
+    val multiParamsP = oneParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
+    val justOneParamP = oneParamP.map(List(_))
+    val paramsP: Parser[List[TermParam]] = 
+      (multiParamsP `or` justOneParamP).withWhat("parameters of a simple term lambda")
+    val p = (paramsP, tokenP[Token.FAT_ARROW], termP).p.map((params, _, body) => Term.Lambda(params, body))
+    p.positioned.withWhat("a simple term lambda")
+
+  /** Parser for a term lambda, `(x: i32) => x + 1`. */
   def termLambdaP: Parser[Term] =
     val paramsP: Parser[List[TermParam]] = 
       termParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
@@ -421,7 +435,7 @@ object Parsers:
 
   def termParamP: Parser[TermParam] =
     val consumeP: Parser[Boolean] = keywordP("consume").optional.map(_.isDefined)
-    (consumeP, tokenP[Token.IDENT], tokenP[Token.COLON], typeP).p.map((consume, name, _, tpe) => TermParam(name.name, tpe, isConsume = consume)).positioned.withWhat("a term parameter")
+    (consumeP, tokenP[Token.IDENT], tokenP[Token.COLON], typeP).p.map((consume, name, _, tpe) => TermParam(name.name, Some(tpe), isConsume = consume)).positioned.withWhat("a term parameter")
 
   def typeParamP: Parser[TypeParam] =
     val boundP = (tokenP[Token.LESSCOLON], typeP).p.map((_, tpe) => tpe)
@@ -451,7 +465,7 @@ object Parsers:
     val arrowP = tokenP[Token.ARROW]
     val capsP = captureSetP.withWhat("a capture set after an arrow")
     val p = (paramTypesP, capturingArrowP, typeP).p.map: (paramTypes, maybeCaps, resultType) =>
-      val params = paramTypes.map(tp => TermParam("_", tp, isConsume = false))
+      val params = paramTypes.map(tp => TermParam("_", Some(tp), isConsume = false))
       val arrowType = Type.Arrow(params, resultType)
       maybeCaps match
         case Some(cs) => Type.Capturing(arrowType, false, cs)
@@ -528,7 +542,7 @@ object Parsers:
       val todos = more.map(_._1).reverse `zip` ts
       var result = t
       for (maybeCaps, ty) <- todos do
-        val param = TermParam("_", ty, isConsume = false).withPosFrom(ty)
+        val param = TermParam("_", Some(ty), isConsume = false).withPosFrom(ty)
         result = Type.Arrow(List(param), result).withPosFrom(param, result)
         maybeCaps match
           case Some(cs) => result = Type.Capturing(result, false, cs).withPosFrom(result, cs)
