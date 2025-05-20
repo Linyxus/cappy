@@ -2,18 +2,95 @@ package cavia
 
 import io.*
 import core.ast.*
+import core.*
+import CompilerSettings.*
 import tokenizing.*
 import parsing.*
 import reporting.*
 import Printer.*
 import typechecking.*
+import codegen.*
+import java.nio.file.*
 
 object Compiler:
+  object ParseStep extends CompilerStep[List[SourceFile], List[Syntax.Module]]:
+    def run(sources: List[SourceFile]): Outcome[List[Syntax.Module]] =
+      parseAll(sources) match
+        case Left(err: Tokenizer.Error) => Outcome.simpleFailure(err.asMessage)
+        case Left(err: Parser.ParseError) => Outcome.simpleFailure(Message.simple(err.show, err.pos))
+        case Right(modules) => Outcome.simpleSuccess(modules)
+
+  object TypecheckStep extends CompilerStep[List[Syntax.Module], List[Expr.Module]]:
+    def run(sources: List[Syntax.Module]): Outcome[List[Expr.Module]] =
+      val ctx = TypeChecker.Context.empty
+      TypeChecker.checkModules(sources)(using ctx) match
+        case Left(errs) =>
+          new Outcome:
+            def getOption = None
+            def getMessages = errs.map(_.asMessage)
+        case Right(res) => Outcome.simpleSuccess(res)
+
+  class PrintModulesStep(after: String) extends CompilerStep[List[Expr.Module], List[Expr.Module]]:
+    def run(modules: List[Expr.Module]): Outcome[List[Expr.Module]] =
+      println(s"--- modules after $after")
+      modules.foreach: m =>
+        if m.name != "std" then
+          println(ExprPrinter.show(m)(using TypeChecker.Context.empty))
+      Outcome.simpleSuccess(modules)
+
+  class CodegenStep(outputPath: String) extends CompilerStep[List[Expr.Module], Unit]:
+    def run(modules: List[Expr.Module]): Outcome[Unit] =
+      given genCtx: CodeGenerator.Context = CodeGenerator.Context()
+      CodeGenerator.genModules(modules)
+      val wasmMod = CodeGenerator.finalize
+      val outputCode = wasmMod.show
+      // println("--- wasm module")
+      // println(outputCode)
+      Files.writeString(Path.of(outputPath), outputCode)
+      Outcome.simpleSuccess(())
+
+  def parseOptions(args: List[String]): Option[CompilerAction] =
+    args match
+      case Nil => Some(CompilerAction.Help)
+      case "check" :: sources => Some(CompilerAction.Check(sources.map(SourceFile.fromPath)))
+      case "gen" :: sources => Some(CompilerAction.Codegen(sources.map(SourceFile.fromPath)))
+      case _ => None
+
+  def run(action: CompilerAction): Unit =
+    action match
+      case CompilerAction.Help =>
+        println("Usage: cavia check <source files>")
+        println("       cavia gen <source files>")
+      case CompilerAction.Check(sources) =>
+        val sources1 = sources :+ stdlib
+        val runner = ParseStep `fuse` TypecheckStep `fuse` PrintModulesStep("typecheck")
+        val res = runner.execute(sources1)
+        res match
+          case Some(modules) =>
+            println("--- typechecked modules")
+            modules.init.foreach: m =>
+              println(ExprPrinter.show(m)(using TypeChecker.Context.empty))
+          case None =>
+      case CompilerAction.Codegen(sources) =>
+        val runner = 
+          ParseStep 
+            `fuse` TypecheckStep 
+            `fuse` PrintModulesStep("typecheck")
+            `fuse` CodegenStep("out.wat")
+        val res = runner.execute(sources :+ stdlib)
+        res match
+          case Some(_) =>
+            println("--- codegen successful")
+          case None =>
+            println("--- codegen failed")
+
   type ParseResult[+X] = Either[Tokenizer.Error | Parser.ParseError, X]
 
   def parseAll(sources: List[SourceFile]): ParseResult[List[Syntax.Module]] =
     hopefully:
       val modules = sources.map(parse(_).!!)
+      (sources `zip` modules).foreach: (source, module) =>
+        module.sourceFile = source
       modules
 
   def parse(source: SourceFile): ParseResult[Syntax.Module] =

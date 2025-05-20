@@ -75,9 +75,9 @@ object Printer:
     def collectDescs(err: ParseError): List[String] = err match
       case ParseError.Here(msg) =>
         if msg == null then
-          List("parsing error")
+          List("ERROR(parsing): unknown error")
         else
-          List("parsing error: " + msg)
+          List("ERROR(parsing): " + msg)
       case ParseError.When(inner, desc) => ("when parsing " + desc) :: collectDescs(inner)
     val msgs = collectDescs(error).reverse
     showSourcePos(error.pos, msgs)

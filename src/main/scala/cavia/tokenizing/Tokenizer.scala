@@ -226,7 +226,9 @@ class Tokenizer(source: SourceFile):
           case ch => Error(f"Unrecognised character: $ch")
 
 object Tokenizer:
-  case class Error(msg: String) extends Positioned
+  import reporting.Message
+  case class Error(msg: String) extends Positioned:
+    def asMessage: Message = Message.simple(s"ERROR(tokenization): $msg", pos)
 
   def tokenize(source: SourceFile): List[Token | Error] =
     val tokenizer = Tokenizer(source)

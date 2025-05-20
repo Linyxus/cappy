@@ -78,7 +78,7 @@ object Syntax:
     case Root()
     case Qualified(prefix: ModuleName, name: String)
 
-  case class Module(name: ModuleName, defs: List[Definition]) extends Positioned
+  case class Module(name: ModuleName, defs: List[Definition], var sourceFile: io.SourceFile) extends Positioned
 
   enum Definition extends Positioned:
     /** A value definition, like val x: T = ... */

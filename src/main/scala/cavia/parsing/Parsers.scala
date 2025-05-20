@@ -191,7 +191,7 @@ object Parsers:
       val name = maybeHeader match
         case Some(name) => name
         case None => ModuleName.Root()
-      Module(name, defs)
+      Module(name, defs, null)
     p.positioned.withWhat("a module")
 
   def identP: Parser[Term] = 
