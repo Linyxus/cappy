@@ -74,6 +74,15 @@ object Parsers:
     val p = termParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
     p.map(params => TermParamList(params)).positioned.withWhat("a term parameter list")
 
+  def simpleTermParamListP: Parser[TermParamList] =
+    val oneParamP = tokenP[Token.IDENT].map: nameTk =>
+      TermParam(nameTk.name, None, isConsume = false).withPosFrom(nameTk)
+    val multiParamsP = oneParamP.sepBy(tokenP[Token.COMMA]).surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
+    val justOneParamP = oneParamP.map(List(_))
+    val paramsP: Parser[List[TermParam]] = 
+      (multiParamsP `or` justOneParamP).withWhat("parameters of a simple term lambda")
+    paramsP.map(TermParamList(_))
+
   def paramListP: Parser[TypeParamList | TermParamList] = typeParamListP `or` termParamListP
 
   def defDefP: Parser[Definition] =
@@ -384,7 +393,7 @@ object Parsers:
       .map(types => ApplyClause.TypeApply(types))
 
   def trailingTermClosureP: Parser[ApplyClause] =
-    val lambdaP = (tokenP[Token.COLON], termParamListP, tokenP[Token.FAT_ARROW], blockP).p.map: (_, params, _, body) =>
+    val lambdaP = (tokenP[Token.COLON], termParamListP `or` simpleTermParamListP, tokenP[Token.FAT_ARROW], blockP).p.map: (_, params, _, body) =>
       val lambda = Term.Lambda(params.params, body)
       lambda
     val p = lambdaP.positioned.withWhat("a trailing lambda").map(t => ApplyClause.TermApply(List(t)))
