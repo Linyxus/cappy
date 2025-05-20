@@ -1799,7 +1799,7 @@ object TypeChecker:
                 if inputTypeArgs.isEmpty then
                   resolvedTerm
                 else checkTypeApply(resolvedTerm, inputTypeArgs, srcPos).!!
-              val appliedTerm = checkApply(maybeTypedApplied, List(base), funType, srcPos).!!
+              val appliedTerm = checkApply(maybeTypedApplied, List(base), funType, srcPos).map(instantiateFresh).!!
               appliedTerm
             case None => fail.!!
       (tryPrimArray || tryStruct || tryExtension).!!

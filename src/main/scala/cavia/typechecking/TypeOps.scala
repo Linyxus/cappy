@@ -391,7 +391,7 @@ object TypePrinter:
       case cs: CaptureSet.UniversalSet => 
         val existing = cs.existingRefs.map(show).mkString(", ")
         val absorbed = cs.absorbedRefs.map(show).mkString(", ")
-        s"?{${existing.mkString(", ")}} absorbing {${absorbed.mkString(", ")}}"
+        s"?{${existing}} absorbing {${absorbed}}"
 
   def showVarRef(ref: VarRef)(using TypeChecker.Context): String = ref match
     case Term.BinderRef(idx) => TypeChecker.getBinder(idx).name
