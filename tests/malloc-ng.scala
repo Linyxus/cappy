@@ -102,10 +102,6 @@ def testRound(): i32 =
     ptrs(i) = t
     if t > 0 then
       numSuccess.data = numSuccess.data + 1
-    // putStr("The result of allocating a block of size ")
-    // #i32println(i * 7)
-    // putStr("  == ")
-    // #i32println(t)
   (0.until(TEST_SIZE)).iterate: i =>
     if ptrs(i) > 0 then
       free(ptrs(i))
