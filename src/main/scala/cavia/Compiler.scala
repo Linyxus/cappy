@@ -194,4 +194,47 @@ def benchmark(body: () => Unit): i32 =
   body()
   val end = perfCounter()
   end - start
+// List
+enum List[+T]:
+  case Nil()
+  case Cons(head: T, tail: List[T]^)
+extension [T](xs: List[T]^)
+  def map[U](f: T => U): List[U]^ =
+    xs match
+      case Nil() => Nil[U]()
+      case Cons(x, xs) =>
+        Cons(f(x), xs.map[U](f))
+  def foreach(f: T => Unit): Unit =
+    xs.map[Unit]: (x: T) =>
+      f(x)
+  def filter(f: T => bool): List[T]^ =
+    xs match
+      case Nil() => Nil[T]()
+      case Cons(x, xs) =>
+        if f(x) then Cons(x, xs.filter(f))
+        else xs.filter(f)
+  def reverse: List[T]^ =
+    def recur(xs: List[T]^, consume acc: List[T]^): List[T]^ =
+      xs match
+        case Nil() => acc
+        case Cons(x, xs) =>
+          recur(xs, Cons(x, acc))
+    recur(xs, Nil[T]())
+  def concat(other: List[T]^): List[T]^{other, cap} =
+    def recur(todos: List[T]^, acc: List[T]^): List[T]^{acc, cap} =
+      todos match
+        case Nil() => acc
+        case Cons(todo, todos) =>
+          recur(todos, Cons(todo, acc))
+    val t1 = xs.reverse
+    recur(xs.reverse, other)
+  def length: i32 =
+    xs match
+      case Nil() => 0
+      case Cons(_, xs) => 1 + xs.length
+  def at(idx: i32): T =
+    xs match
+      case Cons(x, xs) =>
+        if idx <= 0 then x
+        else xs.at(idx-1)
 """)
