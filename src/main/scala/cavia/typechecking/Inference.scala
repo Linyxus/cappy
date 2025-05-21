@@ -22,7 +22,12 @@ object Inference:
     // Dependencies between type variables
     uppers: mutable.Map[Int, Set[Type.TypeVar]],
     lowers: mutable.Map[Int, Set[Type.TypeVar]],
-  )
+  ):
+    /** An inference state in a new scope. Copies all fields except setting localVars to empty. */
+    def derivedState: InferenceState =
+      copy(
+        localVars = mutable.ArrayBuffer.empty,
+      )
 
   object InferenceState:
     def empty: InferenceState = InferenceState(
@@ -128,10 +133,11 @@ object Inference:
 
   def solveTypeVars()(using Context): Unit =
     state.localVars.foreach: tv =>
-      val lb = lowerBoundOf(tv)
-      val ub = upperBoundOf(tv)
-      val inst =
-        if lb.exists then lb
-        else if ub.exists then ub
-        else Definitions.nothingType
-      tv.instance = inst
+      if !tv.instance.exists then
+        val lb = lowerBoundOf(tv)
+        val ub = upperBoundOf(tv)
+        val inst =
+          if lb.exists then lb
+          else if ub.exists then ub
+          else Definitions.nothingType
+        tv.instance = inst

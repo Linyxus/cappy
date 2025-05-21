@@ -692,6 +692,12 @@ object TermFunctionType:
     case Type.Capturing(base, _, _) => unapply(base)
     case _ => None
 
+object TypeFunctionType:
+  def unapply(tpe: Type): Option[(List[Binder.TypeBinder | Binder.CaptureBinder], Type)] = tpe match
+    case Type.TypeArrow(params, result) => Some((params, result))
+    case Type.Capturing(base, _, _) => unapply(base)
+    case _ => None
+
 object RegionRefType:
   def unapply(tpe: Type): Option[Type] = tpe match
     case Type.AppliedType(Type.Base(BaseType.RegionRefType), (elemType: Type) :: Nil) => Some(elemType)

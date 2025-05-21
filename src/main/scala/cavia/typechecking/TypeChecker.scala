@@ -60,7 +60,7 @@ object TypeChecker:
 
     /** Create a new scope in type inference. See [[InferenceState]]. */
     def newInferenceScope: Context =
-      copy(inferenceState = InferenceState.empty)
+      copy(inferenceState = this.inferenceState.derivedState)
 
     /** Enter a new fresh level.
      * This happens when we are entering a new closure.
@@ -93,6 +93,7 @@ object TypeChecker:
     case SeparationError(cs1: EntityWithProvenance, cs2: EntityWithProvenance)
     case ConsumedError(cs: String, consumedPos: Option[SourcePos])
     case GeneralError(msg: String)
+    case ImpureInferredType(tpeStr: String)
 
     def show: String = this match
       case UnboundVariable(name, addenda) => s"ERROR: Cannot find the identifier $name ($addenda)"
@@ -101,6 +102,7 @@ object TypeChecker:
       case SeparationError(cs1, cs2) => s"ERROR: Separation error, $cs1 and $cs2 are not separated"
       case GeneralError(msg) => msg
       case ConsumedError(cs, consumedPos) => s"ERROR: This uses a consumed capability: $cs"
+      case ImpureInferredType(tpeStr) => s"ERROR: The inferred type argument $tpeStr is impure. This is inferred from the term arguments. Consider box them."
 
     def asMessage: Message = this match
       case SeparationError(entity1, entity2) =>
@@ -955,15 +957,35 @@ object TypeChecker:
             Inference.state.localVars.foreach: tv =>
               val inst = tv.instance
               if !inst.isPure then
-                sorry(TypeError.GeneralError(s"Type argument ${inst.show} is not pure. This type argument was inferred based on the term arguments.").withPos(t.pos))
+                sorry(TypeError.ImpureInferredType(inst.show).withPos(t.pos))
             val outTerm1 = instantiateFresh(outTerm)
             outTerm1
       case Syntax.Term.Apply(fun, args) => 
-        checkApply(fun, args, expected, t.pos).map(instantiateFresh(_))
+        hopefully:
+          val fun1 = checkTerm(fun).!!
+          fun1.tpe match
+            case TypeFunctionType(binders, _) =>
+              // Apply type function to type arguments
+              withinNewInferenceScope:
+                val targs: List[Type | CaptureSet] = binders.map:
+                  case binder: TypeBinder =>
+                    val bound = if TypeComparer.checkSubtype(Definitions.anyType, binder.bound) then Type.NoType() else binder.bound
+                    val tv = Inference.createTypeVar(bound)
+                    tv
+                  case binder: CaptureBinder => CaptureSet.empty  // TODO: capture inference is not supported yet
+                val fun2 = checkTypeApply(fun1, Right(targs), t.pos).!!
+                val appliedTerm = checkApply(fun2, args, expected, t.pos).map(instantiateFresh(_)).!!
+                Inference.solveTypeVars()
+                for tv <- Inference.state.localVars do
+                  if !tv.instance.isPure then
+                    sorry(TypeError.ImpureInferredType(tv.instance.show).withPos(t.pos))
+                appliedTerm
+            case _ =>
+              checkApply(fun1, args, expected, t.pos).map(instantiateFresh(_)).!!
       case Syntax.Term.TypeApply(term, targs) => 
         hopefully:
           val term1 = checkTerm(term).!!
-          checkTypeApply(term1, targs, t.pos).!!
+          checkTypeApply(term1, Left(targs), t.pos).!!
 
     hopefully:
       val result = trySpecialForms.!!.getOrElse(tryDefault.!!)
@@ -1250,11 +1272,14 @@ object TypeChecker:
         case funType =>
           sorry(TypeError.GeneralError(s"Expected a term function, but got ${funType.show}").withPos(fun.pos))
 
-  def checkTypeApply(typeFun: Term, targs: List[Syntax.Type | Syntax.CaptureSet], srcPos: SourcePos)(using Context): Result[Term] =
+  def checkTypeApply(typeFun: Term, targs: Either[List[Syntax.Type | Syntax.CaptureSet], List[Type | CaptureSet]], srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
       typeFun.tpe.stripCaptures match
         case funTpe @ Type.TypeArrow(formals, resultType) => 
-          val typeArgs = checkTypeArgs(targs, formals, srcPos).!!
+          val typeArgs = 
+            targs match
+              case Left(targs) => checkTypeArgs(targs, formals, srcPos).!!
+              case Right(targs) => targs
           val resultType1 = substituteType(resultType, typeArgs)
           val resultTerm = Term.TypeApply(typeFun, typeArgs).withPos(srcPos).withTpe(resultType1)
           resultTerm.withCVFrom(typeFun)
@@ -1262,18 +1287,21 @@ object TypeChecker:
             case _: VarRef =>
             case _ =>
               resultTerm.withMoreCV(funTpe.captureSet)
-          val captureArgsWithDesc: List[(CaptureSet, EntityWithProvenance)] = (targs `zip` typeArgs).collect:
-            case (targ: Syntax.CaptureSet, cs: CaptureSet) => 
-              (cs, EntityWithProvenance(cs.show, targ.pos, "this argument"))
-          val signature = funTpe.signatureCaptureSet
-          val signatureWithDesc = (signature, EntityWithProvenance(signature.show, typeFun.pos, "the function's context"))
-          val todoCaptureSets = signatureWithDesc :: captureArgsWithDesc
-          for i <- 0 until todoCaptureSets.length do
-            for j <- i + 1 until todoCaptureSets.length do
-              val (cs1, hint1) = todoCaptureSets(i)
-              val (cs2, hint2) = todoCaptureSets(j)
-              if !checkSeparation(cs1, cs2) then
-                sorry(TypeError.SeparationError(hint1, hint2).withPos(srcPos))
+          targs match
+            case Left(targs) =>
+              val captureArgsWithDesc: List[(CaptureSet, EntityWithProvenance)] = (targs `zip` typeArgs).collect:
+                case (targ: Syntax.CaptureSet, cs: CaptureSet) => 
+                  (cs, EntityWithProvenance(cs.show, targ.pos, "this argument"))
+              val signature = funTpe.signatureCaptureSet
+              val signatureWithDesc = (signature, EntityWithProvenance(signature.show, typeFun.pos, "the function's context"))
+              val todoCaptureSets = signatureWithDesc :: captureArgsWithDesc
+              for i <- 0 until todoCaptureSets.length do
+                for j <- i + 1 until todoCaptureSets.length do
+                  val (cs1, hint1) = todoCaptureSets(i)
+                  val (cs2, hint2) = todoCaptureSets(j)
+                  if !checkSeparation(cs1, cs2) then
+                    sorry(TypeError.SeparationError(hint1, hint2).withPos(srcPos))
+            case Right(_) =>
           instantiateFresh(resultTerm)
         case _ => 
           sorry(TypeError.GeneralError(s"Expected a type/capture function, but got ${typeFun.tpe.show}").withPos(typeFun.pos))
@@ -1879,7 +1907,7 @@ object TypeChecker:
                 val narrowedType = Type.Capturing(outTerm.tpe.stripCaptures, isReadOnly = false, singletonSet)
                 outTerm = outTerm.withTpe(narrowedType).withCV(singletonSet)
               if !inputTypeArgs.isEmpty then
-                outTerm = checkTypeApply(outTerm, inputTypeArgs, srcPos).!!
+                outTerm = checkTypeApply(outTerm, Left(inputTypeArgs), srcPos).!!
               outTerm
             case _ => fail.!!
       def tryExtension: Result[Term] =
@@ -1892,7 +1920,7 @@ object TypeChecker:
               val maybeTypedApplied = 
                 if inputTypeArgs.isEmpty then
                   resolvedTerm
-                else checkTypeApply(resolvedTerm, inputTypeArgs, srcPos).!!
+                else checkTypeApply(resolvedTerm, Left(inputTypeArgs), srcPos).!!
               val appliedTerm = checkApply(maybeTypedApplied, List(base), funType, srcPos).map(instantiateFresh(_)).!!
               appliedTerm
             case None => fail.!!
