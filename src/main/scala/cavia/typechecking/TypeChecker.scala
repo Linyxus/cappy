@@ -1431,8 +1431,13 @@ object TypeChecker:
   def checkArena(returnType: Type, runner: Syntax.Term, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
       val regionType = Type.Capturing(Definitions.regionType, isReadOnly = false, CaptureSet.universal)
-      val expected = Type.TermArrow(List(TermBinder("reg", regionType, isConsume = false)), returnType)
-      val runner1 = checkTerm(runner, expected = expected).!!
+      val binders = List[TermBinder](TermBinder("reg", regionType, isConsume = false))
+      val expected = Type.TermArrow(binders, returnType)
+      val expandedRunner =
+        if runner.isInstanceOf[Syntax.Term.Lambda] then runner
+        else
+          Synthetics.etaExpand(runner, binders)
+      val runner1 = checkTerm(expandedRunner, expected = expected).!!
       val result = Term.PrimOp(PrimitiveOp.Arena, List(returnType), List(runner1))
       result.withPos(srcPos).withTpe(returnType).withCVFrom(runner1)
 
