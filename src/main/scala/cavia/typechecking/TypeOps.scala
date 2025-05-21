@@ -682,6 +682,10 @@ extension (tpe: Type)
     if tpe1 eq tpe then tpe
     else tpe1.simplify
 
+  def isRegionType(using ctx: TypeChecker.Context): Boolean = tpe.simplify match
+    case Type.Base(BaseType.RegionType) => true
+    case _ => false
+
 object TermFunctionType:
   def unapply(tpe: Type): Option[(List[Binder.TermBinder], Type)] = tpe match
     case Type.TermArrow(params, result) => Some((params, result))

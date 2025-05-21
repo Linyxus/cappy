@@ -433,11 +433,12 @@ object TypeChecker:
           sorry(TypeError.GeneralError(s"Type argument number mismatch: expected ${formals.length}, but got ${targs.length}").withPos(srcPos))
       go(targs, formalTypes, Nil)
 
-  def instantiateCaps(tpe: Type, isFresh: Boolean)(using Context): (Type, List[CaptureRef.CapInst]) =
+  def instantiateCaps(tpe: Type, isFresh: Boolean, fromInst: Option[CaptureRef.CapInst] = None)(using Context): (Type, List[CaptureRef.CapInst]) =
     var createdCaps: List[CaptureRef.CapInst] = Nil
     val curLevel = ctx.freshLevel
     val capKind = if isFresh then CapKind.Fresh(curLevel) else CapKind.Sep(curLevel)
-    val tm1 = CapInstantiation(() => CaptureRef.makeCapInst(capKind, fromInst = None))
+    val maybeFromInst = fromInst.map(_.capId)
+    val tm1 = CapInstantiation(() => CaptureRef.makeCapInst(capKind, fromInst = maybeFromInst))
     val tpe1 = tm1.apply(tpe)
     createdCaps = tm1.localCaps
     val rootCapInst = tpe1.captureSet match
@@ -756,7 +757,25 @@ object TypeChecker:
       outTerm
 
   def checkTerm(t: Syntax.Term, expected: Type = Type.NoType())(using Context): Result[Term] = 
-    val result: Result[Term] = t match
+    def trySpecialForms: Result[Option[Term]] = hopefully:
+      t match
+        case Syntax.Term.Apply(sel @ Syntax.Term.Select(base, field), args) =>
+          val base1 = checkTerm(base).!!
+          if base1.tpe.isRegionType then
+            val peaks = computePeak(base1.tpe.captureSet)
+            val regionPeak: CaptureRef.CapInst = peaks.elems match
+              case (QualifiedRef(_, inst: CaptureRef.CapInst)) :: Nil => inst
+              case _ => sorry(TypeError.GeneralError(s"Invalid region with type ${base1.tpe.show}"))
+            val classSym = lookupStructSymbol(field) match
+              case None => sorry(TypeError.GeneralError(s"Regions only allocate `struct`s, but $field is not a struct").withPos(sel.pos))
+              case Some(sym) => sym
+            val initTerm = checkStructInit(classSym, Left(Nil), args, expected, t.pos).!!
+            val outTerm = Term.PrimOp(PrimitiveOp.RegionAlloc, Nil, List(base1, initTerm)).like(initTerm).withMoreCV(base1.cv)
+            instantiateFresh(outTerm, fromInst = Some(regionPeak))
+            Some(outTerm)
+          else None
+        case _ => None
+    def tryDefault: Result[Term] = t match
       case t: Syntax.Term.Ident =>
         hopefully:
           val outTerm = checkIdent(t, expected).!!
@@ -905,13 +924,13 @@ object TypeChecker:
                   sorry(TypeError.LeakingLocalBinder(resType.show(using ctx.extend(bd1 :: Nil))).withPos(d.pos))
         go(stmts)
       case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if PrimitiveOp.fromName(name).isDefined => 
-        checkPrimOp(PrimitiveOp.fromName(name).get, args, expected, t.pos).map(instantiateFresh)
+        checkPrimOp(PrimitiveOp.fromName(name).get, args, expected, t.pos).map(instantiateFresh(_))
       case Syntax.Term.Apply(Syntax.Term.TypeApply(Syntax.Term.Ident(name), targs), args) if PrimitiveOp.fromName(name).isDefined =>
         val primOp = PrimitiveOp.fromName(name).get
-        checkPolyPrimOp(primOp, targs, args, expected, t.pos).map(instantiateFresh)
+        checkPolyPrimOp(primOp, targs, args, expected, t.pos).map(instantiateFresh(_))
       case Syntax.Term.Apply(Syntax.Term.TypeApply(Syntax.Term.Ident(name), targs), args) if lookupStructSymbol(name).isDefined =>
         val classSym = lookupStructSymbol(name).get
-        checkStructInit(classSym, Left(targs), args, expected, t.pos).map(instantiateFresh)
+        checkStructInit(classSym, Left(targs), args, expected, t.pos).map(instantiateFresh(_))
       case Syntax.Term.Apply(Syntax.Term.Ident(name), args) if lookupStructSymbol(name).isDefined =>
         withinNewInferenceScope:
           hopefully:
@@ -936,14 +955,15 @@ object TypeChecker:
             val outTerm1 = instantiateFresh(outTerm)
             outTerm1
       case Syntax.Term.Apply(fun, args) => 
-        checkApply(fun, args, expected, t.pos).map(instantiateFresh)
+        checkApply(fun, args, expected, t.pos).map(instantiateFresh(_))
       case Syntax.Term.TypeApply(term, targs) => 
         hopefully:
           val term1 = checkTerm(term).!!
           checkTypeApply(term1, targs, t.pos).!!
 
     hopefully:
-      var outTerm = result.!!
+      val result = trySpecialForms.!!.getOrElse(tryDefault.!!)
+      var outTerm = result
       outTerm = adaptLazyType(outTerm)
       outTerm = maybeAdaptUnit(outTerm, expected)
       outTerm = maybeAdaptBoxed(outTerm, expected).!!
@@ -1173,9 +1193,9 @@ object TypeChecker:
         case _ => sorry(TypeError.GeneralError(s"Expected a term function, but got ${funType.show}").withPos(srcPos))
 
   /** Instantiate fresh capabilities in the result of a function apply. */
-  def instantiateFresh(t: Term)(using Context): Term =
+  def instantiateFresh(t: Term, fromInst: Option[CaptureRef.CapInst] = None)(using Context): Term =
     val tpe = t.tpe
-    val (tpe1, insts) = instantiateCaps(tpe, isFresh = true)
+    val (tpe1, insts) = instantiateCaps(tpe, isFresh = true, fromInst = fromInst)
     val t1 = t.withTpe(tpe1)
     t1.meta.put(PeakCreated, insts.toSet)
     t1
@@ -1546,6 +1566,9 @@ object TypeChecker:
                   case inst @ CaptureRef.CapInst(capId, CapKind.Fresh(level), fromInst) =>
                     if level < curLevel then
                       sorry(TypeError.GeneralError(s"Treating capabilities ${cs.show} as fresh in the result type but they come from the outside").withPos(expr.pos))
+                    else if fromInst.isDefined then
+                      sorry(TypeError.GeneralError(
+                        s"Treating capabilities ${cs.show} as fresh in the result type but they depends on the root of id ${fromInst.get}").withPos(expr.pos))
                     else consumedPks = consumedPks + inst
                   case CaptureRef.CapInst(capId, CapKind.Sep(level), fromInst) =>
                     sorry(TypeError.GeneralError(s"Treating capabilities ${cs.show} as fresh in the result type but they are not fresh").withPos(expr.pos))
@@ -1861,7 +1884,7 @@ object TypeChecker:
                 if inputTypeArgs.isEmpty then
                   resolvedTerm
                 else checkTypeApply(resolvedTerm, inputTypeArgs, srcPos).!!
-              val appliedTerm = checkApply(maybeTypedApplied, List(base), funType, srcPos).map(instantiateFresh).!!
+              val appliedTerm = checkApply(maybeTypedApplied, List(base), funType, srcPos).map(instantiateFresh(_)).!!
               appliedTerm
             case None => fail.!!
       (tryPrimArray || tryStruct || tryExtension).!!

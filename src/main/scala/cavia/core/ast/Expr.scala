@@ -346,7 +346,9 @@ object Expr:
     case Unbox
     /** Open an arena */
     case Arena
-
+    /** Allocate a struct */
+    case RegionAlloc
+  
     override def toString: String = this match
       case I32Add => "#i32add"
       case I32Mul => "#i32mul"
@@ -393,6 +395,7 @@ object Expr:
       case Unbox => "#unbox"
       //case Boundary => "#boundary"
       case Arena => "arena"
+      case RegionAlloc => "#regionalloc"
 
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match
