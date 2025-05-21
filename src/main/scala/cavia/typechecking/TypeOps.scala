@@ -341,7 +341,15 @@ object TypePrinter:
       case Type.SymbolRef(sym) => sym.name
       case tvar: Type.TypeVar =>
         if tvar.instance.exists then show(tvar.instance)
-        else s"?X$$${tvar.id}"
+        else 
+          val lb = Inference.lowerBoundOf(tvar)
+          val ub = Inference.upperBoundOf(tvar)
+          val boundsStr =
+            if lb.exists && ub.exists then s"${show(lb)}..${show(ub)}"
+            else if lb.exists then s">: ${show(lb)}"
+            else if ub.exists then s"<: ${show(ub)}"
+            else "..."
+          s"?X$$${tvar.id} ($boundsStr)"
       case Type.AppliedType(constructor, args) =>
         def showTypeArg(arg: Type | CaptureSet): String = arg match
           case tpe: Type => show(tpe)
