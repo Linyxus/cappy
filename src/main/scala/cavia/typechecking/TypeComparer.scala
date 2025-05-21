@@ -112,12 +112,14 @@ object TypeComparer:
       case (Type.SymbolRef(sym1: StructSymbol), Type.SymbolRef(sym2: EnumSymbol)) =>
         sym2.info.variants.exists(_ eq sym1)
       case (Type.TermArrow(params1, result1), Type.TermArrow(params2, result2)) => 
-        def go(ps1: List[TermBinder], ps2: List[TermBinder])(using Context): Boolean = (ps1, ps2) match
-          case (Nil, Nil) => true
+        def go(ps1: List[TermBinder], ps2: List[TermBinder], checkResult: Context ?=> Boolean)(using Context): Boolean = (ps1, ps2) match
+          case (Nil, Nil) => checkResult
           case (p1 :: ps1, p2 :: ps2) =>
-            checkSubtype(p2.tpe, p1.tpe) && go(ps1, ps2)(using ctx.extend(p2))
+            val (p22, _) = instantiateBinderCaps(p2)
+            checkSubtype(p2.tpe, p1.tpe) && go(ps1, ps2, checkResult)(using ctx.extend(p22))
           case _ => false
-        go(params1, params2) && checkSubtype(result1, result2)(using ctx.extend(params2))
+        def checkResult(using Context): Boolean = checkSubtype(result1, result2)
+        go(params1, params2, checkResult)
       case (Type.TypeArrow(params1, result1), Type.TypeArrow(params2, result2)) =>
         def go(ps1: List[TypeBinder | CaptureBinder], ps2: List[TypeBinder | CaptureBinder])(using Context): Boolean = (ps1, ps2) match
           case (Nil, Nil) => true
