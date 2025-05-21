@@ -344,6 +344,8 @@ object Expr:
     /** Primitives for boxing and unboxing in capture tracking */
     case Box
     case Unbox
+    /** Open an arena */
+    case Arena
 
     override def toString: String = this match
       case I32Add => "#i32add"
@@ -390,6 +392,7 @@ object Expr:
       case Box => "#box"
       case Unbox => "#unbox"
       //case Boundary => "#boundary"
+      case Arena => "arena"
 
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match
@@ -432,6 +435,7 @@ object Expr:
       case "#unsafeAsPure" => Some(PrimitiveOp.UnsafeAsPure)
       case "#perfcounter" => Some(PrimitiveOp.PerfCounter)
       // case "boundary" => Some(PrimitiveOp.Boundary)
+      case "arena" => Some(PrimitiveOp.Arena)
       case _ => None
 
   /** Marker trait for all closures: term/type lambdas */

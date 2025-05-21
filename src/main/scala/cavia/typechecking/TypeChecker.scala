@@ -362,13 +362,15 @@ object TypeChecker:
         else Type.Boxed(core1).withPosFrom(tpe)
     case Syntax.Type.Splice(tp) => Right(tp.withPosFrom(tpe))
 
-  def checkTermParamList(params: List[Syntax.TermParam], pts: Option[List[Type]] = None)(using Context): Result[List[TermBinder]] =
+  def checkTermParamList(params: List[Syntax.TermParam], pts: Option[List[Type]] = None, srcPos: SourcePos)(using Context): Result[List[TermBinder]] =
     hopefully:
       var result: ArrayBuffer[TermBinder] = ArrayBuffer.empty
       var nowCtx: Context = ctx
       val expectedTypes = pts match
         case Some(pts) => pts
         case None => params.map(_ => Type.NoType())
+      if expectedTypes.length != params.length then
+        sorry(TypeError.TypeMismatch(s"a lambda of ${expectedTypes.length} parameters", s"a lambda of ${params.length} parameters").withPos(srcPos))
       for (p, tpe) <- params zip expectedTypes do
         val bd = checkTermParam(p, tpe)(using nowCtx).!!
         result += bd
@@ -800,7 +802,7 @@ object TypeChecker:
           val pts = expected match
             case TermFunctionType(params, _) => Some(params.map(_.tpe))
             case _ => None
-          val ps1 = checkTermParamList(params, pts).!!
+          val ps1 = checkTermParamList(params, pts, t.pos).!!
           def checkBody(using Context): Result[Term] =
             checkTerm(body)
           checkTermAbstraction(ps1, checkBody, t.pos).!!
@@ -1401,7 +1403,15 @@ object TypeChecker:
   //     val runner1 = checkTerm(runner, expected = expected).!!
   //     val result = Term.PrimOp(PrimitiveOp.Boundary, Nil, List(runner1))
   //     result.withPos(srcPos).withTpe(returnType).withCVFrom(runner1)
-      
+
+  def checkArena(returnType: Type, runner: Syntax.Term, srcPos: SourcePos)(using Context): Result[Term] =
+    hopefully:
+      val regionType = Type.Capturing(Definitions.regionType, isReadOnly = false, CaptureSet.universal)
+      val expected = Type.TermArrow(List(TermBinder("reg", regionType, isConsume = false)), returnType)
+      val runner1 = checkTerm(runner, expected = expected).!!
+      val result = Term.PrimOp(PrimitiveOp.Arena, List(returnType), List(runner1))
+      result.withPos(srcPos).withTpe(returnType).withCVFrom(runner1)
+
   def checkPolyPrimOp(op: PrimitiveOp, targs: List[Syntax.Type | Syntax.CaptureSet], args: List[Syntax.Term], expected: Type, pos: SourcePos)(using Context): Result[Term] =
     hopefully:
       op match
@@ -1411,6 +1421,12 @@ object TypeChecker:
               val elemType1 = checkType(elemType).!!
               checkArrayInit(elemType1, args, pos).!!
             case _ => sorry(TypeError.GeneralError(s"Argument number mismatch, `newArray` expects one type argument and two term arguments"))
+        case PrimitiveOp.Arena =>
+          (targs, args) match
+            case ((returnType : Syntax.Type) :: Nil, runner :: Nil) =>
+              val returnType1 = checkType(returnType).!!
+              checkArena(returnType1, runner, pos).!!
+            case _ => sorry(TypeError.GeneralError(s"Argument number mismatch, `arena` expects one type argument and one term argument"))
         // case PrimitiveOp.Boundary =>
         //   (targs, args) match
         //     case ((returnType : Syntax.Type) :: Nil, runner :: Nil) =>
@@ -1539,8 +1555,8 @@ object TypeChecker:
                 t.setTpe(expectedBodyType)
               t.meta.put(PeakConsumed, consumedPks)
             outTerm
-          case Syntax.TermParamList(params) :: pss => 
-            val params1 = checkTermParamList(params).!!
+          case (p @ Syntax.TermParamList(params)) :: pss => 
+            val params1 = checkTermParamList(params, srcPos = p.pos).!!
             def checkBody(using Context): Result[Term] = go(pss)
             checkTermAbstraction(params1, checkBody, srcPos = d.pos)
           case Syntax.TypeParamList(params) :: pss =>
@@ -1585,7 +1601,7 @@ object TypeChecker:
       val methodInfos = d.methods.map: method =>
         val (typeParamss, restParamss) = splitExtensionParamLists(method.paramss)
         val method1 =
-          method.copy(paramss = typeParamss ++ (Syntax.TermParamList(List(d.selfArg)) :: restParamss)).withPosFrom(method)
+          method.copy(paramss = typeParamss ++ (Syntax.TermParamList(List(d.selfArg)).withPosFrom(method) :: restParamss)).withPosFrom(method)
         val (bd, expr) = checkDef(method1)(using ctx1).!!
         ExtensionMethod(method.name, bd.tpe, expr)
       ExtensionInfo(typeArgs, selfArgBinder.tpe, methodInfos)
@@ -1599,7 +1615,7 @@ object TypeChecker:
             else Right(Definitions.anyType)
           case Some(resultType) => checkType(resultType)
       case (ps: Syntax.TermParamList) :: pss =>
-        checkTermParamList(ps.params).flatMap: params =>
+        checkTermParamList(ps.params, srcPos = ps.pos).flatMap: params =>
           go(pss)(using ctx.extend(params)).flatMap: resultType1 =>
             Right(Type.TermArrow(params, resultType1).withKind(TypeKind.Star))
       case (ps: Syntax.TypeParamList) :: pss =>
@@ -1668,7 +1684,7 @@ object TypeChecker:
           val methodInfos = d.methods.map: method =>
             val (typeParamss, restParamss) = splitExtensionParamLists(method.paramss)
             val method1 =
-              method.copy(paramss = typeParamss ++ (Syntax.TermParamList(List(d.selfArg)) :: restParamss)).withPosFrom(method)
+              method.copy(paramss = typeParamss ++ (Syntax.TermParamList(List(d.selfArg)).withPosFrom(method) :: restParamss)).withPosFrom(method)
             val methodType = extractDefnType(method1)(using ctx2).!!
             ExtensionMethod(method.name, methodType, body = null)
           sym.info = ExtensionInfo(typeArgs, selfArgBinder.tpe, methodInfos)
