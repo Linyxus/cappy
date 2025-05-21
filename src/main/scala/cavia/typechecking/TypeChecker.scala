@@ -1858,7 +1858,7 @@ object TypeChecker:
         case lhs1 @ Term.Select(base1, fieldInfo) =>
           if fieldInfo.mutable then
             if base1.tpe.isReadOnly then
-              sorry(TypeError.TypeMismatch("A mutable reference", base1.tpe.show).withPosFrom(base1))
+              sorry(TypeError.TypeMismatch("a mutable reference", base1.tpe.show).withPosFrom(base1))
             val rhs1 = checkTerm(rhs, expected = lhs1.tpe).!!
             Term.PrimOp(PrimitiveOp.StructSet, Nil, List(lhs1, rhs1)).withPos(srcPos).withTpe(Definitions.unitType).withCVFrom(lhs1, rhs1)
           else
