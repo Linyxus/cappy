@@ -1,0 +1,6 @@
+3 |   arena[Region^{cap}]: r =>
+  |                      ^^^^^^
+4 |     r
+  | ^^^^^
+
+    ERROR: Type mismatch, expected (reg: Region^{cap}) -> Region^{cap}, but got (r: Region^{cap}) ->{} Region^{r}
