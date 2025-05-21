@@ -241,6 +241,8 @@ object TypeChecker:
     case "bool" => Some(Definitions.boolType)
     case "array" => Some(Definitions.arrayConstructorType)
     case "char" => Some(Definitions.charType)
+    case "Region" => Some(Definitions.regionType)
+    case "RegionRef" => Some(Definitions.regionRefConstructorType)
     // case "String" => Some(Definitions.strType)
     // case "Break" => Some(Definitions.breakConstructorType)
     // Float types are not supported yet, so commenting them out for now
