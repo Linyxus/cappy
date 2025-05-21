@@ -472,7 +472,9 @@ object TypeChecker:
     classSym: StructSymbol, 
     targs: Either[List[Syntax.Type | Syntax.CaptureSet], List[Type | CaptureSet]], 
     args: List[Syntax.Term], 
-    expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
+    expected: Type,
+    srcPos: SourcePos,
+    onRegion: Boolean = false)(using Context): Result[Term] =
     val tformals = classSym.info.targs
     val fields = classSym.info.fields
     hopefully:
@@ -491,7 +493,7 @@ object TypeChecker:
       val argFormals = fields1.map(_._2)
       val syntheticFunctionType = Type.TermArrow(argFormals.map(tpe => TermBinder("_", tpe, isConsume = false)), Definitions.anyType)
       val (termArgs, _, consumedSet) = checkFunctionApply(syntheticFunctionType, args, srcPos, isDependent = false).!!
-      val classType = 
+      var classType = 
         if typeArgs.isEmpty then
           Type.SymbolRef(classSym)
         else
@@ -505,6 +507,8 @@ object TypeChecker:
           if fieldType.isPure then None
           else Some(FieldInfo(name, arg.tpe, mutable))
       val captureSet = CaptureSet.universal ++ CaptureSet(termCaptureElems)
+      if onRegion then
+        classType = Definitions.regionRefType(classType)
       val outType = Type.Capturing(classType, isReadOnly = false, captureSet)
       val refinedOutType = outType.refined(refinements)
       Term.StructInit(classSym, typeArgs, termArgs).withPos(srcPos).withTpe(refinedOutType).withCVFrom(termArgs*)
@@ -769,7 +773,7 @@ object TypeChecker:
             val classSym = lookupStructSymbol(field) match
               case None => sorry(TypeError.GeneralError(s"Regions only allocate `struct`s, but $field is not a struct").withPos(sel.pos))
               case Some(sym) => sym
-            val initTerm = checkStructInit(classSym, Left(Nil), args, expected, t.pos).!!
+            val initTerm = checkStructInit(classSym, Left(Nil), args, expected, t.pos, onRegion = true).!!
             val outTerm = Term.PrimOp(PrimitiveOp.RegionAlloc, Nil, List(base1, initTerm)).like(initTerm).withMoreCV(base1.cv)
             instantiateFresh(outTerm, fromInst = Some(regionPeak))
             Some(outTerm)
@@ -1919,6 +1923,7 @@ object TypeChecker:
         case Type.Capturing(tpe, _, _) => go(tpe)
         case Type.RefinedType(core, refinements) =>
           refinements.find(_.name == field).orElse(go(core))
+        case RegionRefType(inner) => go(inner)
         case _ => None
     go(tpe)
 

@@ -691,3 +691,9 @@ object TermFunctionType:
     case Type.TermArrow(params, result) => Some((params, result))
     case Type.Capturing(base, _, _) => unapply(base)
     case _ => None
+
+object RegionRefType:
+  def unapply(tpe: Type): Option[Type] = tpe match
+    case Type.AppliedType(Type.Base(BaseType.RegionRefType), (elemType: Type) :: Nil) => Some(elemType)
+    case _ => None
+  def apply(tpe: Type): Type = Definitions.regionRefType(tpe)
