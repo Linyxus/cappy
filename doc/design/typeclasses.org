@@ -1,0 +1,22 @@
+#+title: Type classes in Cavia
+
+... or implicit search/synthesis.
+
+Defining a typeclass interface:
+
+```scala
+class CouldAdd[T]:
+  def add(a: T, b: T): T
+```
+
+```scala
+class CouldShow[T]:
+  def toString(x: T): String^
+```
+
+Defining an instance:
+```scala
+instance CouldShow[bool]:
+  def toString(x: bool): String^ =
+    if x then "true" else "false"
+```
