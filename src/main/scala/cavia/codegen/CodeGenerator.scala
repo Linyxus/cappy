@@ -270,7 +270,9 @@ object CodeGenerator:
         val setFieldInstrs = List(Instruction.StructSet(structSym, fieldSym))
         val unitInstrs = List(Instruction.I32Const(0))
         baseInstrs ++ rhsInstrs ++ setFieldInstrs ++ unitInstrs
-      case PrimitiveOp.Sorry => assert(false, "program contains `sorry`")
+      case PrimitiveOp.Sorry =>
+        // Generate `sorry` as `unreachable`, which is a runtime trap
+        List(Instruction.Unreachable)
       case _ => assert(false, s"Not supported: $op")
 
   def translateBranching(cond: Expr.Term, thenBranch: List[Instruction], elseBranch: List[Instruction], resultType: ValType)(using Context): List[Instruction] =
@@ -390,6 +392,7 @@ object CodeGenerator:
       case Expr.Type.Base(Expr.BaseType.BoolType) => ValType.I32
       case Expr.Type.Base(Expr.BaseType.CharType) => ValType.I32
       case Expr.Type.Base(Expr.BaseType.AnyType) => ValType.AnyRef
+      case Expr.Type.Base(Expr.BaseType.NothingType) => ValType.AnyRef
       case Expr.Type.Capturing(inner, _, _) => translateType(inner)
       case Expr.Type.Boxed(core) => translateType(core)
       case Expr.Type.TermArrow(params, result) =>
