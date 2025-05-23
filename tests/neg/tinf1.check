@@ -1,4 +1,4 @@
 8 |   val t4 = id(A(0))  // error
   |            ^^^^^^^^
 
-    ERROR: The inferred type argument A^{fresh$93} is impure. This is inferred from the term arguments. Consider box them.
+    ERROR: The inferred type argument A^{fresh$95} is impure. This is inferred from the term arguments. Consider box them.

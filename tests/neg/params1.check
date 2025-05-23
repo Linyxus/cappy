@@ -1,0 +1,4 @@
+5 |   foo(io, i)  // error
+  |           ^
+
+    ERROR: Type mismatch, expected IO^{io}, but got i32
