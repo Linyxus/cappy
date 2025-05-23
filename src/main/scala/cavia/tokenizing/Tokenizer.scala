@@ -86,7 +86,7 @@ class Tokenizer(source: SourceFile):
   extension[A <: Positioned] (self: A)
     def withCurrentPos: self.type = withPosition(self)
 
-  val SPECIAL_CHARS = Set('_', '#')
+  val SPECIAL_CHARS = Set('_', '#', '?')
 
   def skipWhitespaces(): Boolean =
     var skippedNewline = false

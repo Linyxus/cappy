@@ -526,6 +526,7 @@ object Expr:
   /** Denotation of type definitions. */
   case class TypeDefInfo(typeParams: List[TypeBinder | CaptureBinder], variances: List[Variance], body: Type)
 
+  val defns: Definitions.type = Definitions
   object Definitions:
     def anyType: Type = Type.Base(BaseType.AnyType).withKind(TypeKind.Star)
     def nothingType: Type = Type.Base(BaseType.NothingType).withKind(TypeKind.Star)

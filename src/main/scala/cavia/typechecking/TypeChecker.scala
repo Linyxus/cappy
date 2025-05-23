@@ -96,7 +96,9 @@ object TypeChecker:
     case ImpureInferredType(tpeStr: String)
 
     def show: String = this match
-      case UnboundVariable(name, addenda) => s"ERROR: Cannot find the identifier $name ($addenda)"
+      case UnboundVariable(name, addenda) => 
+        val addendaStr = if addenda.isEmpty then "" else s" ($addenda)"
+        s"ERROR: Cannot find the identifier $name$addendaStr"
       case TypeMismatch(expected, actual) => s"ERROR: Type mismatch, expected $expected, but got $actual"
       case LeakingLocalBinder(tp) => s"ERROR: Leaking local binder: $tp"
       case SeparationError(cs1, cs2) => s"ERROR: Separation error, $cs1 and $cs2 are not separated"
@@ -615,7 +617,13 @@ object TypeChecker:
               checkTerm(term1, pt).!!
             case _ => sorry(TypeError.UnboundVariable(t.name, "this is the name of a primitive operator").withPos(t.pos))
         else sorry(TypeError.UnboundVariable(t.name).withPos(t.pos))
-    tryEtaExpandPrimitive || tryLookup
+    def tryBuiltins: Result[Term] =
+      hopefully:
+        if t.name == "???" then
+          val outTerm = Term.PrimOp(PrimitiveOp.Sorry, Nil, Nil).withPosFrom(t).withCV(CaptureSet.empty).withTpe(Definitions.nothingType)
+          outTerm
+        else sorry(TypeError.UnboundVariable(t.name).withPos(t.pos))
+    tryBuiltins || tryEtaExpandPrimitive || tryLookup
 
   def destructMatchableType(scrutineeType: Type, srcPos: SourcePos)(using Context): Result[(EnumSymbol | StructSymbol, List[Type | CaptureSet])] =
     hopefully:
