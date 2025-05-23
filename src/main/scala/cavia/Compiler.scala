@@ -18,7 +18,7 @@ object Compiler:
     def run(sources: List[SourceFile]): Outcome[List[Syntax.Module]] =
       parseAll(sources) match
         case Left(err: Tokenizer.Error) => Outcome.simpleFailure(err.asMessage)
-        case Left(err: Parser.ParseError) => Outcome.simpleFailure(Message.simple(err.show, err.pos))
+        case Left(err: Parser.ParseError) => Outcome.simpleFailure(Message.multiline(getErrorMessages(err), err.pos))
         case Right(modules) => Outcome.simpleSuccess(modules)
 
   object TypecheckStep extends CompilerStep[List[Syntax.Module], List[Expr.Module]]:

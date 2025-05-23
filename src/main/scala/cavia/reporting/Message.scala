@@ -14,5 +14,8 @@ object Message:
   def simple(msg: String, pos: SourcePos): Message =
     Message(List(MessagePart(List(msg), pos)))
 
+  def multiline(msgs: List[String], pos: SourcePos): Message =
+    Message(List(MessagePart(msgs, pos)))
+
 case class EntityWithProvenance(entity: String, provenancePos: SourcePos, provenance: String)
 

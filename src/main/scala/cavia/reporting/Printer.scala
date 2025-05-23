@@ -71,7 +71,7 @@ object Printer:
 
     sb.result()
 
-  def showParseError(error: ParseError): String =
+  def getErrorMessages(err: ParseError): List[String] =
     def collectDescs(err: ParseError): List[String] = err match
       case ParseError.Here(msg) =>
         if msg == null then
@@ -79,7 +79,10 @@ object Printer:
         else
           List("ERROR(parsing): " + msg)
       case ParseError.When(inner, desc) => ("when parsing " + desc) :: collectDescs(inner)
-    val msgs = collectDescs(error).reverse
+    collectDescs(err).reverse
+
+  def showParseError(error: ParseError): String =
+    val msgs = getErrorMessages(error)
     showSourcePos(error.pos, msgs)
 
   extension (err: ParseError)
