@@ -1,0 +1,4 @@
+6 |   foo(Cov[i32](), Cot[bool]())  // error
+  |                   ^^^^^^^^^^^
+
+    ERROR: Type mismatch, expected Cot[?X (>: i32)]^?{}absorbing{fresh$82}, but got Cot[bool]^{fresh$82}

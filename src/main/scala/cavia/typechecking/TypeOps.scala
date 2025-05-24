@@ -351,7 +351,7 @@ object TypePrinter:
             else if lb.exists then s">: ${show(lb)}"
             else if ub.exists then s"<: ${show(ub)}"
             else "..."
-          s"?X$$${tvar.id} ($boundsStr)"
+          s"?X ($boundsStr)"
       case Type.AppliedType(constructor, args) =>
         def showTypeArg(arg: Type | CaptureSet): String = arg match
           case tpe: Type => show(tpe)

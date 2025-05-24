@@ -1,19 +1,19 @@
 5 | def test2(): Unit = f1(0, false)  // error
   |                           ^^^^^
 
-    ERROR: Type mismatch, expected ?X$5115 (>: i32), but got bool
+    ERROR: Type mismatch, expected ?X (>: i32), but got bool
 
 7 | def test4(): Unit = f1("hello", 0)  // error
   |                                 ^
 
-    ERROR: Type mismatch, expected ?X$5154 (>: array[char]), but got i32
+    ERROR: Type mismatch, expected ?X (>: array[char]), but got i32
 
 8 | def test5(): Unit = f1(A(), A())  // error
   |                             ^^^
 
-    ERROR: Type mismatch, expected ?X$5173 (>: A^{fresh$81}), but got A^{fresh$82}
+    ERROR: Type mismatch, expected ?X (>: A^{fresh$87}), but got A^{fresh$88}
 
 9 | def test5(): Unit = f1(A(), B())  // error
   |                             ^^^
 
-    ERROR: Type mismatch, expected ?X$5198 (>: A^{fresh$83}), but got B^{fresh$84}
+    ERROR: Type mismatch, expected ?X (>: A^{fresh$89}), but got B^{fresh$90}
