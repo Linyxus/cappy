@@ -957,7 +957,7 @@ object TypeChecker:
                   classTypeParams.map:
                     case binder: TypeBinder => 
                       val bound = if TypeComparer.checkSubtype(Definitions.anyType, binder.bound) then Type.NoType() else binder.bound
-                      val tv = Inference.createTypeVar(bound)
+                      val tv = Inference.createTypeVar(binder.name, t.pos, bound)
                       tv
                     case binder: CaptureBinder => CaptureSet.empty
             val outTerm = checkStructInit(classSym, targs, args, expected, t.pos).!!
@@ -978,7 +978,7 @@ object TypeChecker:
                 val targs: List[Type | CaptureSet] = binders.map:
                   case binder: TypeBinder =>
                     val bound = if TypeComparer.checkSubtype(Definitions.anyType, binder.bound) then Type.NoType() else binder.bound
-                    val tv = Inference.createTypeVar(bound)
+                    val tv = Inference.createTypeVar(binder.name, t.pos, bound)
                     tv
                   case binder: CaptureBinder => CaptureSet.empty  // TODO: capture inference is not supported yet
                 val fun2 = checkTypeApply(fun1, Right(targs), t.pos).!!
@@ -1425,7 +1425,7 @@ object TypeChecker:
       case PrimitiveOp.ArrayNew =>
         hopefully:
           given ctx1: Context = ctx.newInferenceScope
-          val tv = Inference.createTypeVar()
+          val tv = Inference.createTypeVar("elemType", pos)
           val resultTerm = checkArrayInit(tv, args, pos).!!
           Inference.solveTypeVars()
           resultTerm
@@ -1848,12 +1848,12 @@ object TypeChecker:
     case _ => false
 
   /** Search for extention method who has a field of `field` and is applicable to `baseType` */
-  def searchExtension(baseType: Type, field: String)(using Context): Option[(ExtensionSymbol, List[(Type | CaptureSet)])] = boundary:
+  def searchExtension(baseType: Type, field: String, srcPos: SourcePos)(using Context): Option[(ExtensionSymbol, List[(Type | CaptureSet)])] = boundary:
     ctx.symbols.foreach:
       case sym: ExtensionSymbol if sym.info.methods.exists(_.name == field) =>
         given ctx1: Context = ctx.newInferenceScope
         val typeArgs: List[Type | CaptureSet] = sym.info.typeParams.map:
-          case TypeBinder(name, bound) => createTypeVar(upperBound = bound)
+          case TypeBinder(name, bound) => Inference.createTypeVar(name, srcPos, bound)
           case CaptureBinder(name, bound) => 
             CaptureSet.empty // for now, capture set inference is not supported for extension search
         val selfArgType = substituteType(sym.info.selfArgType, typeArgs, isParamType = true)
@@ -1920,7 +1920,7 @@ object TypeChecker:
             case _ => fail.!!
       def tryExtension: Result[Term] =
         hopefully:
-          searchExtension(base1.tpe, field) match
+          searchExtension(base1.tpe, field, srcPos) match
             case Some((extSym, typeArgs)) =>
               val method = extSym.info.methods.find(_.name == field).get
               val funType = substituteType(method.tpe, typeArgs, isParamType = false)

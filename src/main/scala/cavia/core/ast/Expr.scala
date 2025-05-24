@@ -4,6 +4,7 @@ package ast
 
 import scala.collection.mutable.Set
 import Syntax.AccessMode
+import typechecking.TypeVarInfo
 
 object Expr:
   /** A trait for expressions that have a type */
@@ -229,7 +230,7 @@ object Expr:
     /** <notype>, a placeholder type in the implementation */
     case NoType()
     /** A type variable, created when type inference. */
-    case TypeVar(var instance: Type = NoType())
+    case TypeVar(info: TypeVarInfo)
     /** A boxed type, box T^{...} */
     case Boxed(core: Type)
 

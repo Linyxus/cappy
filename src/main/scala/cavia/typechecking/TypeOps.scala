@@ -212,7 +212,7 @@ extension (tpe: Type)
     case Type.RefinedType(base, _) => base.captureSet
     case tp: SingletonType => tp.singletonCaptureSet
     case tvar: Type.TypeVar =>
-      if tvar.instance.exists then tvar.instance.captureSet
+      if tvar.info.instance.exists then tvar.info.instance.captureSet
       else CaptureSet.empty
     case Type.Boxed(core) => CaptureSet.empty
     case Type.NoType() => assert(false, "computing capture set from no type")
@@ -234,7 +234,7 @@ extension (tpe: Type)
 
   /** Dealias a solved type variable. */
   def dealiasTypeVar: Type = tpe match
-    case Type.TypeVar(inst) if inst.exists => inst
+    case Type.TypeVar(info) if info.instance.exists => info.instance
     case _ => tpe
 
   def isPure(using TypeChecker.Context): Boolean =
@@ -285,6 +285,7 @@ class ApproxTypeMap(using ctx: TypeChecker.Context) extends TypeMap:
 
 class AvoidLocalBinder(tpe: Type)(using ctx: TypeChecker.Context) extends ApproxTypeMap:
   var ok: Boolean = true
+  var existsThisBinder: Boolean = false
 
   override def mapBinderRef(ref: Type.BinderRef): Type =
     if ref.idx >= localBinders.size then
@@ -297,6 +298,7 @@ class AvoidLocalBinder(tpe: Type)(using ctx: TypeChecker.Context) extends Approx
       case Type.Var(Term.BinderRef(idx)) if idx > localBinders.size =>
         Type.Var(Term.BinderRef(idx - 1)).like(tp)
       case Type.Var(Term.BinderRef(idx)) if idx == localBinders.size => 
+        existsThisBinder = true
         tpe.shift(localBinders.size)
       case _ => tp
 
@@ -340,10 +342,10 @@ object TypePrinter:
       case Type.BinderRef(idx) => TypeChecker.getBinder(idx).name
       case Type.SymbolRef(sym) => sym.name
       case tvar: Type.TypeVar =>
-        if tvar.instance.exists then show(tvar.instance)
+        if tvar.info.instance.exists then show(tvar.info.instance)
         else 
-          val lb = Inference.lowerBoundOf(tvar)
-          val ub = Inference.upperBoundOf(tvar)
+          val lb = tvar.info.lowerBound
+          val ub = tvar.info.upperBound
           val boundsStr =
             if lb.exists && ub.exists then s"${show(lb)}..${show(ub)}"
             else if lb.exists then s">: ${show(lb)}"
@@ -401,7 +403,7 @@ object TypePrinter:
       case cs: CaptureSet.UniversalSet => 
         val existing = cs.existingRefs.map(show).mkString(", ")
         val absorbed = cs.absorbedRefs.map(show).mkString(", ")
-        s"?{${existing}} absorbing {${absorbed}}"
+        s"?{${existing}}absorbing{${absorbed}}"
 
   def showVarRef(ref: VarRef)(using TypeChecker.Context): String = ref match
     case Term.BinderRef(idx) => TypeChecker.getBinder(idx).name
@@ -711,3 +713,14 @@ object RegionRefType:
     case Type.AppliedType(Type.Base(BaseType.RegionRefType), (elemType: Type) :: Nil) => Some(elemType)
     case _ => None
   def apply(tpe: Type): Type = Definitions.regionRefType(tpe)
+
+def unshiftType(tpe: Type)(using ctx: TypeChecker.Context): Option[Type] =
+  val tm = AvoidLocalBinder(Definitions.nothingType)
+  val tpe1 = tm.apply(tpe)
+  if tm.existsThisBinder then None
+  else Some(tpe1)
+
+def unshiftTypeByN(tpe: Type, n: Int)(using ctx: TypeChecker.Context): Option[Type] =
+  if n <= 0 then Some(tpe)
+  else
+    unshiftType(tpe).flatMap(unshiftTypeByN(_, n-1))

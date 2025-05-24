@@ -1,0 +1,6 @@
+8 |   val bad3 = useIO: io =>  // error, as expected
+  |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+9 |     io
+  | ^^^^^^
+
+    ERROR: Type mismatch, expected (_: IO^{cap}) ->?{}absorbing{} ?X$6046 (...), but got (io: IO^{cap}) ->{} IO^{io}

@@ -143,6 +143,12 @@ object Compiler:
           println("Parsing successful")
           println(Printer.showSourcePos(result.pos, List(result.toString)))
 
+//   val stdlib: SourceFile = SourceFile(
+//     name = "<stdlib>",
+//     content = """
+// module std
+// """)
+
   val stdlib: SourceFile = SourceFile(
     name = "<stdlib>",
     content = """
