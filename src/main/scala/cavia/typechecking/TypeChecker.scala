@@ -16,10 +16,10 @@ object TypeChecker:
   import Inference.*
 
   val PeakConsumed = new MetaKey:
-    type Value = Set[CaptureRef.CapInst]
+    type Value = Set[InstantiatedCap]
 
   val PeakCreated = new MetaKey:
-    type Value = Set[CaptureRef.CapInst]
+    type Value = Set[InstantiatedCap]
 
   /** Type checking context. */
   case class Context(
@@ -255,46 +255,6 @@ object TypeChecker:
     // case "f64" => Some(Definitions.f64Type)
     case _ => None
 
-  def computePeak(set: CaptureSet)(using Context): CaptureSet =
-    def goRef(ref: QualifiedRef): Set[QualifiedRef] = 
-      ref.core match
-        case CaptureRef.Ref(Type.Var(Term.BinderRef(idx))) =>
-          getBinder(idx) match
-            case Binder.TermBinder(_, tpe, _) =>
-              val elems = tpe.captureSet.qualify(ref.mode).elems
-              goRefs(elems)
-            case _: Binder.CaptureBinder => Set(ref)
-            case _ => assert(false, "malformed capture set")
-        case CaptureRef.Ref(Type.Var(Term.SymbolRef(sym))) =>
-          val refs = sym.tpe.captureSet.qualify(ref.mode).elems
-          goRefs(refs)
-        case CaptureRef.Ref(Type.Select(base, fieldInfo)) => 
-          val elems = fieldInfo.tpe.captureSet.qualify(ref.mode).elems
-          goRefs(elems)
-        case CaptureRef.CAP() => Set(ref)
-        case CaptureRef.CapInst(_, _, _) => Set(ref)
-    def goRefs(refs: List[QualifiedRef]): Set[QualifiedRef] =
-      refs.flatMap(goRef).toSet
-    val elems = goRefs(set.elems)
-    CaptureSet(elems.toList)
-
-  def checkSeparation(cs1: CaptureSet, cs2: CaptureSet)(using Context): Boolean = //trace(s"checkSeparation ${cs1.show} ${cs2.show}"):
-    boundary:
-      val pk1 = computePeak(cs1).elems
-      val pk2 = computePeak(cs2).elems
-      for i <- 0 until pk1.length do
-        for j <- 0 until pk2.length do
-          if !checkSeparation(pk1(i), pk2(j)) then
-            break(false)
-      true
-
-  def checkSeparation(ref1: QualifiedRef, ref2: QualifiedRef)(using Context): Boolean =
-    def derivesFrom(ref1: CaptureRef, ref2: CaptureRef): Boolean =
-      (ref1, ref2) match
-        case (CaptureRef.CapInst(id1, _, from1), CaptureRef.CapInst(id2, _, from2)) => from1 == Some(id2)
-        case _ => false
-    val result = (ref1.isReadOnly && ref2.isReadOnly) || (ref1.core != ref2.core && !derivesFrom(ref1.core, ref2.core) && !derivesFrom(ref2.core, ref1.core))
-    result
 
   def checkType(tpe: Syntax.Type)(using Context): Result[Type] = tpe match
     case Syntax.Type.Ident(name) => 
@@ -390,7 +350,7 @@ object TypeChecker:
           go(ps, binder :: acc)(using ctx.extend(binder :: Nil))
     go(params, Nil)
 
-  private def dropLocalParams(crefs: List[QualifiedRef], numParams: Int, paramCapInsts: List[CaptureRef.CapInst]): (Boolean, List[QualifiedRef]) = 
+  private def dropLocalParams(crefs: List[QualifiedRef], numParams: Int, paramCapInsts: List[InstantiatedCap]): (Boolean, List[QualifiedRef]) = 
     var existsLocalParams = false
     val newCrefs = crefs.flatMap: ref =>
       ref.core match
@@ -438,12 +398,12 @@ object TypeChecker:
           sorry(TypeError.GeneralError(s"Type argument number mismatch: expected ${formals.length}, but got ${targs.length}").withPos(srcPos))
       go(targs, formalTypes, Nil)
 
-  def instantiateCaps(tpe: Type, isFresh: Boolean, fromInst: Option[CaptureRef.CapInst] = None)(using Context): (Type, List[CaptureRef.CapInst]) =
-    var createdCaps: List[CaptureRef.CapInst] = Nil
+  def instantiateCaps(tpe: Type, isFresh: Boolean, fromInst: Option[CaptureRef.CapInst] = None)(using Context): (Type, List[InstantiatedCap]) =
+    var createdCaps: List[InstantiatedCap] = Nil
     val curLevel = ctx.freshLevel
     val capKind = if isFresh then CapKind.Fresh(curLevel) else CapKind.Sep(curLevel)
-    val maybeFromInst = fromInst.map(_.capId)
-    val tm1 = CapInstantiation(() => CaptureRef.makeCapInst(capKind, fromInst = maybeFromInst))
+    // val maybeFromInst = fromInst.map(_.capId)
+    val tm1 = CapInstantiation(() => CaptureRef.makeSkolemCapInst(capKind, fromInst = fromInst))
     val tpe1 = tm1.apply(tpe)
     createdCaps = tm1.localCaps
     val rootCapInst = tpe1.captureSet match
@@ -457,7 +417,7 @@ object TypeChecker:
           fieldNames.flatMap: fieldName =>
             val fieldInfo = getFieldInfo(tpe1, fieldName).get
             val fieldCapKind = capKind  // fields inherit the fresh-ness status from its root cap
-            val tm2 = CapInstantiation(() => CaptureRef.makeCapInst(fieldCapKind, fromInst = Some(rootCap.capId)))
+            val tm2 = CapInstantiation(() => CaptureRef.makeFieldCapInst(fieldCapKind, fromInst = rootCap, fieldName = fieldName))
             val fieldType = tm2.apply(fieldInfo.tpe)
             createdCaps = createdCaps ++ tm2.localCaps
             if tm2.localCaps.isEmpty then
@@ -468,7 +428,7 @@ object TypeChecker:
     if fieldInfos.isEmpty then (tpe1, createdCaps)
     else (tpe1.refined(fieldInfos), createdCaps)
 
-  def instantiateBinderCaps(binder: TermBinder)(using Context): (TermBinder, List[CaptureRef.CapInst]) =
+  def instantiateBinderCaps(binder: TermBinder)(using Context): (TermBinder, List[InstantiatedCap]) =
     val (tpe1, createdCaps) = instantiateCaps(binder.tpe, isFresh = binder.isConsume)
     val binder1 = TermBinder(binder.name, tpe1, binder.isConsume).maybeWithPosFrom(binder).asInstanceOf[TermBinder]
     (binder1, createdCaps)
@@ -523,13 +483,13 @@ object TypeChecker:
       val freshLevel = ctx.freshLevel
       crefs.filter: cref =>
         cref.core match
-          case CaptureRef.CapInst(capId, CapKind.Fresh(level), fromInst) =>
+          case CaptureRef.CapInst(capId, CapKind.Fresh(level)) =>
             level < freshLevel
-          case CaptureRef.CapInst(capId, CapKind.Sep(level), fromInst) =>
+          case CaptureRef.CapInst(capId, CapKind.Sep(level)) =>
             if level >= freshLevel then
               sorry(TypeError.GeneralError(s"A local `cap` instance is leaked into the body of a lambda").withPos(srcPos))
             true
-          case _ => true
+          case _ => true  // TODO: handle selection cap instances
 
   def inNewFreshLevel[T](body: Context ?=> T)(using Context): T =
     val nowCtx = ctx.newFreshLevel
@@ -593,7 +553,7 @@ object TypeChecker:
         else t
       else t
 
-  def checkIdent(t: Syntax.Term.Ident, pt: Type = Type.NoType())(using Context): Result[Term] =
+  def checkIdent(t: Syntax.Term.Ident, pt: Type = Type.NoType())(using Context): Result[Term] = //trace(s"checkIdent $t"):
     def tryLookup: Result[Term] =
       hopefully:
         val (ref, tpe) = lookupAll(t.name) match
@@ -604,10 +564,10 @@ object TypeChecker:
         val cv = if !tpe.isPure then ref.asSingletonType.singletonCaptureSet.withPos(t.pos) else CaptureSet.empty
         val tpe1 = 
           if tpe.isPure then 
-            tpe 
+            tpe
           else 
             val core = tpe.stripCaptures
-            tpe.derivedCapturing(core, tpe.isReadOnly, ref.asSingletonType.singletonCaptureSet)
+            tpe.derivedCapturing(core, tpe.isReadOnlyType, ref.asSingletonType.singletonCaptureSet)
         ref.withPosFrom(t).withTpe(tpe1).withCV(cv)
     def tryEtaExpandPrimitive: Result[Term] =
       hopefully:
@@ -698,7 +658,7 @@ object TypeChecker:
       val tp21 = tp2.stripCaptures
       if !((tp11 eq tp1) && (tp21 eq tp21)) then
         computeLub(tp11, tp21).map: core => 
-          tp1.derivedCapturing(core, tp1.isReadOnly || tp2.isReadOnly, tp1.captureSet ++ tp2.captureSet)
+          tp1.derivedCapturing(core, tp1.isReadOnlyType || tp2.isReadOnlyType, tp1.captureSet ++ tp2.captureSet)
       else None
     def tryStripRefinements: Option[Type] =
       val tp11 = tp1.stripRefinements
@@ -771,13 +731,13 @@ object TypeChecker:
       val outTerm = Term.Match(scrutinee1, cases1).withPos(srcPos).withTpe(outType).withCVFrom(scrutinee1 :: cases1*)
       outTerm
 
-  def checkTerm(t: Syntax.Term, expected: Type = Type.NoType())(using Context): Result[Term] = 
+  def checkTerm(t: Syntax.Term, expected: Type = Type.NoType())(using Context): Result[Term] = //trace(s"checkTerm $t"):
     def trySpecialForms: Result[Option[Term]] = hopefully:
       t match
         case Syntax.Term.Apply(sel @ Syntax.Term.Select(base, field), args) =>
           val base1 = checkTerm(base).!!
           if base1.tpe.isRegionType then
-            val peaks = computePeak(base1.tpe.captureSet)
+            val peaks = SepCheck.computePeak(base1.tpe.captureSet)
             val regionPeak: CaptureRef.CapInst = peaks.elems match
               case (QualifiedRef(_, inst: CaptureRef.CapInst)) :: Nil => inst
               case _ => sorry(TypeError.GeneralError(s"Invalid region with type ${base1.tpe.show}"))
@@ -796,11 +756,11 @@ object TypeChecker:
           val outTerm = checkIdent(t, expected).!!
           val cv = outTerm.cv
           ctx.consumedPeaks.elems.foreach: cref =>
-            if !checkSeparation(cv, CaptureSet(cref :: Nil)) then
+            if !SepCheck.checkSeparation(cv, CaptureSet(cref :: Nil)) then
               val consumedPos = if cref.hasPos then Some(cref.pos) else None
               sorry(TypeError.ConsumedError(cv.show, consumedPos).withPos(t.pos))
-          if expected.isReadOnly then
-            outTerm.setTpe(outTerm.tpe.asReadOnly)
+          if expected.isReadOnlyType then
+            outTerm.setTpe(outTerm.tpe.asReadOnlyType)
             outTerm.setCV(outTerm.cv.qualify(AccessMode.ReadOnly()))
           outTerm
       case Syntax.Term.StrLit(value) => 
@@ -1152,18 +1112,18 @@ object TypeChecker:
   def tryConsume(captures: CaptureSet, srcPos: SourcePos)(using Context): Result[CaptureSet] =
     hopefully:
       val consumedSet = captures.qualify(AccessMode.Consume())
-      val pks = computePeak(consumedSet)
+      val pks = SepCheck.computePeak(consumedSet)
       pks.elems.foreach: cref =>
         cref.core match
-          case CaptureRef.CapInst(capId, kind, fromInst) =>
+          case CaptureRef.CapInst(capId, kind) =>
             kind match
               case _: CapKind.Fresh => // ok
               case _ => sorry(TypeError.GeneralError(s"Cannot consume ${cref.show}").withPos(srcPos))
           case _ => sorry(TypeError.GeneralError(s"Cannot consume ${cref.show}").withPos(srcPos))
       consumedSet
 
-  def getConsumedPeaks(cv: CaptureSet)(using Context): Set[CaptureRef.CapInst] =
-    val pks = computePeak(cv)
+  def getConsumedPeaks(cv: CaptureSet)(using Context): Set[InstantiatedCap] =
+    val pks = SepCheck.computePeak(cv)
     val pkElems = cv.elems.flatMap: cref =>
       cref.core match
         case pk: CaptureRef.CapInst if cref.mode == AccessMode.Consume() => pk :: Nil
@@ -1172,7 +1132,7 @@ object TypeChecker:
 
   def consumedPeaks(cv: CaptureSet)(using Context): CaptureSet =
     val pkElems = cv.elems.flatMap: cref =>
-      val pks = computePeak(CaptureSet(cref :: Nil)).elems
+      val pks = SepCheck.computePeak(CaptureSet(cref :: Nil)).elems
       pks.foreach: pk =>
         pk.maybeWithPosFrom(cref)
       pks
@@ -1218,7 +1178,7 @@ object TypeChecker:
             for j <- i + 1 until css1.length do
               val (cs1, hint1) = css1(i)
               val (cs2, hint2) = css1(j)
-              if !checkSeparation(cs1, cs2) then
+              if !SepCheck.checkSeparation(cs1, cs2) then
                 sorry(TypeError.SeparationError(hint1, hint2).withPos(srcPos))
           val toConsume = css.filter(_._1).map(_._2).reduceLeftOption(_ ++ _).getOrElse(CaptureSet.empty)
           val consumedSet = tryConsume(toConsume, srcPos).!!
@@ -1308,7 +1268,7 @@ object TypeChecker:
                 for j <- i + 1 until todoCaptureSets.length do
                   val (cs1, hint1) = todoCaptureSets(i)
                   val (cs2, hint2) = todoCaptureSets(j)
-                  if !checkSeparation(cs1, cs2) then
+                  if !SepCheck.checkSeparation(cs1, cs2) then
                     sorry(TypeError.SeparationError(hint1, hint2).withPos(srcPos))
             case Right(_) =>
           instantiateFresh(resultTerm)
@@ -1600,23 +1560,23 @@ object TypeChecker:
               for j <- i + 1 until css.size do
                 val ci = css(i)
                 val cj = css(j)
-                if !checkSeparation(ci, cj) then
+                if !SepCheck.checkSeparation(ci, cj) then
                   sorry(TypeError.GeneralError(s"In the returned value of this method, ${ci.show} and ${cj.show} consumes the same capability twice").withPos(resultType.get.pos))
             // Check the level of fresh caps
             val curLevel = ctx.freshLevel
-            var consumedPks = Set.empty[CaptureRef.CapInst]
+            var consumedPks = Set.empty[InstantiatedCap]
             css.foreach: cs =>
-              val pks = computePeak(cs)
+              val pks = SepCheck.computePeak(cs)
               pks.elems.foreach: cref =>
                 cref.core match
-                  case inst @ CaptureRef.CapInst(capId, CapKind.Fresh(level), fromInst) =>
+                  case inst @ CaptureRef.CapInst(capId, CapKind.Fresh(level)) =>
                     if level < curLevel then
                       sorry(TypeError.GeneralError(s"Treating capabilities ${cs.show} as fresh in the result type but they come from the outside").withPos(expr.pos))
-                    else if fromInst.isDefined then
-                      sorry(TypeError.GeneralError(
-                        s"Treating capabilities ${cs.show} as fresh in the result type but they depends on the root of id ${fromInst.get}").withPos(expr.pos))
+                    // else if fromInst.isDefined then
+                    //   sorry(TypeError.GeneralError(
+                    //     s"Treating capabilities ${cs.show} as fresh in the result type but they depends on the root of id ${fromInst.get}").withPos(expr.pos))
                     else consumedPks = consumedPks + inst
-                  case CaptureRef.CapInst(capId, CapKind.Sep(level), fromInst) =>
+                  case CaptureRef.CapInst(capId, CapKind.Sep(level)) =>
                     sorry(TypeError.GeneralError(s"Treating capabilities ${cs.show} as fresh in the result type but they are not fresh").withPos(expr.pos))
                   case _ =>
             outTerm.foreach: t =>
@@ -1942,7 +1902,7 @@ object TypeChecker:
       lhs1 match
         case lhs1 @ Term.Select(base1, fieldInfo) =>
           if fieldInfo.mutable then
-            if base1.tpe.isReadOnly then
+            if base1.tpe.isReadOnlyType then
               sorry(TypeError.TypeMismatch("a mutable reference", base1.tpe.show).withPosFrom(base1))
             val rhs1 = checkTerm(rhs, expected = lhs1.tpe).!!
             Term.PrimOp(PrimitiveOp.StructSet, Nil, List(lhs1, rhs1)).withPos(srcPos).withTpe(Definitions.unitType).withCVFrom(lhs1, rhs1)

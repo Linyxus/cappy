@@ -2,11 +2,10 @@ package cavia
 package typechecking
 
 import core.*
-import ast.*
+import ast.*, expr.*
 import Syntax.AccessMode
-import expr.Expr.*
+import Expr.*
 import scala.collection.mutable.ArrayBuffer
-import core.ast.expr.Expr
 
 class TypeMap:
   import Expr.*
@@ -64,6 +63,7 @@ class TypeMap:
             else assert(false, s"Don't know how to handle a widened capture ref at invariant occurrence")
     case CaptureRef.CAP() => CaptureSet(ref :: Nil)
     case _: CaptureRef.CapInst => CaptureSet(ref :: Nil)
+    case _: CaptureRef.Selection => CaptureSet(ref :: Nil)
 
   def mapBaseType(base: Type.Base): Type = base
 
@@ -415,16 +415,18 @@ object TypePrinter:
     case Type.Var(ref) => showVarRef(ref)
     case Type.Select(base, fieldInfo) => s"${showSingletonType(base)}.${fieldInfo.name}"
 
+  def show(qualifier: CaptureSelection)(using TypeChecker.Context): String = qualifier match
+    case Field(name) => name
+    case Skolem(id) => s"?$$$id"
+
   def show(captureRef: CaptureRef)(using TypeChecker.Context): String = captureRef match
     case CaptureRef.Ref(ref) => showSingletonType(ref)
-    case CaptureRef.CapInst(capId, kind, fromInst) => 
-      def fromText = fromInst match
-        case Some(fromInst) => s"(from cap$$$fromInst)"
-        case None => ""
+    case CaptureRef.CapInst(capId, kind) => 
       def capText = kind match
         case _: CapKind.Fresh => s"fresh"
         case _: CapKind.Sep => s"cap"
-      s"$capText$$$capId$fromText"
+      s"$capText$$$capId"
+    case CaptureRef.Selection(root, qualifier) => s"${show(root)}.${show(qualifier)}"
     case CaptureRef.CAP() => "cap"
 
 extension (tpe: Type)
@@ -542,8 +544,8 @@ extension (tpe: Type)
     collector(tpe)
     CaptureSet(collector.collected.toList)
 
-class CapInstantiation(createCapInst: () => CaptureRef.CapInst) extends TypeMap:
-  var localCaps: List[CaptureRef.CapInst] = Nil
+class CapInstantiation(createCapInst: () => InstantiatedCap) extends TypeMap:
+  var localCaps: List[InstantiatedCap] = Nil
 
   override def apply(tpe: Type): Type = tpe match
     case Type.TypeArrow(ps, result) => tpe
@@ -556,7 +558,7 @@ class CapInstantiation(createCapInst: () => CaptureRef.CapInst) extends TypeMap:
     else
       ref.core match
         case CaptureRef.CAP() => 
-          val inst: CaptureRef.CapInst = createCapInst()
+          val inst: InstantiatedCap = createCapInst()
           localCaps = inst :: localCaps
           CaptureSet(QualifiedRef(ref.mode, inst) :: Nil)
         case _ => CaptureSet(ref :: Nil)
@@ -621,24 +623,15 @@ extension (tpe: Type)
         tpe.derivedCapturing(base.refined(refinements), isReadOnly, captureSet)
       case tpe => tpe.derivedRefinedType(tpe, refinements)
   
-  def isReadOnly: Boolean = tpe match
+  def isReadOnlyType: Boolean = tpe match
     case Type.Capturing(_, isReadOnly, _) => isReadOnly
-    case Type.RefinedType(base, _) => base.isReadOnly
+    case Type.RefinedType(base, _) => base.isReadOnlyType
     case _ => false
 
-  def asReadOnly: Type = tpe match
-    case Type.Capturing(base, _, captureSet) => Type.Capturing(base.asReadOnly, isReadOnly = true, captureSet)
-    case Type.RefinedType(base, refinements) => Type.RefinedType(base.asReadOnly, refinements)
+  def asReadOnlyType: Type = tpe match
+    case Type.Capturing(base, _, captureSet) => Type.Capturing(base.asReadOnlyType, isReadOnly = true, captureSet)
+    case Type.RefinedType(base, refinements) => Type.RefinedType(base.asReadOnlyType, refinements)
     case tpe => tpe
-
-extension (ref: QualifiedRef)
-  def isReadOnly: Boolean = ref.mode match
-    case AccessMode.ReadOnly() => true
-    case _ => false
-
-  def isUniversal: Boolean = ref.core match
-    case CaptureRef.CAP() => true
-    case _ => false
 
 object CheckVariance:
   case class Mismatch(idx: Int, useSite: Variance)

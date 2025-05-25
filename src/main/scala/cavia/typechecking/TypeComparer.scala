@@ -103,10 +103,10 @@ object TypeComparer:
           !(tp22 eq tp2) && checkSubtype(tp1, tp22)
         tryDefault || tryReduceLeft || tryReduceRight
       case (Type.Capturing(inner, isReadOnly1, captureSet), tp2) =>
-        def modeCompatible: Boolean = !isReadOnly1 || tp2.isReadOnly
+        def modeCompatible: Boolean = !isReadOnly1 || tp2.isReadOnlyType
         modeCompatible && checkSubcapture(captureSet, tp2.captureSet) && checkSubtype(inner, tp2)
       case (tp1, Type.Capturing(inner, isReadOnly2, captureSet)) =>
-        def modeCompatible: Boolean = isReadOnly2 || !tp1.isReadOnly
+        def modeCompatible: Boolean = isReadOnly2 || !tp1.isReadOnlyType
         modeCompatible && checkSubcapture(tp1.captureSet, captureSet) && checkSubtype(tp1, inner)
       case (tp1: Type.SymbolRef, tp2) if !(tp1.eval eq tp1) => checkSubtype(tp1.eval, tp2)
       case (tp1, tp2: Type.SymbolRef) if !(tp2.eval eq tp2) => checkSubtype(tp1, tp2.eval)

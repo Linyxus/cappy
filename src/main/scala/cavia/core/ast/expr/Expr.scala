@@ -88,26 +88,6 @@ object Expr:
     /** The level of the cap instance. */
     val level: Int
 
-  enum CaptureRef extends Positioned:
-    case Ref(tp: SingletonType)
-    case CAP()
-    case CapInst(capId: Int, kind: CapKind, fromInst: Option[Int] = None)
-
-  object CaptureRef:
-    private var nextCapId: Int = 0
-
-    def makeCapInst(kind: CapKind, fromInst: Option[Int] = None): CaptureRef.CapInst =
-      val result: CaptureRef.CapInst = CaptureRef.CapInst(nextCapId, kind, fromInst)
-      nextCapId += 1
-      result
-
-  case class QualifiedRef(mode: Syntax.AccessMode, core: CaptureRef) extends Positioned:
-    def derivedQualifiedRef(mode1: Syntax.AccessMode = mode, core1: CaptureRef = core): QualifiedRef =
-      if (mode1 eq mode) && (core1 eq core) then
-        this
-      else
-        QualifiedRef(mode1, core1).maybeWithPosFrom(this)
-
   sealed trait CaptureSet extends Positioned:
     import CaptureSet.*
     def elems: List[QualifiedRef]
