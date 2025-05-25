@@ -1,5 +1,4 @@
 package cavia
-package core
 
 import io.*
 
