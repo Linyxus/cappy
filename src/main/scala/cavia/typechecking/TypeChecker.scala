@@ -6,6 +6,7 @@ import scala.util.boundary, boundary.break
 import core.*
 import ast.*
 import reporting.*
+import expr.*
 
 /** Type checker. */
 object TypeChecker:

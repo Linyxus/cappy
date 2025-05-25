@@ -2,7 +2,7 @@ package cavia
 package rechecking
 
 import core.*
-import ast.Expr
+import ast.expr.Expr
 import typechecking.*
 import TypeChecker.Context
 

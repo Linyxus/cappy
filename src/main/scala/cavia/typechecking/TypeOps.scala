@@ -4,8 +4,9 @@ package typechecking
 import core.*
 import ast.*
 import Syntax.AccessMode
-import Expr.*
+import expr.Expr.*
 import scala.collection.mutable.ArrayBuffer
+import core.ast.expr.Expr
 
 class TypeMap:
   import Expr.*

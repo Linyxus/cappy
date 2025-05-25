@@ -3,6 +3,7 @@ package core
 package ast
 
 import tokenizing.*
+import expr.Expr
 
 object Syntax:
   enum AccessMode extends Positioned:

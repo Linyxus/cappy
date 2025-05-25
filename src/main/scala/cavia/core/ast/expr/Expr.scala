@@ -1,6 +1,7 @@
 package cavia
 package core
 package ast
+package expr
 
 import scala.collection.mutable.Set
 import Syntax.AccessMode

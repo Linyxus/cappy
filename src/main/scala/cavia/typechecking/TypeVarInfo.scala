@@ -5,7 +5,7 @@ import util.boundary, boundary.break
 import scala.collection.mutable
 
 import core.*
-import ast.*
+import ast.*, expr.*
 import Expr.*
 import TypeChecker.*
 

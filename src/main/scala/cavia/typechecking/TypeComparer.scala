@@ -4,6 +4,7 @@ package typechecking
 import core.*
 import ast.*
 import reporting.trace
+import expr.*
 
 object TypeComparer:
   import TypeChecker.*

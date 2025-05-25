@@ -12,6 +12,7 @@ import typechecking.*
 import codegen.*
 import rechecking.*
 import java.nio.file.*
+import core.ast.expr.Expr
 
 object Compiler:
   object ParseStep extends CompilerStep[List[SourceFile], List[Syntax.Module]]:

@@ -7,12 +7,13 @@ import scala.collection.mutable
 import mutable.ArrayBuffer
 
 import core.*
-import ast.{Expr, Wasm}
+import ast.{expr, Wasm}, expr.Expr
 import Expr.{Term, Pattern}
 import Wasm.*
 import typechecking.*
 import Expr.{PrimitiveOp, Definition, ArrayPrimitiveOp}
 import reporting.trace
+import core.ast.expr.Expr
 
 object CodeGenerator:
   case class ClosureTypeInfo(funcTypeSym: Symbol, closTypeSym: Symbol)

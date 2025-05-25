@@ -1,10 +1,11 @@
 package cavia
 package typechecking
 
-import core.*, ast.*
+import core.*, ast.*, expr.*
 import reporting.IndentedPrinter
 import Expr.*
 import TypeChecker.*
+import core.ast.expr.Expr
 
 class ExprPrinter extends IndentedPrinter:
   def showBinders(bds: List[Binder])(using Context): List[String] = bds match

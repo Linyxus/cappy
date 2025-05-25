@@ -4,9 +4,7 @@ package typechecking
 import scala.util.boundary, boundary.break
 import scala.collection.mutable
 import core.*
-import ast.*
-
-import Expr.*
+import ast.*, expr.*, Expr.*
 
 object Inference:
   import TypeChecker.*
