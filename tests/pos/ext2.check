@@ -27,7 +27,7 @@ module <root> {
   }
   val main: () -> Unit = 
     () => {
-      val xs: array[i32]^{fresh$6} = 
+      val xs: array[i32]^{fresh$?} = 
         #arraynew[i32](10, 0)
       val _$3: Unit = 
         extension($ext1).show(xs)()

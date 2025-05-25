@@ -1,4 +1,4 @@
 6 |   foo(f)  // error
   |       ^
 
-    ERROR: Type mismatch, expected (_: ?X (<: box IO^{cap})) ->?{}absorbing{} ?X (<: box IO^{cap}), but got (x: box IO^{cap}) ->{} box IO^{cap$95}
+    ERROR: Type mismatch, expected (_: ?X (<: box IO^{cap})) ->?{}absorbing{} ?X (<: box IO^{cap}), but got (x: box IO^{cap}) ->{} box IO^{cap$?}

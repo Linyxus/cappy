@@ -18,7 +18,7 @@ module <root> {
         (x: Ref^{cap}, y: Ref^{cap}) => {
           ()
         }
-      val f4: Ref^{fresh$13} = 
+      val f4: Ref^{fresh$?} = 
         Ref()
       ()
     }

@@ -11,9 +11,9 @@
 8 | def test5(): Unit = f1(A(), A())  // error
   |                             ^^^
 
-    ERROR: Type mismatch, expected ?X (>: A^{fresh$87}), but got A^{fresh$88}
+    ERROR: Type mismatch, expected ?X (>: A^{fresh$?}), but got A^{fresh$?}
 
 9 | def test5(): Unit = f1(A(), B())  // error
   |                             ^^^
 
-    ERROR: Type mismatch, expected ?X (>: A^{fresh$89}), but got B^{fresh$90}
+    ERROR: Type mismatch, expected ?X (>: A^{fresh$?}), but got B^{fresh$?}

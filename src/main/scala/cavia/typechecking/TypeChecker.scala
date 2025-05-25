@@ -7,6 +7,7 @@ import core.*
 import ast.*
 import reporting.*
 import expr.*
+import CompilerSettings.*
 
 /** Type checker. */
 object TypeChecker:
@@ -33,6 +34,8 @@ object TypeChecker:
     consumedPeaks: CaptureSet = CaptureSet.empty, 
     /** Level of freshness. */
     freshLevel: Int = 0,
+    /** Compiler configuration. */
+    config: CompilerConfig = CompilerConfig.default,
     /** Deprecated: `return` has been dropped. */
     // defReturnType: Option[Type] = None,
   ):
@@ -83,8 +86,13 @@ object TypeChecker:
         Nil, 
         InferenceState.empty, 
         consumedPeaks = CaptureSet.empty, 
-        freshLevel = 0
+        freshLevel = 0,
+        config = CompilerConfig.default,
       )
+
+    /** When testing, turn off id printing so that the check file is stable. */
+    def testing: Context =
+      empty.copy(config = CompilerConfig.default.turnOffPrintIds)
 
 
   enum TypeError extends Positioned:

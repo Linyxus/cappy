@@ -15,12 +15,12 @@ class TypeCheckingSuite extends munit.FunSuite:
       val parsed = Compiler.parse(testCase.source)
       assert(parsed.isRight)
       val defs = parsed.getOrElse(???)
-      val typedModules = TypeChecker.checkModules(List(defs))(using TypeChecker.Context.empty)
+      val typedModules = TypeChecker.checkModules(List(defs))(using TypeChecker.Context.testing)
       assert(typedModules.isRight)
       val module = typedModules.getOrElse(???).head
       if testCase.checkFile.isDefined then
         val expected = testCase.checkFile.get
-        val actualStr = ExprPrinter.show(module)(using TypeChecker.Context.empty)
+        val actualStr = ExprPrinter.show(module)(using TypeChecker.Context.testing)
         val outputPath = testCase.path.resolveSibling(testCase.path.getFileName.toString.replace(".scala", ".actual"))
         val expectedPath = testCase.path.resolveSibling(testCase.path.getFileName.toString.replace(".scala", ".check"))
         writeOutput(actualStr, outputPath)
@@ -32,7 +32,7 @@ class TypeCheckingSuite extends munit.FunSuite:
       val parsed = Compiler.parse(testCase.source)
       assert(parsed.isRight)
       val defs = parsed.getOrElse(???)
-      val typedModules = TypeChecker.checkModules(List(defs))(using TypeChecker.Context.empty)
+      val typedModules = TypeChecker.checkModules(List(defs))(using TypeChecker.Context.testing)
       typedModules match
         case Left(err) => 
           testCase.checkFile match

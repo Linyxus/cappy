@@ -6,6 +6,7 @@ import ast.*, expr.*
 import Syntax.AccessMode
 import Expr.*
 import scala.collection.mutable.ArrayBuffer
+import CompilerSettings.*
 
 class TypeMap:
   import Expr.*
@@ -415,9 +416,13 @@ object TypePrinter:
     case Type.Var(ref) => showVarRef(ref)
     case Type.Select(base, fieldInfo) => s"${showSingletonType(base)}.${fieldInfo.name}"
 
+  protected def config(using TypeChecker.Context): CompilerConfig = TypeChecker.ctx.config
+
   def show(qualifier: CaptureSelection)(using TypeChecker.Context): String = qualifier match
     case Field(name) => name
-    case Skolem(id) => s"?$$$id"
+    case Skolem(id) => 
+      if config.printIds then s"?$$$id"
+      else s"?"
 
   def show(captureRef: CaptureRef)(using TypeChecker.Context): String = captureRef match
     case CaptureRef.Ref(ref) => showSingletonType(ref)
@@ -425,7 +430,8 @@ object TypePrinter:
       def capText = kind match
         case _: CapKind.Fresh => s"fresh"
         case _: CapKind.Sep => s"cap"
-      s"$capText$$$capId"
+      def idText = if config.printIds then s"$$$capId" else s"$$?"
+      s"$capText$idText"
     case CaptureRef.Selection(root, qualifier) => s"${show(root)}.${show(qualifier)}"
     case CaptureRef.CAP() => "cap"
 
