@@ -59,8 +59,13 @@ object CaptureRef:
       getParents(root) + root
     case ref => Set(ref)
 
+  def getRoot(ref: CaptureRef): CaptureRef = ref match
+    case CaptureRef.Selection(root, _) => getRoot(root)
+    case _ => ref
+
 extension (ref: CaptureRef)
   def parents: Set[CaptureRef] = CaptureRef.getParents(ref)
+  def root: CaptureRef = CaptureRef.getRoot(ref)
 
 case class QualifiedRef(mode: Syntax.AccessMode, core: CaptureRef) extends Positioned:
   def derivedQualifiedRef(mode1: Syntax.AccessMode = mode, core1: CaptureRef = core): QualifiedRef =

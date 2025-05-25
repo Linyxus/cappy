@@ -490,14 +490,14 @@ object TypeChecker:
     hopefully:
       val freshLevel = ctx.freshLevel
       crefs.filter: cref =>
-        cref.core match
+        cref.core.root match
           case CaptureRef.CapInst(capId, CapKind.Fresh(level)) =>
             level < freshLevel
           case CaptureRef.CapInst(capId, CapKind.Sep(level)) =>
             if level >= freshLevel then
               sorry(TypeError.GeneralError(s"A local `cap` instance is leaked into the body of a lambda").withPos(srcPos))
             true
-          case _ => true  // TODO: handle selection cap instances
+          case _ => true
 
   def inNewFreshLevel[T](body: Context ?=> T)(using Context): T =
     val nowCtx = ctx.newFreshLevel
@@ -1122,12 +1122,12 @@ object TypeChecker:
       val consumedSet = captures.qualify(AccessMode.Consume())
       val pks = SepCheck.computePeak(consumedSet)
       pks.elems.foreach: cref =>
-        cref.core match
+        cref.core.root match
           case CaptureRef.CapInst(capId, kind) =>
             kind match
               case _: CapKind.Fresh => // ok
-              case _ => sorry(TypeError.GeneralError(s"Cannot consume ${cref.show}").withPos(srcPos))
-          case _ => sorry(TypeError.GeneralError(s"Cannot consume ${cref.show}").withPos(srcPos))
+              case _ => sorry(TypeError.GeneralError(s"Cannot consume ${cref.core.show}").withPos(srcPos))
+          case _ => sorry(TypeError.GeneralError(s"Cannot consume ${cref.core.show}").withPos(srcPos))
       consumedSet
 
   def getConsumedPeaks(cv: CaptureSet)(using Context): Set[InstantiatedCap] =

@@ -1,0 +1,29 @@
+7 |   p.y.data = 0  // error
+  |   ^
+
+    ERROR(consume): This uses a consumed capability {p}
+
+6 |   kill(p.x)
+  |   ^^^^^^^^^
+
+    ... which was consumed here
+
+13 |   x.data = 0  // error
+   |   ^
+
+     ERROR(consume): This uses a consumed capability {x}
+
+11 |   kill(x)
+   |   ^^^^^^^
+
+     ... which was consumed here
+
+17 |   p.x.data = 42  // error
+   |   ^
+
+     ERROR(consume): This uses a consumed capability {p}
+
+16 |   killP(p)
+   |   ^^^^^^^^
+
+     ... which was consumed here
