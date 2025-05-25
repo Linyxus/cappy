@@ -1,0 +1,44 @@
+7 |   par(() => useP(p), () => useRef(p.x))  // error
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+    ERROR(separation): {p.x} and {p} are not separated, where
+
+7 |   par(() => useP(p), () => useRef(p.x))  // error
+  |                      ^^^^^^^^^^^^^^^^^
+
+    ... {p.x} comes from this argument
+
+7 |   par(() => useP(p), () => useRef(p.x))  // error
+  |       ^^^^^^^^^^^^^
+
+    ... and {p} comes from this argument
+
+10 |   par(() => useRef(p.y), () => useRef(p.y))  // error
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+     ERROR(separation): {p.y} and {p.y} are not separated, where
+
+10 |   par(() => useRef(p.y), () => useRef(p.y))  // error
+   |                          ^^^^^^^^^^^^^^^^^
+
+     ... {p.y} comes from this argument
+
+10 |   par(() => useRef(p.y), () => useRef(p.y))  // error
+   |       ^^^^^^^^^^^^^^^^^
+
+     ... and {p.y} comes from this argument
+
+14 |   par(() => useRef(q.y), () => useRef(p.y))  // error
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+     ERROR(separation): {p.y} and {q.y} are not separated, where
+
+14 |   par(() => useRef(q.y), () => useRef(p.y))  // error
+   |                          ^^^^^^^^^^^^^^^^^
+
+     ... {p.y} comes from this argument
+
+14 |   par(() => useRef(q.y), () => useRef(p.y))  // error
+   |       ^^^^^^^^^^^^^^^^^
+
+     ... and {q.y} comes from this argument
