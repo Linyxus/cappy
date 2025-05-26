@@ -44,6 +44,17 @@ object Wasm:
     case I64Eq
     case I64Ne
     case I64Eqz
+    case F64Const(value: Double)
+    case F64Add
+    case F64Sub
+    case F64Mul
+    case F64Div
+    case F64Gte
+    case F64Lte
+    case F64Gt
+    case F64Lt
+    case F64Eq
+    case F64Ne
     case LocalSet(sym: Symbol)
     case LocalGet(sym: Symbol)
     case LocalTee(sym: Symbol)
@@ -100,6 +111,17 @@ object Wasm:
       case I64Eq => Some("i64.eq")
       case I64Ne => Some("i64.ne")
       case I64Eqz => Some("i64.eqz")
+      case F64Const(value) => Some(s"f64.const $value")
+      case F64Add => Some("f64.add")
+      case F64Sub => Some("f64.sub")
+      case F64Mul => Some("f64.mul")
+      case F64Div => Some("f64.div")
+      case F64Gte => Some("f64.ge")
+      case F64Lte => Some("f64.le")
+      case F64Gt => Some("f64.gt")
+      case F64Lt => Some("f64.lt")
+      case F64Eq => Some("f64.eq")
+      case F64Ne => Some("f64.ne")
       case LocalSet(sym) => Some(s"local.set ${sym.show}")
       case LocalGet(sym) => Some(s"local.get ${sym.show}")
       case LocalTee(sym) => Some(s"local.tee ${sym.show}")
