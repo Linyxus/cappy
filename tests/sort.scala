@@ -64,7 +64,7 @@ def enumerate(start: i32, end: i32): List[i32]^ =
 def main(): Unit =
   putStrLn("Hello, world")
   val xs1 = Cons(1, Cons(2, Cons(3, Nil[i32]())))
-  val xs2 = enumerate(0, 2000)
+  val xs2 = enumerate(0, 3000)
   //show(xs2)
   val xs3 = xs2.reverse
   //show(xs3)
