@@ -277,6 +277,9 @@ object Parsers:
   def intLitP: Parser[Term] =
     tokenP[Token.INT].map(t => Term.IntLit(t.content.toInt)).positioned
 
+  def floatLitP: Parser[Term] =
+    tokenP[Token.FLOAT].map(t => Term.FloatLit(t.content.toFloat)).positioned
+
   def boolLitP: Parser[Term] =
     val trueP = keywordP("true").map(_ => Term.BoolLit(true))
     val falseP = keywordP("false").map(_ => Term.BoolLit(false))
@@ -335,6 +338,7 @@ object Parsers:
     stringLitP,
     charLitP,
     intLitP,
+    floatLitP,
     unitLitP,
     termP.surroundedBy(tokenP[Token.LPAREN], tokenP[Token.RPAREN])
   )

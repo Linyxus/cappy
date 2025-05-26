@@ -34,6 +34,7 @@ class ExprPrinter extends IndentedPrinter:
       case Term.SymbolRef(sym) => print(sym.name)
       case Term.StrLit(value) => print(s""""$value"""")
       case Term.IntLit(value) => print(value.toString)
+      case Term.FloatLit(value) => print(value.toString)
       case Term.CharLit(value) =>
         value match
           case '\n' => print("'\\n'")

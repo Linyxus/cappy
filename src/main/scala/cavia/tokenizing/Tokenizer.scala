@@ -53,7 +53,7 @@ class Tokenizer(source: SourceFile):
 
   /** Check if the next character is the expected character */
   def expectChar(ch: Char): Boolean =
-    if peek == ch then
+    if !isAtEnd && peek == ch then
       advance()
       true
     else
@@ -110,9 +110,19 @@ class Tokenizer(source: SourceFile):
   var needNewLine = false
   var needDedent = false
 
-  def consumeInt(): Unit =
+  /** Consume an integer or a double literal. Return true if it's a double literal. */
+  def consumeIntOrDouble(): Boolean =
+    var isDouble = false
     while !isAtEnd && peek.isDigit do
       advance()
+    if expectChar('.') then
+      if !isAtEnd && peek.isDigit then
+        isDouble = true
+        while !isAtEnd && peek.isDigit do
+          advance()
+      else
+        currentPos -= 1
+    isDouble
 
   def nextToken(): Token | Error =
     if needNewLine then
@@ -214,8 +224,11 @@ class Tokenizer(source: SourceFile):
           case '|' if expectChar('|') => Token.DOUBLE_BAR()
           case ch if ch.isDigit =>
             var startPos = currentPos - 1
-            consumeInt()
-            Token.INT(source.content.substring(startPos, currentPos))
+            val isDouble = consumeIntOrDouble()
+            if isDouble then
+              Token.FLOAT(source.content.substring(startPos, currentPos))
+            else
+              Token.INT(source.content.substring(startPos, currentPos))
           case ch if ch.isLetter || SPECIAL_CHARS.contains(ch) =>
             val startPos = currentPos - 1
             def isValidChar(ch: Char): Boolean = ch.isLetterOrDigit || SPECIAL_CHARS.contains(ch)

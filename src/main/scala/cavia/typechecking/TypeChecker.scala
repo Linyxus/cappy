@@ -251,6 +251,7 @@ object TypeChecker:
     case "Nothing" => Some(Definitions.nothingType)
     case "i32" => Some(Definitions.i32Type)
     case "i64" => Some(Definitions.i64Type)
+    case "f64" => Some(Definitions.f64Type)
     case "bool" => Some(Definitions.boolType)
     case "array" => Some(Definitions.arrayConstructorType)
     case "char" => Some(Definitions.charType)
@@ -258,9 +259,7 @@ object TypeChecker:
     case "RegionRef" => Some(Definitions.regionRefConstructorType)
     // case "String" => Some(Definitions.strType)
     // case "Break" => Some(Definitions.breakConstructorType)
-    // Float types are not supported yet, so commenting them out for now
     // case "f32" => Some(Definitions.f32Type)
-    // case "f64" => Some(Definitions.f64Type)
     case _ => None
 
 
@@ -781,6 +780,8 @@ object TypeChecker:
       case Syntax.Term.IntLit(value) => 
         val tpe = if expected.exists && expected.isIntegralType then expected else Definitions.i32Type
         Right(Term.IntLit(value).withPosFrom(t).withTpe(tpe).withCV(CaptureSet.empty))
+      case Syntax.Term.FloatLit(value) =>
+        Right(Term.FloatLit(value).withPosFrom(t).withTpe(Definitions.f64Type).withCV(CaptureSet.empty))
       case Syntax.Term.BoolLit(value) =>
         val tpe = Definitions.boolType
         Right(Term.BoolLit(value).withPosFrom(t).withTpe(tpe).withCV(CaptureSet.empty))
@@ -1003,29 +1004,42 @@ object TypeChecker:
 
   def numericTypeOrI32(tp: Type): BaseType = tp match
     case Type.Base(baseTp) if BasicPrimOpFamily.numericTypes.contains(baseTp) => baseTp
-    case _ => BaseType.I32
+    case _ => 
+      BaseType.I32
 
   def numericOrLogicalTypeOrI32(tp: Type): BaseType = tp match
     case Type.Base(baseTp) if BasicPrimOpFamily.numericTypes.contains(baseTp) || BasicPrimOpFamily.logicalTypes.contains(baseTp) => baseTp
     case _ => BaseType.I32
 
   def checkInfix(op: Syntax.InfixOp, lhs: Syntax.Term, rhs: Syntax.Term, expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
+    def getExpectedTypeOrLhsType: Result[Type] =
+      if expected.exists then Right(expected)
+      else
+        hopefully:
+          val lhs1 = checkTerm(lhs).!!
+          val tpe = lhs1.tpe
+          tpe
     op match
       case Syntax.InfixOp.Plus =>
-        val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Add, numericTypeOrI32(expected)).get
-        checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
+        hopefully:
+          val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Add, numericTypeOrI32(getExpectedTypeOrLhsType.!!)).get
+          checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
       case Syntax.InfixOp.Minus =>
-        val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Sub, numericTypeOrI32(expected)).get
-        checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
+        hopefully:
+          val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Sub, numericTypeOrI32(getExpectedTypeOrLhsType.!!)).get
+          checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
       case Syntax.InfixOp.Mul =>
-        val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Mul, numericTypeOrI32(expected)).get
-        checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
+        hopefully:
+          val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Mul, numericTypeOrI32(getExpectedTypeOrLhsType.!!)).get
+          checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
       case Syntax.InfixOp.Div =>
-        val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Div, numericTypeOrI32(expected)).get
-        checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
+        hopefully:
+          val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Div, numericTypeOrI32(getExpectedTypeOrLhsType.!!)).get
+          checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
       case Syntax.InfixOp.Mod =>
-        val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Rem, numericTypeOrI32(expected)).get
-        checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
+        hopefully:
+          val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Rem, numericTypeOrI32(getExpectedTypeOrLhsType.!!)).get
+          checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
       case Syntax.InfixOp.Eq =>
         hopefully:
           val lhs1 = checkTerm(lhs).!!

@@ -5,6 +5,7 @@ enum Token extends Positioned:
   case IDENT(name: String)  // Variable or function name
   case STR(content: String)  // string literal
   case INT(content: String)  // integer literal
+  case FLOAT(content: String)  // float literal
   case CHAR(content: Char)  // character literal
   case EQUAL()  // =
   case LPAREN()  // (

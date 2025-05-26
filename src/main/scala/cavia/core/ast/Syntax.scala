@@ -57,6 +57,7 @@ object Syntax:
     case Select(base: Term, field: String)
     case StrLit(value: String)
     case IntLit(value: Int)
+    case FloatLit(value: Float)
     case BoolLit(value: Boolean)
     case CharLit(value: Char)
     case UnitLit()

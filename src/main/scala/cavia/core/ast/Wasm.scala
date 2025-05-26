@@ -6,12 +6,14 @@ object Wasm:
   enum ValType:
     case I32
     case I64
+    case F64
     case TypedRef(sym: Symbol, nullable: Boolean = false)
     case AnyRef
 
     def show: String = this match
       case ValType.I32 => "i32"
       case ValType.I64 => "i64"
+      case ValType.F64 => "f64"
       case ValType.TypedRef(sym, nullable) => 
         val nullText = if nullable then "null " else ""
         s"(ref $nullText${sym.show})"

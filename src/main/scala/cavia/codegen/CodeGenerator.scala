@@ -203,12 +203,16 @@ object CodeGenerator:
     (opKind, operandType) match
       case (Expr.BasicPrimOpKind.Add, ValType.I32) => Some(Instruction.I32Add)
       case (Expr.BasicPrimOpKind.Add, ValType.I64) => Some(Instruction.I64Add)
+      case (Expr.BasicPrimOpKind.Add, ValType.F64) => Some(Instruction.F64Add)
       case (Expr.BasicPrimOpKind.Mul, ValType.I32) => Some(Instruction.I32Mul)
       case (Expr.BasicPrimOpKind.Mul, ValType.I64) => Some(Instruction.I64Mul)
+      case (Expr.BasicPrimOpKind.Mul, ValType.F64) => Some(Instruction.F64Mul)
       case (Expr.BasicPrimOpKind.Sub, ValType.I32) => Some(Instruction.I32Sub)
       case (Expr.BasicPrimOpKind.Sub, ValType.I64) => Some(Instruction.I64Sub)
+      case (Expr.BasicPrimOpKind.Sub, ValType.F64) => Some(Instruction.F64Sub)
       case (Expr.BasicPrimOpKind.Div, ValType.I32) => Some(Instruction.I32Div)
       case (Expr.BasicPrimOpKind.Div, ValType.I64) => Some(Instruction.I64Div)
+      case (Expr.BasicPrimOpKind.Div, ValType.F64) => Some(Instruction.F64Div)
       case (Expr.BasicPrimOpKind.Rem, ValType.I32) => Some(Instruction.I32Rem)
       case (Expr.BasicPrimOpKind.Rem, ValType.I64) => Some(Instruction.I64Rem)
       case _ => None
@@ -217,16 +221,22 @@ object CodeGenerator:
     (opKind, operandType) match
       case (Expr.BasicPrimOpKind.Eq, ValType.I32) => Some(Instruction.I32Eq)
       case (Expr.BasicPrimOpKind.Eq, ValType.I64) => Some(Instruction.I64Eq)
+      case (Expr.BasicPrimOpKind.Eq, ValType.F64) => Some(Instruction.F64Eq)
       case (Expr.BasicPrimOpKind.Neq, ValType.I32) => Some(Instruction.I32Ne)
       case (Expr.BasicPrimOpKind.Neq, ValType.I64) => Some(Instruction.I64Ne)
+      case (Expr.BasicPrimOpKind.Neq, ValType.F64) => Some(Instruction.F64Ne)
       case (Expr.BasicPrimOpKind.Lt, ValType.I32) => Some(Instruction.I32Lt)
       case (Expr.BasicPrimOpKind.Lt, ValType.I64) => Some(Instruction.I64Lt)
+      case (Expr.BasicPrimOpKind.Lt, ValType.F64) => Some(Instruction.F64Lt)
       case (Expr.BasicPrimOpKind.Lte, ValType.I32) => Some(Instruction.I32Lte)
       case (Expr.BasicPrimOpKind.Lte, ValType.I64) => Some(Instruction.I64Lte)
+      case (Expr.BasicPrimOpKind.Lte, ValType.F64) => Some(Instruction.F64Lte)
       case (Expr.BasicPrimOpKind.Gt, ValType.I32) => Some(Instruction.I32Gt)
       case (Expr.BasicPrimOpKind.Gt, ValType.I64) => Some(Instruction.I64Gt)
+      case (Expr.BasicPrimOpKind.Gt, ValType.F64) => Some(Instruction.F64Gt)
       case (Expr.BasicPrimOpKind.Gte, ValType.I32) => Some(Instruction.I32Gte)
       case (Expr.BasicPrimOpKind.Gte, ValType.I64) => Some(Instruction.I64Gte)
+      case (Expr.BasicPrimOpKind.Gte, ValType.F64) => Some(Instruction.F64Gte)
       case _ => None
 
   def genSimplePrimOp(args: List[Expr.Term], op: PrimitiveOp)(using Context): List[Instruction] = 
@@ -395,6 +405,7 @@ object CodeGenerator:
     tpe match
       case Expr.BaseType.I64 => ValType.I64
       case Expr.BaseType.I32 => ValType.I32
+      case Expr.BaseType.F64 => ValType.F64
       case Expr.BaseType.UnitType => ValType.I32
       case Expr.BaseType.BoolType => ValType.I32
       case Expr.BaseType.CharType => ValType.I32
@@ -444,6 +455,7 @@ object CodeGenerator:
     case Term.BinderRef(idx) => Set(idx)
     case Term.SymbolRef(sym) => Set.empty
     case Term.IntLit(value) => Set.empty
+    case Term.FloatLit(value) => Set.empty
     case Term.StrLit(value) => Set.empty
     case Term.CharLit(value) => Set.empty
     case Term.BoolLit(value) => Set.empty
@@ -637,6 +649,10 @@ object CodeGenerator:
         case ValType.I32 => List(Instruction.I32Const(value))
         case ValType.I64 => List(Instruction.I64Const(value))
         case _ => assert(false, s"Unsupported type for int literal: ${t.tpe}")
+    case Term.FloatLit(value) =>
+      translateType(t.tpe) match
+        case ValType.F64 => List(Instruction.F64Const(value))
+        case _ => assert(false, s"Unsupported type for float literal: ${t.tpe}")
     case Term.UnitLit() => List(Instruction.I32Const(0))
     case Term.CharLit(value) => List(Instruction.I32Const(value.toInt))
     case Term.BoolLit(value) => if value then List(Instruction.I32Const(1)) else List(Instruction.I32Const(0))

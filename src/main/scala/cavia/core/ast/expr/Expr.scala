@@ -311,10 +311,13 @@ object Expr:
 
   object BasicPrimOpFamily:
     import BasicPrimOpKind.*
-    val numericTypes: Set[BaseType] = Set(BaseType.I32, BaseType.I64, BaseType.CharType)
+    val floatTypes: Set[BaseType] = Set(BaseType.F64)
+    val numericTypes: Set[BaseType] = Set(BaseType.I32, BaseType.I64, BaseType.CharType) ++ floatTypes
     val logicalTypes: Set[BaseType] = Set(BaseType.BoolType)
     def resolve(opKind: BasicPrimOpKind, inputArgType: BaseType): Option[BasicPrimOp] = opKind match
-      case Add | Mul | Sub | Div | Rem if numericTypes.contains(inputArgType) =>
+      case Add | Mul | Sub | Div if numericTypes.contains(inputArgType) =>
+        Some(new BinaryPrimOp(opKind, inputArgType))
+      case Rem if numericTypes.contains(inputArgType) && !floatTypes.contains(inputArgType) =>  // remainder is not supported for floating point types
         Some(new BinaryPrimOp(opKind, inputArgType))
       case Eq | Neq | Lt | Gt | Lte | Gte if numericTypes.contains(inputArgType) =>
         Some(new ComparePrimOp(opKind, inputArgType))
@@ -451,6 +454,7 @@ object Expr:
     case IntLit(value: Int)
     case BoolLit(value: Boolean)
     case CharLit(value: Char)
+    case FloatLit(value: Double)
     case UnitLit()
     case TermLambda(params: List[TermBinder], body: Term, skolemizedBinders: List[TermBinder]) extends Term, Closure
     case TypeLambda(params: List[TypeBinder | CaptureBinder], body: Term) extends Term, Closure
@@ -523,6 +527,7 @@ object Expr:
     def charType: Type = Type.Base(BaseType.CharType).withKind(TypeKind.Star)
     def i64Type: Type = Type.Base(BaseType.I64).withKind(TypeKind.Star)
     def i32Type: Type = Type.Base(BaseType.I32).withKind(TypeKind.Star)
+    def f64Type: Type = Type.Base(BaseType.F64).withKind(TypeKind.Star)
     def unitType: Type = Type.Base(BaseType.UnitType).withKind(TypeKind.Star)
     def boolType: Type = Type.Base(BaseType.BoolType).withKind(TypeKind.Star)
     def arrayConstructorType: Type =

@@ -18,6 +18,8 @@ abstract class Rechecker:
 
   def recheckIntLit(old: Term, value: Int)(using Context): Term = old
 
+  def recheckFloatLit(old: Term, value: Double)(using Context): Term = old
+
   def recheckBoolLit(old: Term, value: Boolean)(using Context): Term = old
 
   def recheckCharLit(old: Term, value: Char)(using Context): Term = old
@@ -94,6 +96,7 @@ abstract class Rechecker:
     case Term.SymbolRef(sym) => recheckSymbolRef(expr, sym)
     case Term.StrLit(value) => recheckStrLit(expr, value)
     case Term.IntLit(value) => recheckIntLit(expr, value)
+    case Term.FloatLit(value) => recheckFloatLit(expr, value)
     case Term.BoolLit(value) => recheckBoolLit(expr, value)
     case Term.CharLit(value) => recheckCharLit(expr, value)
     case Term.UnitLit() => recheckUnitLit(expr)
