@@ -5,6 +5,7 @@ lazy val root = project
   .settings(
     name := "cavia",
     version := "0.1.0-SNAPSHOT",
+    organization := "capybara",
 
     scalaVersion := scala3Version,
 
