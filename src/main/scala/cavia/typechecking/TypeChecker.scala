@@ -772,8 +772,10 @@ object TypeChecker:
             outTerm.setCV(outTerm.cv.qualify(AccessMode.ReadOnly()))
           outTerm
       case Syntax.Term.StrLit(value) => 
-        val charArrayType = Definitions.arrayType(Definitions.charType)
-        Right(Term.StrLit(value).withPosFrom(t).withTpe(charArrayType).withCV(CaptureSet.empty))
+        val charArrayType = Type.Capturing(Definitions.arrayType(Definitions.charType), isReadOnly = false, CaptureSet.universal)
+        val outTerm = Term.StrLit(value).withPosFrom(t).withTpe(charArrayType).withCV(CaptureSet.empty)
+        instantiateFresh(outTerm)
+        Right(outTerm)
       case Syntax.Term.CharLit(value) =>
         Right(Term.CharLit(value).withPosFrom(t).withTpe(Definitions.charType).withCV(CaptureSet.empty))
       case Syntax.Term.IntLit(value) => 

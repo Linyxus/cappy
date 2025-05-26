@@ -1,0 +1,4 @@
+3 |   val ys: String = "world"  // error
+  |           ^^^^^^
+
+    ERROR: Cannot find the identifier String
