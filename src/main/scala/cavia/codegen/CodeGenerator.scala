@@ -146,26 +146,26 @@ object CodeGenerator:
 
   def genMemoryOp(op: Expr.ArrayPrimitiveOp, args: List[Expr.Term])(using Context): List[Instruction] =
     op match
-      case PrimitiveOp.ArrayGet => 
+      case Expr.ArrayGet() => 
         val memSym :: idx :: Nil = args: @unchecked
         val idxInstrs = genTerm(idx)
         val loadInstrs = List(Instruction.I32Load(Symbol.Memory))
         idxInstrs ++ loadInstrs
-      case PrimitiveOp.ArraySet => 
+      case Expr.ArraySet() => 
         val memSym :: idx :: value :: Nil = args: @unchecked
         val idxInstrs = genTerm(idx)
         val valueInstrs = genTerm(value)
         val storeInstrs = List(Instruction.I32Store(Symbol.Memory))
         val unitInstrs = List(Instruction.I32Const(0))
         idxInstrs ++ valueInstrs ++ storeInstrs ++ unitInstrs
-      case PrimitiveOp.ArrayLen => 
+      case Expr.ArrayLen() => 
         val sizeInstrs = List(Instruction.MemorySize(Symbol.Memory))
         sizeInstrs
       case _ => assert(false, "Unsupported memory operation")
 
   def genArrayPrimOp(op: Expr.ArrayPrimitiveOp, tpe: Expr.Type, targs: List[Expr.Type], args: List[Expr.Term])(using Context): List[Instruction] =
     op match
-      case PrimitiveOp.ArrayNew => 
+      case Expr.ArrayNew() => 
         val elemType :: Nil = targs: @unchecked
         val size :: init :: Nil = args: @unchecked
         val elemValType = translateType(elemType)
@@ -175,7 +175,7 @@ object CodeGenerator:
         val sizeInstrs = genTerm(size)
         val newInstrs = List(Instruction.ArrayNew(arrSym))
         initInstrs ++ sizeInstrs ++ newInstrs
-      case PrimitiveOp.ArrayGet => 
+      case Expr.ArrayGet() => 
         val arr :: idx :: Nil = args: @unchecked
         val arrType = computeArrayType(arr.tpe)
         val arrSym = createArrayType(arrType)
@@ -183,7 +183,7 @@ object CodeGenerator:
         val idxInstrs = genTerm(idx)
         val getInstrs = List(Instruction.ArrayGet(arrSym))
         arrInstrs ++ idxInstrs ++ getInstrs
-      case PrimitiveOp.ArraySet => 
+      case Expr.ArraySet() => 
         val arr :: idx :: value :: Nil = args: @unchecked
         val arrType = computeArrayType(arr.tpe)
         val arrSym = createArrayType(arrType)
@@ -193,75 +193,82 @@ object CodeGenerator:
         val setInstrs = List(Instruction.ArraySet(arrSym))
         val unitInstrs = List(Instruction.I32Const(0))
         arrInstrs ++ idxInstrs ++ valueInstrs ++ setInstrs ++ unitInstrs
-      case PrimitiveOp.ArrayLen =>
+      case Expr.ArrayLen() =>
         val arr :: Nil = args: @unchecked
         val arrInstrs = genTerm(arr)
         val lenInstrs = List(Instruction.ArrayLen)
         arrInstrs ++ lenInstrs
 
+  def resolveBinaryPrimOp(opKind: Expr.BasicPrimOpKind, operandType: ValType): Option[Instruction] =
+    (opKind, operandType) match
+      case (Expr.BasicPrimOpKind.Add, ValType.I32) => Some(Instruction.I32Add)
+      case (Expr.BasicPrimOpKind.Add, ValType.I64) => Some(Instruction.I64Add)
+      case (Expr.BasicPrimOpKind.Mul, ValType.I32) => Some(Instruction.I32Mul)
+      case (Expr.BasicPrimOpKind.Mul, ValType.I64) => Some(Instruction.I64Mul)
+      case (Expr.BasicPrimOpKind.Sub, ValType.I32) => Some(Instruction.I32Sub)
+      case (Expr.BasicPrimOpKind.Sub, ValType.I64) => Some(Instruction.I64Sub)
+      case (Expr.BasicPrimOpKind.Div, ValType.I32) => Some(Instruction.I32Div)
+      case (Expr.BasicPrimOpKind.Div, ValType.I64) => Some(Instruction.I64Div)
+      case (Expr.BasicPrimOpKind.Rem, ValType.I32) => Some(Instruction.I32Rem)
+      case (Expr.BasicPrimOpKind.Rem, ValType.I64) => Some(Instruction.I64Rem)
+      case _ => None
+
+  def resolveComparePrimOp(opKind: Expr.BasicPrimOpKind, operandType: ValType): Option[Instruction] =
+    (opKind, operandType) match
+      case (Expr.BasicPrimOpKind.Eq, ValType.I32) => Some(Instruction.I32Eq)
+      case (Expr.BasicPrimOpKind.Eq, ValType.I64) => Some(Instruction.I64Eq)
+      case (Expr.BasicPrimOpKind.Neq, ValType.I32) => Some(Instruction.I32Ne)
+      case (Expr.BasicPrimOpKind.Neq, ValType.I64) => Some(Instruction.I64Ne)
+      case (Expr.BasicPrimOpKind.Lt, ValType.I32) => Some(Instruction.I32Lt)
+      case (Expr.BasicPrimOpKind.Lt, ValType.I64) => Some(Instruction.I64Lt)
+      case (Expr.BasicPrimOpKind.Lte, ValType.I32) => Some(Instruction.I32Lte)
+      case (Expr.BasicPrimOpKind.Lte, ValType.I64) => Some(Instruction.I64Lte)
+      case (Expr.BasicPrimOpKind.Gt, ValType.I32) => Some(Instruction.I32Gt)
+      case (Expr.BasicPrimOpKind.Gt, ValType.I64) => Some(Instruction.I64Gt)
+      case (Expr.BasicPrimOpKind.Gte, ValType.I32) => Some(Instruction.I32Gte)
+      case (Expr.BasicPrimOpKind.Gte, ValType.I64) => Some(Instruction.I64Gte)
+      case _ => None
+
   def genSimplePrimOp(args: List[Expr.Term], op: PrimitiveOp)(using Context): List[Instruction] = 
     def argInstrs = args.flatMap(genTerm)
     op match
-      // addition
-      case PrimitiveOp.I64Add => argInstrs ++ List(Instruction.I64Add)
-      case PrimitiveOp.I32Add => argInstrs ++ List(Instruction.I32Add)
-      // multiplication
-      case PrimitiveOp.I64Mul => argInstrs ++ List(Instruction.I64Mul)
-      case PrimitiveOp.I32Mul => argInstrs ++ List(Instruction.I32Mul)
-      // subtraction
-      case PrimitiveOp.I64Sub => argInstrs ++ List(Instruction.I64Sub)
-      case PrimitiveOp.I32Sub => argInstrs ++ List(Instruction.I32Sub)
-      // division
-      case PrimitiveOp.I64Div => argInstrs ++ List(Instruction.I64Div)
-      case PrimitiveOp.I32Div => argInstrs ++ List(Instruction.I32Div)
-      // remainder
-      case PrimitiveOp.I64Rem => argInstrs ++ List(Instruction.I64Rem)
-      case PrimitiveOp.I32Rem => argInstrs ++ List(Instruction.I32Rem)
+      // binary ops
+      case Expr.BinaryPrimOp(opKind, operandType) if resolveBinaryPrimOp(opKind, translateBaseType(operandType)).isDefined =>
+        val instr = resolveBinaryPrimOp(opKind, translateBaseType(operandType)).get
+        argInstrs ++ List(instr)
       // negation
-      case PrimitiveOp.I32Neg => List(Instruction.I32Const(0)) ++ argInstrs ++ List(Instruction.I32Sub)
-      case PrimitiveOp.I64Neg => List(Instruction.I64Const(0)) ++ argInstrs ++ List(Instruction.I64Sub)
-      // int comparison: <, >, <=, >=, ==, !=
-      case PrimitiveOp.I32Lt => argInstrs ++ List(Instruction.I32Lt)
-      case PrimitiveOp.I32Gt => argInstrs ++ List(Instruction.I32Gt)
-      case PrimitiveOp.I32Lte => argInstrs ++ List(Instruction.I32Lte)
-      case PrimitiveOp.I32Gte => argInstrs ++ List(Instruction.I32Gte)
-      case PrimitiveOp.I32Eq => argInstrs ++ List(Instruction.I32Eq)
-      case PrimitiveOp.I32Neq => argInstrs ++ List(Instruction.I32Ne)
-      case PrimitiveOp.I64Lt => argInstrs ++ List(Instruction.I64Lt)
-      case PrimitiveOp.I64Gt => argInstrs ++ List(Instruction.I64Gt)
-      case PrimitiveOp.I64Lte => argInstrs ++ List(Instruction.I64Lte)
-      case PrimitiveOp.I64Gte => argInstrs ++ List(Instruction.I64Gte)
-      case PrimitiveOp.I64Eq => argInstrs ++ List(Instruction.I64Eq)
-      case PrimitiveOp.I64Neq => argInstrs ++ List(Instruction.I64Ne)
+      case Expr.UnaryPrimOp(Expr.BasicPrimOpKind.Neg, Expr.BaseType.I32) => List(Instruction.I32Const(0)) ++ argInstrs ++ List(Instruction.I32Sub)
+      case Expr.UnaryPrimOp(Expr.BasicPrimOpKind.Neg, Expr.BaseType.I64) => List(Instruction.I64Const(0)) ++ argInstrs ++ List(Instruction.I64Sub)
+      // comparison ops
+      case Expr.ComparePrimOp(opKind, operandType) if resolveComparePrimOp(opKind, translateBaseType(operandType)).isDefined =>
+        val instr = resolveComparePrimOp(opKind, translateBaseType(operandType)).get
+        argInstrs ++ List(instr)
       // bool ops: &&, ||
-      case PrimitiveOp.BoolAnd =>
+      case op if Expr.isBoolAnd(op) =>
         val arg1 :: arg2 :: Nil = args: @unchecked
         translateBranching(arg1, genTerm(arg2), List(Instruction.I32Const(0)), ValType.I32)
-      case PrimitiveOp.BoolOr =>
+      case op if Expr.isBoolOr(op) =>
         val arg1 :: arg2 :: Nil = args: @unchecked
         translateBranching(arg1, List(Instruction.I32Const(1)), genTerm(arg2), ValType.I32)
       // bool ops: not
-      case PrimitiveOp.BoolNot => argInstrs ++ List(Instruction.I32Eqz)
-      // bool ops: ==, !=
-      case PrimitiveOp.BoolEq => argInstrs ++ List(Instruction.I32Eq)
-      case PrimitiveOp.BoolNeq => argInstrs ++ List(Instruction.I32Ne)
-      // int ops: println, read
-      case PrimitiveOp.I32Println => argInstrs ++ List(
+      case Expr.UnaryPrimOp(Expr.BasicPrimOpKind.Not, Expr.BaseType.BoolType) => argInstrs ++ List(Instruction.I32Eqz)
+      // ops: println, read
+      case Expr.I32Println() => argInstrs ++ List(
         Instruction.Call(Symbol.I32Println),
         Instruction.I32Const(0)
       )
-      case PrimitiveOp.PutChar =>
+      case Expr.PutChar() =>
         val arg :: Nil = args: @unchecked
         val argInstrs = genTerm(arg)
         argInstrs ++ List(
           Instruction.Call(Symbol.PutChar),
           Instruction.I32Const(0)
         )
-      case PrimitiveOp.UnsafeAsPure => args.flatMap(genTerm)
-      case PrimitiveOp.I32Read => argInstrs ++ List(Instruction.Call(Symbol.I32Read))
-      case PrimitiveOp.PerfCounter => argInstrs ++ List(Instruction.Call(Symbol.PerfCounter))
-      case PrimitiveOp.Box | PrimitiveOp.Unbox => args.flatMap(genTerm)  // box and unbox have no runtime effects
-      case PrimitiveOp.StructSet =>
+      case Expr.UnsafeAsPure() => args.flatMap(genTerm)
+      case Expr.I32Read() => argInstrs ++ List(Instruction.Call(Symbol.I32Read))
+      case Expr.PerfCounter() => argInstrs ++ List(Instruction.Call(Symbol.PerfCounter))
+      case Expr.Box() | Expr.Unbox() => args.flatMap(genTerm)  // box and unbox have no runtime effects
+      case Expr.StructSet() =>
         val Expr.Term.Select(base, fieldInfo) :: rhs :: Nil = args: @unchecked
         val rhsInstrs = genTerm(rhs)
         val AppliedStructType(classSym, typeArgs) = base.tpe.stripCaptures: @unchecked
@@ -271,18 +278,18 @@ object CodeGenerator:
         val setFieldInstrs = List(Instruction.StructSet(structSym, fieldSym))
         val unitInstrs = List(Instruction.I32Const(0))
         baseInstrs ++ rhsInstrs ++ setFieldInstrs ++ unitInstrs
-      case PrimitiveOp.Sorry =>
+      case Expr.Sorry() =>
         // Generate `sorry` as `unreachable`, which is a runtime trap
         List(Instruction.Unreachable)
       case _ => assert(false, s"Not supported: $op")
 
   def translateBranching(cond: Expr.Term, thenBranch: List[Instruction], elseBranch: List[Instruction], resultType: ValType)(using Context): List[Instruction] =
     cond match
-      case Term.PrimOp(PrimitiveOp.BoolAnd, _, arg1 :: arg2 :: Nil) =>
+      case Term.PrimOp(op, _, arg1 :: arg2 :: Nil) if Expr.isBoolAnd(op) =>
         val cond1Instrs = genTerm(arg1)
         val moreInstrs = translateBranching(arg2, thenBranch, elseBranch, resultType)
         cond1Instrs ++ List(Instruction.If(resultType, moreInstrs, elseBranch))
-      case Term.PrimOp(PrimitiveOp.BoolOr, _, arg1 :: arg2 :: Nil) =>
+      case Term.PrimOp(op, _, arg1 :: arg2 :: Nil) if Expr.isBoolOr(op) =>
         val cond1Instrs = genTerm(arg1)
         val moreInstrs = translateBranching(arg2, thenBranch, elseBranch, resultType)
         cond1Instrs ++ List(Instruction.If(resultType, moreInstrs, elseBranch))
@@ -384,16 +391,21 @@ object CodeGenerator:
         ArrayType(translateType(elemType), mutable = true)
       case _ => assert(false, s"Unsupported type: $tpe")
 
+  def translateBaseType(tpe: Expr.BaseType)(using Context): ValType =
+    tpe match
+      case Expr.BaseType.I64 => ValType.I64
+      case Expr.BaseType.I32 => ValType.I32
+      case Expr.BaseType.UnitType => ValType.I32
+      case Expr.BaseType.BoolType => ValType.I32
+      case Expr.BaseType.CharType => ValType.I32
+      case Expr.BaseType.AnyType => ValType.AnyRef
+      case Expr.BaseType.NothingType => ValType.AnyRef
+      case _ => assert(false, s"Unsupported base type: $tpe")
+
   /** What is the WASM value type of the WASM representation of a value of this type? */
   def translateType(tpe: Expr.Type)(using Context): ValType = //trace(s"translateType($tpe)"):
     tpe.simplify(using ctx.typecheckerCtx) match
-      case Expr.Type.Base(Expr.BaseType.I64) => ValType.I64
-      case Expr.Type.Base(Expr.BaseType.I32) => ValType.I32
-      case Expr.Type.Base(Expr.BaseType.UnitType) => ValType.I32
-      case Expr.Type.Base(Expr.BaseType.BoolType) => ValType.I32
-      case Expr.Type.Base(Expr.BaseType.CharType) => ValType.I32
-      case Expr.Type.Base(Expr.BaseType.AnyType) => ValType.AnyRef
-      case Expr.Type.Base(Expr.BaseType.NothingType) => ValType.AnyRef
+      case Expr.Type.Base(baseType) => translateBaseType(baseType)
       case Expr.Type.Capturing(inner, _, _) => translateType(inner)
       case Expr.Type.Boxed(core) => translateType(core)
       case Expr.Type.TermArrow(params, result) =>

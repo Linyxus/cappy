@@ -589,7 +589,7 @@ object TypeChecker:
     def tryBuiltins: Result[Term] =
       hopefully:
         if t.name == "???" then
-          val outTerm = Term.PrimOp(PrimitiveOp.Sorry, Nil, Nil).withPosFrom(t).withCV(CaptureSet.empty).withTpe(Definitions.nothingType)
+          val outTerm = Term.PrimOp(Sorry(), Nil, Nil).withPosFrom(t).withCV(CaptureSet.empty).withTpe(Definitions.nothingType)
           outTerm
         else sorry(TypeError.UnboundVariable(t.name).withPos(t.pos))
     tryBuiltins || tryEtaExpandPrimitive || tryLookup
@@ -753,7 +753,7 @@ object TypeChecker:
               case None => sorry(TypeError.GeneralError(s"Regions only allocate `struct`s, but $field is not a struct").withPos(sel.pos))
               case Some(sym) => sym
             val initTerm = checkStructInit(classSym, Left(Nil), args, expected, t.pos, onRegion = true).!!
-            val outTerm = Term.PrimOp(PrimitiveOp.RegionAlloc, Nil, List(base1, initTerm)).like(initTerm).withMoreCV(base1.cv)
+            val outTerm = Term.PrimOp(RegionAlloc(), Nil, List(base1, initTerm)).like(initTerm).withMoreCV(base1.cv)
             instantiateFresh(outTerm, fromInst = Some(regionPeak))
             Some(outTerm)
           else None
@@ -1001,99 +1001,72 @@ object TypeChecker:
       // We probably need to find a union type
       Term.If(cond1, thenBranch1, elseBranch1).withPos(srcPos).withTpe(finalTpe).withCVFrom(cond1, thenBranch1, elseBranch1)
 
+  def numericTypeOrI32(tp: Type): BaseType = tp match
+    case Type.Base(baseTp) if BasicPrimOpFamily.numericTypes.contains(baseTp) => baseTp
+    case _ => BaseType.I32
+
+  def numericOrLogicalTypeOrI32(tp: Type): BaseType = tp match
+    case Type.Base(baseTp) if BasicPrimOpFamily.numericTypes.contains(baseTp) || BasicPrimOpFamily.logicalTypes.contains(baseTp) => baseTp
+    case _ => BaseType.I32
+
   def checkInfix(op: Syntax.InfixOp, lhs: Syntax.Term, rhs: Syntax.Term, expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     op match
       case Syntax.InfixOp.Plus =>
-        val primOp = expected match
-          case Type.Base(BaseType.I32) => PrimitiveOp.I32Add
-          case Type.Base(BaseType.I64) => PrimitiveOp.I64Add
-          case _ => PrimitiveOp.I32Add
+        val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Add, numericTypeOrI32(expected)).get
         checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
       case Syntax.InfixOp.Minus =>
-        val primOp = expected match
-          case Type.Base(BaseType.I32) => PrimitiveOp.I32Sub
-          case Type.Base(BaseType.I64) => PrimitiveOp.I64Sub
-          case _ => PrimitiveOp.I32Sub
+        val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Sub, numericTypeOrI32(expected)).get
         checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
       case Syntax.InfixOp.Mul =>
-        val primOp = expected match
-          case Type.Base(BaseType.I32) => PrimitiveOp.I32Mul
-          case Type.Base(BaseType.I64) => PrimitiveOp.I64Mul
-          case _ => PrimitiveOp.I32Mul
+        val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Mul, numericTypeOrI32(expected)).get
         checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
       case Syntax.InfixOp.Div =>
-        val primOp = expected match
-          case Type.Base(BaseType.I32) => PrimitiveOp.I32Div
-          case Type.Base(BaseType.I64) => PrimitiveOp.I64Div
-          case _ => PrimitiveOp.I32Div
+        val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Div, numericTypeOrI32(expected)).get
         checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
       case Syntax.InfixOp.Mod =>
-        val primOp = expected match
-          case Type.Base(BaseType.I32) => PrimitiveOp.I32Rem
-          case Type.Base(BaseType.I64) => PrimitiveOp.I64Rem
-          case _ => PrimitiveOp.I32Rem
+        val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Rem, numericTypeOrI32(expected)).get
         checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
       case Syntax.InfixOp.Eq =>
         hopefully:
           val lhs1 = checkTerm(lhs).!!
           val tpe = lhs1.tpe
-          val primOp = tpe match
-            case Type.Base(BaseType.I32) => PrimitiveOp.I32Eq
-            case Type.Base(BaseType.I64) => PrimitiveOp.I64Eq
-            case Type.Base(BaseType.BoolType) => PrimitiveOp.BoolEq
-            case _ => PrimitiveOp.I32Eq
+          val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Eq, numericOrLogicalTypeOrI32(tpe)).get
           checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
       case Syntax.InfixOp.Neq =>
         hopefully:
           val lhs1 = checkTerm(lhs).!!
           val tpe = lhs1.tpe
-          val primOp = tpe match
-            case Type.Base(BaseType.I32) => PrimitiveOp.I32Neq
-            case Type.Base(BaseType.I64) => PrimitiveOp.I64Neq
-            case Type.Base(BaseType.BoolType) => PrimitiveOp.BoolNeq
-            case _ => PrimitiveOp.I32Neq
+          val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Neq, numericOrLogicalTypeOrI32(tpe)).get
           checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
       case Syntax.InfixOp.Lt =>
         hopefully:
           val lhs1 = checkTerm(lhs).!!
           val tpe = lhs1.tpe
-          val primOp = tpe match
-            case Type.Base(BaseType.I32) => PrimitiveOp.I32Lt
-            case Type.Base(BaseType.I64) => PrimitiveOp.I64Lt
-            case _ => PrimitiveOp.I32Lt
+          val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Lt, numericTypeOrI32(tpe)).get
           checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
       case Syntax.InfixOp.Gt =>
         hopefully:
           val lhs1 = checkTerm(lhs).!!
           val tpe = lhs1.tpe
-          val primOp = tpe match
-            case Type.Base(BaseType.I32) => PrimitiveOp.I32Gt
-            case Type.Base(BaseType.I64) => PrimitiveOp.I64Gt
-            case _ => PrimitiveOp.I32Gt
+          val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Gt, numericTypeOrI32(tpe)).get
           checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
       case Syntax.InfixOp.Lte =>
         hopefully:
           val lhs1 = checkTerm(lhs).!!
           val tpe = lhs1.tpe
-          val primOp = tpe match
-            case Type.Base(BaseType.I32) => PrimitiveOp.I32Lte
-            case Type.Base(BaseType.I64) => PrimitiveOp.I64Lte
-            case _ => PrimitiveOp.I32Lte
+          val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Lte, numericTypeOrI32(tpe)).get
           checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
       case Syntax.InfixOp.Gte =>
         hopefully:
           val lhs1 = checkTerm(lhs).!!
           val tpe = lhs1.tpe
-          val primOp = tpe match
-            case Type.Base(BaseType.I32) => PrimitiveOp.I32Gte
-            case Type.Base(BaseType.I64) => PrimitiveOp.I64Gte
-            case _ => PrimitiveOp.I32Gte
+          val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Gte, numericTypeOrI32(tpe)).get
           checkPrimOp(primOp, List(lhs, rhs), expected, srcPos).!!
       case Syntax.InfixOp.And =>
-        val primOp = PrimitiveOp.BoolAnd
+        val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.And, BaseType.BoolType).get
         checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
       case Syntax.InfixOp.Or =>
-        val primOp = PrimitiveOp.BoolOr
+        val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Or, BaseType.BoolType).get
         checkPrimOp(primOp, List(lhs, rhs), expected, srcPos)
       case op =>
         Left(List(TypeError.GeneralError(s"Unsupported infix operation: $op").withPos(srcPos)))
@@ -1101,13 +1074,10 @@ object TypeChecker:
   def checkPrefix(op: Syntax.PrefixOp, term: Syntax.Term, expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
     op match
       case Syntax.PrefixOp.Neg =>
-        val primOp = expected match
-          case Type.Base(BaseType.I32) => PrimitiveOp.I32Neg
-          case Type.Base(BaseType.I64) => PrimitiveOp.I64Neg
-          case _ => PrimitiveOp.I32Neg
+        val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Neg, numericTypeOrI32(expected)).get
         checkPrimOp(primOp, List(term), expected, srcPos)
       case Syntax.PrefixOp.Not =>
-        val primOp = PrimitiveOp.BoolNot
+        val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Not, BaseType.BoolType).get
         checkPrimOp(primOp, List(term), expected, srcPos)
       // case Syntax.PrefixOp.Return =>
       //   hopefully:
@@ -1237,7 +1207,7 @@ object TypeChecker:
             case arg :: Nil =>
               val arg1 = checkTerm(arg, expected = Definitions.i32Type).!!
               Term.PrimOp(
-                PrimitiveOp.ArrayGet,
+                ArrayGet(),
                 targs = Nil,
                 args = List(fun1, arg1),
               ).withPos(srcPos).withTpe(elemType).withCVFrom(fun1, arg1)
@@ -1307,7 +1277,7 @@ object TypeChecker:
       case (arg :: args, formal :: formals) =>
         checkTerm(arg, expected = Type.Base(formal).withKind(TypeKind.Star)).flatMap: arg1 =>
           go(args, formals, arg1 :: acc)
-      case _ => Left(List(TypeError.GeneralError(s"Argument number mismatch for primitive operation, expected ${formals.length}, but got ${args.length}").withPos(pos)))
+      case _ => Left(List(TypeError.GeneralError(s"Argument number mismatch for primitive operation `$op`, expected ${formals.length}, but got ${args.length}").withPos(pos)))
     go(args, formals, Nil).map: args1 =>
       Term.PrimOp(op, Nil, args1).withPos(pos).withTpe(Type.Base(resType).withKind(TypeKind.Star)).withCVFrom(args1*)
 
@@ -1317,7 +1287,7 @@ object TypeChecker:
         case arg :: Nil =>
           val arg1 = checkTerm(arg).!!
           val outType = arg1.tpe.stripCaptures
-          Term.PrimOp(PrimitiveOp.UnsafeAsPure, Nil, List(arg1)).withPos(pos).withTpe(outType).withCVFrom(arg1)
+          Term.PrimOp(UnsafeAsPure(), Nil, List(arg1)).withPos(pos).withTpe(outType).withCVFrom(arg1)
         case _ => sorry(TypeError.GeneralError(s"Expected one argument, but got ${args.length}").withPos(pos))
 
   def checkUnbox(arg: Syntax.Term | Term, pos: SourcePos)(using Context): Result[Term] =
@@ -1329,7 +1299,7 @@ object TypeChecker:
         case Type.Boxed(core) =>
           val outType = core
           val cv = core.captureSet
-          Term.PrimOp(PrimitiveOp.Unbox, Nil, List(arg1)).withPos(pos).withTpe(outType).withCV(cv)
+          Term.PrimOp(Unbox(), Nil, List(arg1)).withPos(pos).withTpe(outType).withCV(cv)
         case _ => sorry(TypeError.GeneralError(s"Expected a boxed type, but got ${arg1.tpe.show}").withPos(pos))
 
   def checkBox(arg: Syntax.Term | Term, pos: SourcePos)(using Context): Result[Term] =
@@ -1344,56 +1314,28 @@ object TypeChecker:
             CaptureSet.empty
           else arg1.cv
         val outType = Type.Boxed(arg1.tpe)
-        Term.PrimOp(PrimitiveOp.Box, Nil, List(arg1)).withPos(pos).withTpe(outType).withCV(outCV)
+        Term.PrimOp(Box(), Nil, List(arg1)).withPos(pos).withTpe(outType).withCV(outCV)
 
   def checkPrimOp(op: PrimitiveOp, args: List[Syntax.Term], expected: Type, pos: SourcePos)(using Context): Result[Term] =
     op match
-      case PrimitiveOp.I32Add => checkPrimOpArgs(PrimitiveOp.I32Add, args, List(BaseType.I32, BaseType.I32), BaseType.I32, pos)
-      case PrimitiveOp.I32Mul => checkPrimOpArgs(PrimitiveOp.I32Mul, args, List(BaseType.I32, BaseType.I32), BaseType.I32, pos)
-      case PrimitiveOp.I64Add => checkPrimOpArgs(PrimitiveOp.I64Add, args, List(BaseType.I64, BaseType.I64), BaseType.I64, pos)
-      case PrimitiveOp.I64Mul => checkPrimOpArgs(PrimitiveOp.I64Mul, args, List(BaseType.I64, BaseType.I64), BaseType.I64, pos)
-      case PrimitiveOp.I32Println => checkPrimOpArgs(PrimitiveOp.I32Println, args, List(BaseType.I32), BaseType.UnitType, pos)
-      case PrimitiveOp.I32Read => checkPrimOpArgs(PrimitiveOp.I32Read, args, List(), BaseType.I32, pos)
-      case PrimitiveOp.I32Sub => checkPrimOpArgs(PrimitiveOp.I32Sub, args, List(BaseType.I32, BaseType.I32), BaseType.I32, pos)
-      case PrimitiveOp.I32Div => checkPrimOpArgs(PrimitiveOp.I32Div, args, List(BaseType.I32, BaseType.I32), BaseType.I32, pos)
-      case PrimitiveOp.I32Rem => checkPrimOpArgs(PrimitiveOp.I32Rem, args, List(BaseType.I32, BaseType.I32), BaseType.I32, pos)
-      case PrimitiveOp.I64Sub => checkPrimOpArgs(PrimitiveOp.I64Sub, args, List(BaseType.I64, BaseType.I64), BaseType.I64, pos)
-      case PrimitiveOp.I64Div => checkPrimOpArgs(PrimitiveOp.I64Div, args, List(BaseType.I64, BaseType.I64), BaseType.I64, pos)
-      case PrimitiveOp.I64Rem => checkPrimOpArgs(PrimitiveOp.I64Rem, args, List(BaseType.I64, BaseType.I64), BaseType.I64, pos)
-      case PrimitiveOp.I32Eq => checkPrimOpArgs(PrimitiveOp.I32Eq, args, List(BaseType.I32, BaseType.I32), BaseType.BoolType, pos)
-      case PrimitiveOp.I32Neq => checkPrimOpArgs(PrimitiveOp.I32Neq, args, List(BaseType.I32, BaseType.I32), BaseType.BoolType, pos)
-      case PrimitiveOp.I32Lt => checkPrimOpArgs(PrimitiveOp.I32Lt, args, List(BaseType.I32, BaseType.I32), BaseType.BoolType, pos)
-      case PrimitiveOp.I32Gt => checkPrimOpArgs(PrimitiveOp.I32Gt, args, List(BaseType.I32, BaseType.I32), BaseType.BoolType, pos)
-      case PrimitiveOp.I32Lte => checkPrimOpArgs(PrimitiveOp.I32Lte, args, List(BaseType.I32, BaseType.I32), BaseType.BoolType, pos)
-      case PrimitiveOp.I32Gte => checkPrimOpArgs(PrimitiveOp.I32Gte, args, List(BaseType.I32, BaseType.I32), BaseType.BoolType, pos)
-      case PrimitiveOp.I64Eq => checkPrimOpArgs(PrimitiveOp.I64Eq, args, List(BaseType.I64, BaseType.I64), BaseType.BoolType, pos)
-      case PrimitiveOp.I64Neq => checkPrimOpArgs(PrimitiveOp.I64Neq, args, List(BaseType.I64, BaseType.I64), BaseType.BoolType, pos)
-      case PrimitiveOp.I64Lt => checkPrimOpArgs(PrimitiveOp.I64Lt, args, List(BaseType.I64, BaseType.I64), BaseType.BoolType, pos)
-      case PrimitiveOp.I64Gt => checkPrimOpArgs(PrimitiveOp.I64Gt, args, List(BaseType.I64, BaseType.I64), BaseType.BoolType, pos)
-      case PrimitiveOp.I64Lte => checkPrimOpArgs(PrimitiveOp.I64Lte, args, List(BaseType.I64, BaseType.I64), BaseType.BoolType, pos)
-      case PrimitiveOp.I64Gte => checkPrimOpArgs(PrimitiveOp.I64Gte, args, List(BaseType.I64, BaseType.I64), BaseType.BoolType, pos)
-      case PrimitiveOp.BoolEq => checkPrimOpArgs(PrimitiveOp.BoolEq, args, List(BaseType.BoolType, BaseType.BoolType), BaseType.BoolType, pos)
-      case PrimitiveOp.BoolNeq => checkPrimOpArgs(PrimitiveOp.BoolNeq, args, List(BaseType.BoolType, BaseType.BoolType), BaseType.BoolType, pos)
-      case PrimitiveOp.BoolNot => checkPrimOpArgs(PrimitiveOp.BoolNot, args, List(BaseType.BoolType), BaseType.BoolType, pos)
-      case PrimitiveOp.BoolAnd => checkPrimOpArgs(PrimitiveOp.BoolAnd, args, List(BaseType.BoolType, BaseType.BoolType), BaseType.BoolType, pos)
-      case PrimitiveOp.BoolOr => checkPrimOpArgs(PrimitiveOp.BoolOr, args, List(BaseType.BoolType, BaseType.BoolType), BaseType.BoolType, pos)
-      case PrimitiveOp.I32Neg => checkPrimOpArgs(PrimitiveOp.I32Neg, args, List(BaseType.I32), BaseType.I32, pos)
-      case PrimitiveOp.I64Neg => checkPrimOpArgs(PrimitiveOp.I64Neg, args, List(BaseType.I64), BaseType.I64, pos)
-      case PrimitiveOp.PutChar => checkPrimOpArgs(PrimitiveOp.PutChar, args, List(BaseType.CharType), BaseType.UnitType, pos)
-      case PrimitiveOp.PerfCounter => checkPrimOpArgs(PrimitiveOp.PerfCounter, args, List(), BaseType.I32, pos)
-      case PrimitiveOp.UnsafeAsPure => checkUnsafeAsPure(args, pos)
-      case PrimitiveOp.Sorry => Right(Term.PrimOp(PrimitiveOp.Sorry, Nil, Nil).withPos(pos).withTpe(Definitions.nothingType).withCV(CaptureSet.empty))
-      case PrimitiveOp.Box =>
+      case op: BasicPrimOp => checkPrimOpArgs(op, args, op.operandTypes, op.resultType, pos)
+      case I32Println() => checkPrimOpArgs(op, args, List(BaseType.I32), BaseType.UnitType, pos)
+      case I32Read() => checkPrimOpArgs(op, args, List(), BaseType.I32, pos)
+      case PutChar() => checkPrimOpArgs(op, args, List(BaseType.CharType), BaseType.UnitType, pos)
+      case PerfCounter() => checkPrimOpArgs(op, args, List(), BaseType.I32, pos)
+      case UnsafeAsPure() => checkUnsafeAsPure(args, pos)
+      case Sorry() => Right(Term.PrimOp(op, Nil, Nil).withPos(pos).withTpe(Definitions.nothingType).withCV(CaptureSet.empty))
+      case Box() =>
         hopefully:
           if args.length != 1 then
             sorry(TypeError.GeneralError(s"Argument number mismatch, `box` expects one term argument").withPos(pos))
           checkBox(args.head, pos).!!
-      case PrimitiveOp.Unbox =>
+      case Unbox() =>
         hopefully:
           if args.length != 1 then
             sorry(TypeError.GeneralError(s"Argument number mismatch, `unbox` expects one term argument").withPos(pos))
           checkUnbox(args.head, pos).!!
-      case PrimitiveOp.ArrayNew =>
+      case ArrayNew() =>
         hopefully:
           given ctx1: Context = ctx.newInferenceScope
           val tv = Inference.createTypeVar("elemType", pos)
@@ -1422,7 +1364,7 @@ object TypeChecker:
         Type.Capturing(Definitions.arrayType(elemType), isReadOnly = false, CaptureSet.universal)
       )
       val (args1, outType, consumedSet) = checkFunctionApply(arrConsFunction, args, pos, isDependent = false).!!
-      Term.PrimOp(PrimitiveOp.ArrayNew, elemType :: Nil, args1).withPos(pos).withTpe(outType).withCVFrom(args1*)
+      Term.PrimOp(ArrayNew(), elemType :: Nil, args1).withPos(pos).withTpe(outType).withCVFrom(args1*)
 
   /** `boundary` and `break` have been dropped due to lack of support in the backend
    * But we keep the code here for future reference
@@ -1445,19 +1387,19 @@ object TypeChecker:
         else
           Synthetics.etaExpand(runner, binders)
       val runner1 = checkTerm(expandedRunner, expected = expected).!!
-      val result = Term.PrimOp(PrimitiveOp.Arena, List(returnType), List(runner1))
+      val result = Term.PrimOp(Arena(), List(returnType), List(runner1))
       result.withPos(srcPos).withTpe(returnType).withCVFrom(runner1)
 
   def checkPolyPrimOp(op: PrimitiveOp, targs: List[Syntax.Type | Syntax.CaptureSet], args: List[Syntax.Term], expected: Type, pos: SourcePos)(using Context): Result[Term] =
     hopefully:
       op match
-        case PrimitiveOp.ArrayNew =>
+        case ArrayNew() =>
           (targs, args) match
             case ((elemType : Syntax.Type) :: Nil, arg1 :: arg2 :: Nil) =>
               val elemType1 = checkType(elemType).!!
               checkArrayInit(elemType1, args, pos).!!
             case _ => sorry(TypeError.GeneralError(s"Argument number mismatch, `newArray` expects one type argument and two term arguments"))
-        case PrimitiveOp.Arena =>
+        case Arena() =>
           (targs, args) match
             case ((returnType : Syntax.Type) :: Nil, runner :: Nil) =>
               val returnType1 = checkType(returnType).!!
@@ -1873,7 +1815,7 @@ object TypeChecker:
                 case "size" | "length" =>
                   if !inputTypeArgs.isEmpty then
                     sorry(TypeError.TypeMismatch(s"a type/capture function", "the size of an array").withPos(srcPos))
-                  Term.PrimOp(PrimitiveOp.ArrayLen, Nil, List(base1)).withPos(srcPos).withTpe(Definitions.i32Type).withCV(base1.cv)
+                  Term.PrimOp(ArrayLen(), Nil, List(base1)).withPos(srcPos).withTpe(Definitions.i32Type).withCV(base1.cv)
                 case _ => fail.!!
             case _ => fail.!!
       def tryStruct: Result[Term] =
@@ -1915,13 +1857,13 @@ object TypeChecker:
             if base1.tpe.isReadOnlyType then
               sorry(TypeError.TypeMismatch("a mutable reference", base1.tpe.show).withPosFrom(base1))
             val rhs1 = checkTerm(rhs, expected = lhs1.tpe).!!
-            Term.PrimOp(PrimitiveOp.StructSet, Nil, List(lhs1, rhs1)).withPos(srcPos).withTpe(Definitions.unitType).withCVFrom(lhs1, rhs1)
+            Term.PrimOp(StructSet(), Nil, List(lhs1, rhs1)).withPos(srcPos).withTpe(Definitions.unitType).withCVFrom(lhs1, rhs1)
           else
             sorry(TypeError.GeneralError(s"Field is not mutable").withPosFrom(lhs))
-        case lhs1 @ Term.PrimOp(PrimitiveOp.ArrayGet, Nil, arr :: arg :: Nil) =>
+        case lhs1 @ Term.PrimOp(ArrayGet(), Nil, arr :: arg :: Nil) =>
           val PrimArrayType(elemType) = arr.tpe.stripCaptures: @unchecked
           val rhs1 = checkTerm(rhs, expected = elemType).!!
-          Term.PrimOp(PrimitiveOp.ArraySet, Nil, List(arr, arg, rhs1)).withPos(srcPos).withTpe(Definitions.unitType).withCVFrom(lhs1, rhs1)
+          Term.PrimOp(ArraySet(), Nil, List(arr, arg, rhs1)).withPos(srcPos).withTpe(Definitions.unitType).withCVFrom(lhs1, rhs1)
         case _ => 
           fail
 

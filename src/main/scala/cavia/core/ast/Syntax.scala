@@ -22,9 +22,29 @@ object Syntax:
     case Eq, Neq, Lt, Gt, Lte, Gte
     case And, Or
 
+    override def toString(): String = this match
+      case Plus => "+"
+      case Minus => "-"
+      case Mul => "*"
+      case Div => "/"
+      case Mod => "%"
+      case Concat => "++"
+      case Eq => "=="
+      case Neq => "!="
+      case Lt => "<"
+      case Gt => ">"
+      case Lte => "<="
+      case Gte => ">="
+      case And => "&&"
+      case Or => "||"
+
   enum PrefixOp extends Positioned:
     case Neg, Not
     //case Return
+
+    override def toString(): String = this match
+      case Neg => "-"
+      case Not => "!"
 
   enum Pattern extends Positioned:
     case Wildcard()

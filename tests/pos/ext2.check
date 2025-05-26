@@ -14,10 +14,10 @@ module <root> {
         (op: (_: i32) ->{cap} Unit) => {
           val go: (cur: i32) ->{xs, op} Unit = 
             (cur: i32) => {
-              if #i32lt(cur, #arraylen(xs)) then
+              if #I32.Lt(cur, #arraylen(xs)) then
                 val _$2: Unit = 
                   op(#arrayget(xs, cur))
-                go(#i32add(cur, 1))
+                go(#I32.Add(cur, 1))
               else
                 ()
             }

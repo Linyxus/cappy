@@ -272,155 +272,161 @@ object Expr:
   trait ArrayPrimitiveOp
 
   /** Language primitive operations */
-  enum PrimitiveOp extends Positioned:
-    case I32Add
-    case I32Mul
-    case I32Sub
-    case I32Div
-    case I32Rem
-    case I32Eq
-    case I32Neq
-    case I32Lt
-    case I32Gt
-    case I32Lte
-    case I32Gte
-    case I64Add
-    case I64Mul
-    case I64Sub
-    case I64Div
-    case I64Rem
-    case I64Eq
-    case I64Neq
-    case I64Lt
-    case I64Gt
-    case I64Lte
-    case I64Gte
-    case I32Println
-    case I32Read
-    case BoolEq
-    case BoolNeq
-    case BoolNot
-    case BoolAnd
-    case BoolOr
-    case I32Neg
-    case I64Neg
-    /** Setting a field of a struct */
-    case StructSet
-    /** Array ops */
-    case ArrayNew extends PrimitiveOp, ArrayPrimitiveOp
-    case ArraySet extends PrimitiveOp, ArrayPrimitiveOp
-    case ArrayGet extends PrimitiveOp, ArrayPrimitiveOp
-    case ArrayLen extends PrimitiveOp, ArrayPrimitiveOp
-    /** A primitive in the very virtue of Lean */
-    case Sorry
-    /** Print a character */
-    case PutChar
-    /** Convert a value to a pure value in an unsafe way */
-    case UnsafeAsPure
-    /** Get the elapsed time since the start of the program in milliseconds */
-    case PerfCounter
-    // /** Return a value */
-    // case Return
-    // /** Set up a boundary */
-    // case Boundary
-    /** Primitives for boxing and unboxing in capture tracking */
-    case Box
-    case Unbox
-    /** Open an arena */
-    case Arena
-    /** Allocate a struct */
-    case RegionAlloc
+  sealed trait PrimitiveOp extends Positioned
+
+  enum BasicPrimOpKind:
+    case Add
+    case Mul
+    case Sub
+    case Div
+    case Rem
+    case Eq
+    case Neq
+    case Lt
+    case Gt
+    case Lte
+    case Gte
+    case Neg
+    case And
+    case Or
+    case Not
+
+  sealed trait BasicPrimOp(val opKind: BasicPrimOpKind, val operandTypes: List[BaseType], val resultType: BaseType) extends PrimitiveOp
+  case class BinaryPrimOp(k: BasicPrimOpKind, val operandType: BaseType) extends BasicPrimOp(k, List(operandType, operandType), operandType):
+    override def toString(): String = s"#$operandType.$opKind"
+  case class UnaryPrimOp(k: BasicPrimOpKind, val operandType: BaseType) extends BasicPrimOp(k, List(operandType), operandType):
+    override def toString(): String = s"#$operandType.$opKind"
+  case class ComparePrimOp(k: BasicPrimOpKind, val operandType: BaseType) extends BasicPrimOp(k, List(operandType, operandType), BaseType.BoolType):
+    override def toString(): String = s"#$operandType.$opKind"
+
+  def isBoolAnd(op: PrimitiveOp): Boolean = op match
+    case BinaryPrimOp(BasicPrimOpKind.And, _) => true
+    case _ => false
+  def isBoolOr(op: PrimitiveOp): Boolean = op match
+    case BinaryPrimOp(BasicPrimOpKind.Or, _) => true
+    case _ => false
+  def isBoolNot(op: PrimitiveOp): Boolean = op match
+    case UnaryPrimOp(BasicPrimOpKind.Not, _) => true
+    case _ => false
+
+  object BasicPrimOpFamily:
+    import BasicPrimOpKind.*
+    val numericTypes: Set[BaseType] = Set(BaseType.I32, BaseType.I64, BaseType.CharType)
+    val logicalTypes: Set[BaseType] = Set(BaseType.BoolType)
+    def resolve(opKind: BasicPrimOpKind, inputArgType: BaseType): Option[BasicPrimOp] = opKind match
+      case Add | Mul | Sub | Div | Rem if numericTypes.contains(inputArgType) =>
+        Some(new BinaryPrimOp(opKind, inputArgType))
+      case Eq | Neq | Lt | Gt | Lte | Gte if numericTypes.contains(inputArgType) =>
+        Some(new ComparePrimOp(opKind, inputArgType))
+      case Neg if numericTypes.contains(inputArgType) =>
+        Some(new UnaryPrimOp(opKind, inputArgType))
+      case Eq | Neq if logicalTypes.contains(inputArgType) =>
+        Some(new ComparePrimOp(opKind, inputArgType))
+      case And | Or if logicalTypes.contains(inputArgType) =>
+        Some(new BinaryPrimOp(opKind, inputArgType))
+      case Not if logicalTypes.contains(inputArgType) =>
+        Some(new UnaryPrimOp(opKind, inputArgType))
+      case _ => None
   
-    override def toString: String = this match
-      case I32Add => "#i32add"
-      case I32Mul => "#i32mul"
-      case I64Add => "#i64add"
-      case I64Mul => "#i64mul"
-      case I32Println => "#i32println"
-      case I32Read => "#i32read"
-      case Sorry => "sorry"
-      case I32Sub => "#i32sub"
-      case I32Div => "#i32div"
-      case I32Rem => "#i32rem"
-      case I64Sub => "#i64sub"
-      case I64Div => "#i64div"
-      case I64Rem => "#i64rem"
-      case I32Eq => "#i32eq"
-      case I32Neq => "#i32neq"
-      case I32Lt => "#i32lt"
-      case I32Gt => "#i32gt"
-      case I32Lte => "#i32lte"
-      case I32Gte => "#i32gte"
-      case I64Eq => "#i64eq"
-      case I64Neq => "#i64neq"
-      case I64Lt => "#i64lt"
-      case I64Gt => "#i64gt"
-      case I64Lte => "#i64lte"
-      case I64Gte => "#i64gte"
-      case BoolEq => "#booleq"
-      case BoolNeq => "#boolneq"
-      case BoolNot => "#boolnot"
-      case BoolAnd => "#booland"
-      case BoolOr => "#boolor"
-      case I32Neg => "#i32neg"
-      case I64Neg => "#i64neg"
-      case StructSet => "#structset"
-      case ArrayNew => "#arraynew"
-      case ArraySet => "#arrayset"
-      case ArrayGet => "#arrayget"
-      case ArrayLen => "#arraylen"
-      case PutChar => "#putchar"
-      case PerfCounter => "#perfcounter"
-      case UnsafeAsPure => "#unsafeAsPure"
-      //case Return => "return"
-      case Box => "#box"
-      case Unbox => "#unbox"
-      //case Boundary => "#boundary"
-      case Arena => "arena"
-      case RegionAlloc => "#regionalloc"
+  // I/O operations
+  case class I32Println() extends PrimitiveOp:
+    override def toString: String = "#i32println"
+  case class I32Read() extends PrimitiveOp:
+    override def toString: String = "#i32read"
+  
+  /** Setting a field of a struct */
+  case class StructSet() extends PrimitiveOp:
+    override def toString: String = "#structset"
+  
+  /** Array ops */
+  case class ArrayNew() extends PrimitiveOp with ArrayPrimitiveOp:
+    override def toString: String = "#arraynew"
+  case class ArraySet() extends PrimitiveOp with ArrayPrimitiveOp:
+    override def toString: String = "#arrayset"
+  case class ArrayGet() extends PrimitiveOp with ArrayPrimitiveOp:
+    override def toString: String = "#arrayget"
+  case class ArrayLen() extends PrimitiveOp with ArrayPrimitiveOp:
+    override def toString: String = "#arraylen"
+  
+  /** A primitive in the very virtue of Lean */
+  case class Sorry() extends PrimitiveOp:
+    override def toString: String = "sorry"
+  
+  /** Print a character */
+  case class PutChar() extends PrimitiveOp:
+    override def toString: String = "#putchar"
+  
+  /** Convert a value to a pure value in an unsafe way */
+  case class UnsafeAsPure() extends PrimitiveOp:
+    override def toString: String = "#unsafeAsPure"
+  
+  /** Get the elapsed time since the start of the program in milliseconds */
+  case class PerfCounter() extends PrimitiveOp:
+    override def toString: String = "#perfcounter"
+  
+  // /** Return a value */
+  // case class Return() extends PrimitiveOp:
+  //   override def toString: String = "return"
+  // /** Set up a boundary */
+  // case class Boundary() extends PrimitiveOp:
+  //   override def toString: String = "#boundary"
+  
+  /** Primitives for boxing and unboxing in capture tracking */
+  case class Box() extends PrimitiveOp:
+    override def toString: String = "#box"
+  case class Unbox() extends PrimitiveOp:
+    override def toString: String = "#unbox"
+  
+  /** Open an arena */
+  case class Arena() extends PrimitiveOp:
+    override def toString: String = "arena"
+  
+  /** Allocate a struct */
+  case class RegionAlloc() extends PrimitiveOp:
+    override def toString: String = "#regionalloc"
 
   object PrimitiveOp:
     def fromName(name: String): Option[PrimitiveOp] = name match
-      case "#i32add" => Some(PrimitiveOp.I32Add)
-      case "#i32mul" => Some(PrimitiveOp.I32Mul)
-      case "#i64add" => Some(PrimitiveOp.I64Add)
-      case "#i64mul" => Some(PrimitiveOp.I64Mul)
-      case "#i32println" => Some(PrimitiveOp.I32Println)
-      case "#i32read" => Some(PrimitiveOp.I32Read)
-      case "#i32sub" => Some(PrimitiveOp.I32Sub)
-      case "#i32div" => Some(PrimitiveOp.I32Div)
-      case "#i32rem" => Some(PrimitiveOp.I32Rem)
-      case "#i64sub" => Some(PrimitiveOp.I64Sub)
-      case "#i64div" => Some(PrimitiveOp.I64Div)
-      case "#i64rem" => Some(PrimitiveOp.I64Rem)
-      case "#i32eq" => Some(PrimitiveOp.I32Eq)
-      case "#i32neq" => Some(PrimitiveOp.I32Neq)
-      case "#i32lt" => Some(PrimitiveOp.I32Lt)
-      case "#i32gt" => Some(PrimitiveOp.I32Gt)
-      case "#i32lte" => Some(PrimitiveOp.I32Lte)
-      case "#i32gte" => Some(PrimitiveOp.I32Gte)
-      case "#i64eq" => Some(PrimitiveOp.I64Eq)
-      case "#i64neq" => Some(PrimitiveOp.I64Neq)
-      case "#i64lt" => Some(PrimitiveOp.I64Lt)
-      case "#i64gt" => Some(PrimitiveOp.I64Gt)
-      case "#i64lte" => Some(PrimitiveOp.I64Lte)
-      case "#i64gte" => Some(PrimitiveOp.I64Gte)
-      case "#booleq" => Some(PrimitiveOp.BoolEq)
-      case "#boolneq" => Some(PrimitiveOp.BoolNeq)
-      case "#boolnot" => Some(PrimitiveOp.BoolNot)
-      case "#booland" => Some(PrimitiveOp.BoolAnd)
-      case "#boolor" => Some(PrimitiveOp.BoolOr)
-      case "#i32neg" => Some(PrimitiveOp.I32Neg)
-      case "#i64neg" => Some(PrimitiveOp.I64Neg)
-      case "#box" => Some(PrimitiveOp.Box)
-      case "#unbox" => Some(PrimitiveOp.Unbox)
-      case "newArray" => Some(PrimitiveOp.ArrayNew)
-      case "sorry" => Some(PrimitiveOp.Sorry)
-      case "#putchar" => Some(PrimitiveOp.PutChar)
-      case "#unsafeAsPure" => Some(PrimitiveOp.UnsafeAsPure)
-      case "#perfcounter" => Some(PrimitiveOp.PerfCounter)
-      // case "boundary" => Some(PrimitiveOp.Boundary)
-      case "arena" => Some(PrimitiveOp.Arena)
+      case "#i32add" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Add, BaseType.I32)
+      case "#i32mul" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Mul, BaseType.I32)
+      case "#i64add" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Add, BaseType.I64)
+      case "#i64mul" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Mul, BaseType.I64)
+      case "#i32println" => Some(I32Println())
+      case "#i32read" => Some(I32Read())
+      case "#i32sub" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Sub, BaseType.I32)
+      case "#i32div" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Div, BaseType.I32)
+      case "#i32rem" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Rem, BaseType.I32)
+      case "#i64sub" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Sub, BaseType.I64)
+      case "#i64div" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Div, BaseType.I64)
+      case "#i64rem" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Rem, BaseType.I64)
+      case "#i32eq" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Eq, BaseType.I32)
+      case "#i32neq" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Neq, BaseType.I32)
+      case "#i32lt" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Lt, BaseType.I32)
+      case "#i32gt" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Gt, BaseType.I32)
+      case "#i32lte" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Lte, BaseType.I32)
+      case "#i32gte" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Gte, BaseType.I32)
+      case "#i64eq" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Eq, BaseType.I64)
+      case "#i64neq" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Neq, BaseType.I64)
+      case "#i64lt" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Lt, BaseType.I64)
+      case "#i64gt" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Gt, BaseType.I64)
+      case "#i64lte" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Lte, BaseType.I64)
+      case "#i64gte" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Gte, BaseType.I64)
+      case "#booleq" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Eq, BaseType.BoolType)
+      case "#boolneq" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Neq, BaseType.BoolType)
+      case "#boolnot" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Not, BaseType.BoolType)
+      case "#booland" => BasicPrimOpFamily.resolve(BasicPrimOpKind.And, BaseType.BoolType)
+      case "#boolor" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Or, BaseType.BoolType)
+      case "#i32neg" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Neg, BaseType.I32)
+      case "#i64neg" => BasicPrimOpFamily.resolve(BasicPrimOpKind.Neg, BaseType.I64)
+      case "#box" => Some(Box())
+      case "#unbox" => Some(Unbox())
+      case "newArray" => Some(ArrayNew())
+      case "sorry" => Some(Sorry())
+      case "#putchar" => Some(PutChar())
+      case "#unsafeAsPure" => Some(UnsafeAsPure())
+      case "#perfcounter" => Some(PerfCounter())
+      // case "boundary" => Some(Boundary())
+      case "arena" => Some(Arena())
       case _ => None
 
   /** Marker trait for all closures: term/type lambdas */

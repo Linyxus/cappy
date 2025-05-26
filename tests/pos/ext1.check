@@ -4,13 +4,13 @@ module <root> {
     val inc: (self: Ref^{cap}) ->{} () ->{self} Unit = 
       (self: Ref^{cap}) => {
         () => {
-          #structset(self.data, #i32add(self.data, 1))
+          #structset(self.data, #I32.Add(self.data, 1))
         }
       }
     val dec: (self: Ref^{cap}) ->{} () ->{self} Unit = 
       (self: Ref^{cap}) => {
         () => {
-          #structset(self.data, #i32sub(self.data, 1))
+          #structset(self.data, #I32.Sub(self.data, 1))
         }
       }
   }
