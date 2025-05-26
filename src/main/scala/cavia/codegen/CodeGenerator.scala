@@ -249,6 +249,7 @@ object CodeGenerator:
       // negation
       case Expr.UnaryPrimOp(Expr.BasicPrimOpKind.Neg, Expr.BaseType.I32) => List(Instruction.I32Const(0)) ++ argInstrs ++ List(Instruction.I32Sub)
       case Expr.UnaryPrimOp(Expr.BasicPrimOpKind.Neg, Expr.BaseType.I64) => List(Instruction.I64Const(0)) ++ argInstrs ++ List(Instruction.I64Sub)
+      case Expr.UnaryPrimOp(Expr.BasicPrimOpKind.Neg, Expr.BaseType.F64) => List(Instruction.F64Const(0.0)) ++ argInstrs ++ List(Instruction.F64Sub)
       // comparison ops
       case Expr.ComparePrimOp(opKind, operandType) if resolveComparePrimOp(opKind, translateBaseType(operandType)).isDefined =>
         val instr = resolveComparePrimOp(opKind, translateBaseType(operandType)).get

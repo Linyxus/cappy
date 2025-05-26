@@ -1086,10 +1086,18 @@ object TypeChecker:
         Left(List(TypeError.GeneralError(s"Unsupported infix operation: $op").withPos(srcPos)))
 
   def checkPrefix(op: Syntax.PrefixOp, term: Syntax.Term, expected: Type, srcPos: SourcePos)(using Context): Result[Term] =
+    def getExpectedTypeOrTermType: Result[Type] =
+      if expected.exists then Right(expected)
+      else
+        hopefully:
+          val term1 = checkTerm(term).!!
+          val tpe = term1.tpe
+          tpe
     op match
       case Syntax.PrefixOp.Neg =>
-        val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Neg, numericTypeOrI32(expected)).get
-        checkPrimOp(primOp, List(term), expected, srcPos)
+        hopefully:
+          val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Neg, numericTypeOrI32(getExpectedTypeOrTermType.!!)).get
+          checkPrimOp(primOp, List(term), expected, srcPos).!!
       case Syntax.PrefixOp.Not =>
         val primOp = BasicPrimOpFamily.resolve(BasicPrimOpKind.Not, BaseType.BoolType).get
         checkPrimOp(primOp, List(term), expected, srcPos)
