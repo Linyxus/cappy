@@ -56,11 +56,27 @@ object Compiler:
       Files.writeString(Path.of(outputPath), outputCode)
       Outcome.simpleSuccess(())
 
+  class CompileStep(inputPath: String, outputPath: String) extends CompilerStep[Unit, Unit]:
+    def run(x: Unit): Outcome[Unit] = 
+      val res = WasmAssembler.compile(inputPath, outputPath)
+      res match
+        case ShellUtils.ShellResult.Ok(msg) =>
+          println(s"--- compiled to $outputPath")
+          WasmOptimizer.optimize(outputPath, outputPath) match
+            case ShellUtils.ShellResult.Ok(msg) =>
+              println(s"--- optimized to $outputPath")
+              Outcome.simpleSuccess(())
+            case ShellUtils.ShellResult.Err(msg, code) =>
+              Outcome.simpleFailure(Message.simple(msg, null))
+        case ShellUtils.ShellResult.Err(msg, code) =>
+          Outcome.simpleFailure(Message.simple(msg, null))
+
   def parseOptions(args: List[String]): Option[CompilerAction] =
     args match
       case Nil => Some(CompilerAction.Help)
       case "check" :: sources => Some(CompilerAction.Check(sources.map(SourceFile.fromPath)))
       case "gen" :: sources => Some(CompilerAction.Codegen(sources.map(SourceFile.fromPath)))
+      case "compile" :: sources => Some(CompilerAction.Compile(sources.map(SourceFile.fromPath)))
       case _ => None
 
   def run(action: CompilerAction): Unit =
@@ -68,6 +84,7 @@ object Compiler:
       case CompilerAction.Help =>
         println("Usage: cavia check <source files>")
         println("       cavia gen <source files>")
+        println("       cavia compile <source files>")
       case CompilerAction.Check(sources) =>
         val sources1 = sources :+ stdlib
         val runner = ParseStep `fuse` TypecheckStep `fuse` PrintModulesStep("typecheck")
@@ -90,6 +107,18 @@ object Compiler:
             println("--- codegen successful")
           case None =>
             println("--- codegen failed")
+      case CompilerAction.Compile(sources) =>
+        val runner = 
+          ParseStep 
+            `fuse` TypecheckStep 
+            `fuse` PrintModulesStep("typecheck")
+            `fuse` CodegenStep("out.wat")
+            `fuse` CompileStep("out.wat", "out.wasm")
+        val res = runner.execute(sources :+ stdlib)
+        if res.isDefined then
+          println("--- compilation succeeded")
+        else
+          println("--- compilation failed")
 
   type ParseResult[+X] = Either[Tokenizer.Error | Parser.ParseError, X]
 

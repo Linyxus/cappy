@@ -10,10 +10,13 @@ import codegen.*
 import java.nio.file.*
 
 @main def runCompiler(sourcePaths: String*): Unit =
-  val args = sourcePaths.toList
-  val action = Compiler.parseOptions(args)
-  action match
-    case None =>
-      println("Invalid arguments")
-    case Some(action) =>
-      Compiler.run(action)
+  if !Binaryen.checkTools then
+    println("Please install the Binaryen toolchain (https://github.com/WebAssembly/binaryen).")
+  else
+    val args = sourcePaths.toList
+    val action = Compiler.parseOptions(args)
+    action match
+      case None =>
+        println("Invalid arguments")
+      case Some(action) =>
+        Compiler.run(action)
