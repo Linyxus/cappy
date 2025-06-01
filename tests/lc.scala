@@ -5,6 +5,7 @@ extension (state: ParseState^)
   def advance: ParseState^ =
     ParseState(state.buffer, state.currentPos + 1)
   def clone: ParseState^ =
+    // BUG? state.buffer should not be fresh
     ParseState(state.buffer, state.currentPos)
 enum ParseResult[+T]:
   case Ok(nextState: ParseState^, result: T)
@@ -20,9 +21,17 @@ extension [T](self: ParseResult[T]^)
   def get: T = self match
     case Ok(_, v) => v
 struct Parser[+T](run: ParseState^ => ParseResult[T]^)
-def failP(consume msg: String^): Parser[Nothing]^ =
-  def fn(st: ParseState^): ParseResult[Nothing]^{} = #unsafeAsPure(Err[Nothing](msg))  // limitation
+
+def failP(msg: String^): Parser[Nothing]^{cap, msg} =
+  def fn(st: ParseState^): ParseResult[Nothing]^{} = #unsafeAsPure(Err[Nothing](msg))  // limitation, should be a bug
   Parser(fn)
+
+def eofP: Parser[Unit]^ =
+  def fn(st: ParseState^): ParseResult[Unit]^ =
+    if st.isAtEnd then Ok(st.clone, ())
+    else Err[Unit]("Expecting end-of-file")
+  Parser(fn)
+
 def predP(p: char => bool): Parser[char]^{cap, p} =
   def fn(state: ParseState^): ParseResult[char]^ =
     if state.isAtEnd then Err[char]("unexpected end-of-file")
@@ -31,18 +40,22 @@ def predP(p: char => bool): Parser[char]^{cap, p} =
       if p(ch) then Ok(state.advance, ch)
       else Err[char]("predicate not satisfied")
   Parser[char](fn)
+
 def charP(ch: char): Parser[char]^{cap} =
   predP(ch1 => ch1 == ch)
+
 def pureP[T](value: T): Parser[T]^ =
   def fn(state: ParseState^): ParseResult[T]^ =
     Ok(state.clone, value)
   Parser(fn)
+
 def mapP[T, U](p: Parser[T]^, f: T => U): Parser[U]^{cap, p, f} =
   def fn(st: ParseState^): ParseResult[U]^ =
     p.run(st) match
       case Ok(st1, value) => Ok(st1, f(value))
       case Err(msg) => Err[U](msg)
   Parser(fn)
+
 def appP[A, B](pf: Parser[A => B]^, px: Parser[A]^): Parser[B]^{cap, pf, px} =
   def fn(st: ParseState^): ParseResult[B]^ =
     pf.run(st) match
@@ -52,12 +65,14 @@ def appP[A, B](pf: Parser[A => B]^, px: Parser[A]^): Parser[B]^{cap, pf, px} =
           case Err(msg) => Err[B](msg)
       case Err(msg) => Err[B](msg)
   Parser(#unsafeAsPure(fn))  // limitation on pattern matching
+
 def alternativeP[T](pa: Parser[T]^, pb: Parser[T]^): Parser[T]^{cap, pa, pb} =
   def fn(st: ParseState^): ParseResult[T]^ =
     pa.run(st) match
       case ok @ Ok(_, _) => ok
       case Err(_) => pb.run(st)
   Parser(fn)
+
 struct P[T, U](fst: T, snd: U)
 def pairP[A, B](pa: Parser[A]^, pb: Parser[B]^): Parser[P[A, B]^]^ =
   def fn(st: ParseState^): ParseResult[P[A, B]^]^ =
@@ -74,6 +89,7 @@ def pairP[A, B](pa: Parser[A]^, pb: Parser[B]^): Parser[P[A, B]^]^ =
         //Err[Nothing](msg)
         ???
   Parser(fn)
+
 def stringP(str: String^): Parser[Unit]^ =
   def go(cur: i32): Parser[Unit]^ =
     if cur >= str.size then 
@@ -83,6 +99,15 @@ def stringP(str: String^): Parser[Unit]^ =
       val t = mapP(pairP(charP(str(cur)), go(cur+1)), res => ())
       t
   go(0)
+
+def someP[T](px: Parser[T]^): Parser[List[T]^]^ =
+  def fn(st: ParseState^): ParseResult[List[T]]^ = ???
+  ???
+
+def manyP[T](px: Parser[T]^): Parser[List[T]^]^ =
+  def fn(st: ParseState^): ParseResult[List[T]]^ = ???
+  ???
+
 def main(): Unit =
   putStrLn("hello, world")
   val state1 = ParseState("hello", 0)
