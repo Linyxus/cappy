@@ -115,9 +115,6 @@ object Compiler:
         val res = runner.execute(sources1)
         res match
           case Some(modules) =>
-            // println("--- typechecked modules")
-            // modules.init.foreach: m =>
-            //   println(ExprPrinter.show(m)(using TypeChecker.Context.empty))
           case None =>
       case CompilerAction.Codegen(sources, config) =>
         val runner = 
