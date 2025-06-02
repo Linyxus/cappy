@@ -22,9 +22,9 @@ object Compiler:
         case Left(err: Parser.ParseError) => Outcome.simpleFailure(Message.multiline(getErrorMessages(err), err.pos))
         case Right(modules) => Outcome.simpleSuccess(modules)
 
-  object TypecheckStep extends CompilerStep[List[Syntax.Module], List[Expr.Module]]:
+  class TypecheckStep(config: CompilerConfig) extends CompilerStep[List[Syntax.Module], List[Expr.Module]]:
     def run(sources: List[Syntax.Module]): Outcome[List[Expr.Module]] =
-      val ctx = TypeChecker.Context.empty
+      val ctx = TypeChecker.Context.empty.copy(config = config)
       TypeChecker.checkModules(sources)(using ctx) match
         case Left(errs) =>
           new Outcome:
@@ -37,12 +37,12 @@ object Compiler:
               checker.recheckModule(m)(using ctx)
           Outcome.simpleSuccess(res)
 
-  class PrintModulesStep(after: String) extends CompilerStep[List[Expr.Module], List[Expr.Module]]:
+  class PrintModulesStep(after: String, config: CompilerConfig) extends CompilerStep[List[Expr.Module], List[Expr.Module]]:
     def run(modules: List[Expr.Module]): Outcome[List[Expr.Module]] =
       println(s"--- modules after $after")
       modules.foreach: m =>
         if m.name != "std" then
-          println(ExprPrinter.show(m)(using TypeChecker.Context.empty))
+          println(ExprPrinter.show(m)(using TypeChecker.Context.emptyWithConfig(config)))
       Outcome.simpleSuccess(modules)
 
   class CodegenStep(outputPath: String) extends CompilerStep[List[Expr.Module], Unit]:
@@ -71,13 +71,37 @@ object Compiler:
         case ShellUtils.ShellResult.Err(msg, code) =>
           Outcome.simpleFailure(Message.simple(msg, null))
 
-  def parseOptions(args: List[String]): Option[CompilerAction] =
+  def parseConfig(args: List[String]): Either[String, CompilerCliParser] =
+    val p = new CompilerCliParser()
+    p.parseAll(args) match
+      case CliParser.Outcome.Ok => Right(p)
+      case CliParser.Outcome.Err(msg) => Left(msg)
+
+  def parseOptions(args: List[String]): Either[String, CompilerAction] =
     args match
-      case Nil => Some(CompilerAction.Help)
-      case "check" :: sources => Some(CompilerAction.Check(sources.map(SourceFile.fromPath)))
-      case "gen" :: sources => Some(CompilerAction.Codegen(sources.map(SourceFile.fromPath)))
-      case "compile" :: sources => Some(CompilerAction.Compile(sources.map(SourceFile.fromPath)))
-      case _ => None
+      case Nil => Right(CompilerAction.Help)
+      case "check" :: moreArgs => hopefully:
+        val p = parseConfig(moreArgs).!!
+        val config = CompilerConfig(
+          printIds = p.printIdsOption.get,
+          includeStd = p.includeStdOption.get,
+        )
+        CompilerAction.Check(p.sourceFilesOption.get, config)
+      case "gen" :: moreArgs => hopefully:
+        val p = parseConfig(moreArgs).!!
+        val config = CompilerConfig(
+          printIds = p.printIdsOption.get,
+          includeStd = p.includeStdOption.get,
+        )
+        CompilerAction.Codegen(p.sourceFilesOption.get, config)
+      case "compile" :: moreArgs => hopefully:
+        val p = parseConfig(moreArgs).!!
+        val config = CompilerConfig(
+          printIds = p.printIdsOption.get,
+          includeStd = p.includeStdOption.get,
+        )
+        CompilerAction.Compile(p.sourceFilesOption.get, config)
+      case  cmd :: _ => Left(s"Invalid command: $cmd")
 
   def run(action: CompilerAction): Unit =
     action match
@@ -85,9 +109,9 @@ object Compiler:
         println("Usage: cavia check <source files>")
         println("       cavia gen <source files>")
         println("       cavia compile <source files>")
-      case CompilerAction.Check(sources) =>
+      case CompilerAction.Check(sources, config) =>
         val sources1 = sources :+ stdlib
-        val runner = ParseStep `fuse` TypecheckStep `fuse` PrintModulesStep("typecheck")
+        val runner = ParseStep `fuse` TypecheckStep(config) `fuse` PrintModulesStep("typecheck", config)
         val res = runner.execute(sources1)
         res match
           case Some(modules) =>
@@ -95,11 +119,11 @@ object Compiler:
             // modules.init.foreach: m =>
             //   println(ExprPrinter.show(m)(using TypeChecker.Context.empty))
           case None =>
-      case CompilerAction.Codegen(sources) =>
+      case CompilerAction.Codegen(sources, config) =>
         val runner = 
           ParseStep 
-            `fuse` TypecheckStep 
-            `fuse` PrintModulesStep("typecheck")
+            `fuse` TypecheckStep(config)
+            `fuse` PrintModulesStep("typecheck", config)
             `fuse` CodegenStep("out.wat")
         val res = runner.execute(sources :+ stdlib)
         res match
@@ -107,11 +131,11 @@ object Compiler:
             println("--- codegen successful")
           case None =>
             println("--- codegen failed")
-      case CompilerAction.Compile(sources) =>
+      case CompilerAction.Compile(sources, config) =>
         val runner = 
           ParseStep 
-            `fuse` TypecheckStep 
-            `fuse` PrintModulesStep("typecheck")
+            `fuse` TypecheckStep(config)
+            `fuse` PrintModulesStep("typecheck", config)
             `fuse` CodegenStep("out.wat")
             `fuse` CompileStep("out.wat", "out.wasm")
         val res = runner.execute(sources :+ stdlib)

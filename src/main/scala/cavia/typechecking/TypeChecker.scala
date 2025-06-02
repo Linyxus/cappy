@@ -94,6 +94,9 @@ object TypeChecker:
     def testing: Context =
       empty.copy(config = CompilerConfig.default.turnOffPrintIds)
 
+    def emptyWithConfig(config: CompilerConfig): Context =
+      empty.copy(config = config)
+
 
   enum TypeError extends Positioned:
     case UnboundVariable(name: String, addenda: String = "")

@@ -16,7 +16,7 @@ import java.nio.file.*
     val args = sourcePaths.toList
     val action = Compiler.parseOptions(args)
     action match
-      case None =>
-        println("Invalid arguments")
-      case Some(action) =>
+      case Left(err) =>
+        println(err)
+      case Right(action) =>
         Compiler.run(action)
