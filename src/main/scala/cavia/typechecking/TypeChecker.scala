@@ -258,8 +258,8 @@ object TypeChecker:
     case "bool" => Some(Definitions.boolType)
     case "array" => Some(Definitions.arrayConstructorType)
     case "char" => Some(Definitions.charType)
-    case "Region" => Some(Definitions.regionType)
-    case "RegionRef" => Some(Definitions.regionRefConstructorType)
+    case "Arena" => Some(Definitions.arenaType)
+    case "Ar" => Some(Definitions.arenaRefConstructorType)
     // case "String" => Some(Definitions.strType)
     // case "Break" => Some(Definitions.breakConstructorType)
     // case "f32" => Some(Definitions.f32Type)
@@ -483,7 +483,7 @@ object TypeChecker:
           else Some(FieldInfo(name, arg.tpe, mutable))
       val captureSet = CaptureSet.universal ++ CaptureSet(termCaptureElems)
       if onRegion then
-        classType = Definitions.regionRefType(classType)
+        classType = Definitions.arenaRefType(classType)
       val outType = Type.Capturing(classType, isReadOnly = false, captureSet)
       val refinedOutType = outType.refined(refinements)
       Term.StructInit(classSym, typeArgs, termArgs).withPos(srcPos).withTpe(refinedOutType).withCVFrom(termArgs*)
@@ -746,7 +746,7 @@ object TypeChecker:
       t match
         case Syntax.Term.Apply(sel @ Syntax.Term.Select(base, field), args) =>
           val base1 = checkTerm(base).!!
-          if base1.tpe.isRegionType then
+          if base1.tpe.isArenaHandleType then
             val peaks = SepCheck.computePeak(base1.tpe.captureSet)
             val regionPeak: CaptureRef.CapInst = peaks.elems match
               case (QualifiedRef(_, inst: CaptureRef.CapInst)) :: Nil => inst
@@ -1404,7 +1404,7 @@ object TypeChecker:
 
   def checkArena(returnType: Type, runner: Syntax.Term, srcPos: SourcePos)(using Context): Result[Term] =
     hopefully:
-      val regionType = Type.Capturing(Definitions.regionType, isReadOnly = false, CaptureSet.universal)
+      val regionType = Type.Capturing(Definitions.arenaType, isReadOnly = false, CaptureSet.universal)
       val binders = List[TermBinder](TermBinder("reg", regionType, isConsume = false))
       val expected = Type.TermArrow(binders, returnType)
       val expandedRunner =
@@ -1902,7 +1902,7 @@ object TypeChecker:
         case Type.Capturing(tpe, _, _) => go(tpe)
         case Type.RefinedType(core, refinements) =>
           refinements.find(_.name == field).orElse(go(core))
-        case RegionRefType(inner) => go(inner)
+        case ArenaRefType(inner) => go(inner)
         case _ => None
     go(tpe)
 

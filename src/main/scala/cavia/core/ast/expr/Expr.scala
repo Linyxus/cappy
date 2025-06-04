@@ -66,10 +66,10 @@ object Expr:
     case ArrayType  // it is a type constructor
     // /** Type for the capability of boundary/break: `Break[T]` */
     // case BreakType
-    /** Type for regions */
-    case RegionType
-    /** Type for references allocated on regions. It is a type constructor `* -> *`. */
-    case RegionRefType
+    /** Type for arenas */
+    case ArenaType
+    /** Type for references allocated on arenas. It is a type constructor `* -> *`. */
+    case ArenaRefType
 
     def isIntegralType: Boolean = this match
       case I32 | I64 | IntType => true
@@ -535,13 +535,13 @@ object Expr:
       Type.Base(BaseType.ArrayType).withKind(kind)
     def arrayType(elemType: Type): Type =
       Type.AppliedType(arrayConstructorType, List(elemType)).withKind(TypeKind.Star)
-    def regionType: Type =
-      Type.Base(BaseType.RegionType).withKind(TypeKind.Star)
-    def regionRefConstructorType: Type =
+    def arenaType: Type =
+      Type.Base(BaseType.ArenaType).withKind(TypeKind.Star)
+    def arenaRefConstructorType: Type =
       val kind = TypeKind.Arrow(List(Variance.Covariant), TypeKind.Star)
-      Type.Base(BaseType.RegionRefType).withKind(kind)
-    def regionRefType(elemType: Type): Type =
-      Type.AppliedType(regionRefConstructorType, List(elemType)).withKind(TypeKind.Star)
+      Type.Base(BaseType.ArenaRefType).withKind(kind)
+    def arenaRefType(elemType: Type): Type =
+      Type.AppliedType(arenaRefConstructorType, List(elemType)).withKind(TypeKind.Star)
     // def breakConstructorType: Type =
     //   Type.Base(BaseType.BreakType).withKind(tycon1Kind)
     // def breakCapabilityType(returnType: Type): Type =

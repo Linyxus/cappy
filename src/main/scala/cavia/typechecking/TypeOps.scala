@@ -318,8 +318,8 @@ object TypePrinter:
     case BaseType.BoolType => "bool"
     case BaseType.ArrayType => "array"
     case BaseType.CharType => "char"
-    case BaseType.RegionType => "Region"
-    case BaseType.RegionRefType => "RegionRef"
+    case BaseType.ArenaType => "Arena"
+    case BaseType.ArenaRefType => "Ar"
     // case BaseType.BreakType => "Break"
   def showFunctionType(params: List[Binder], result: Type, cs: Option[CaptureSet] = None, isType: Boolean = false)(using ctx: TypeChecker.Context) =
     def showParams(params: List[Binder])(using ctx: TypeChecker.Context): List[String] = params match
@@ -692,8 +692,8 @@ extension (tpe: Type)
     if tpe1 eq tpe then tpe
     else tpe1.simplify
 
-  def isRegionType(using ctx: TypeChecker.Context): Boolean = tpe.simplify match
-    case Type.Base(BaseType.RegionType) => true
+  def isArenaHandleType(using ctx: TypeChecker.Context): Boolean = tpe.simplify match
+    case Type.Base(BaseType.ArenaType) => true
     case _ => false
 
 object TermFunctionType:
@@ -708,11 +708,11 @@ object TypeFunctionType:
     case Type.Capturing(base, _, _) => unapply(base)
     case _ => None
 
-object RegionRefType:
+object ArenaRefType:
   def unapply(tpe: Type): Option[Type] = tpe match
-    case Type.AppliedType(Type.Base(BaseType.RegionRefType), (elemType: Type) :: Nil) => Some(elemType)
+    case Type.AppliedType(Type.Base(BaseType.ArenaRefType), (elemType: Type) :: Nil) => Some(elemType)
     case _ => None
-  def apply(tpe: Type): Type = Definitions.regionRefType(tpe)
+  def apply(tpe: Type): Type = Definitions.arenaRefType(tpe)
 
 def unshiftType(tpe: Type)(using ctx: TypeChecker.Context): Option[Type] =
   val tm = AvoidLocalBinder(Definitions.nothingType)
