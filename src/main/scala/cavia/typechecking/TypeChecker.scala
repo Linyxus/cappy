@@ -1367,6 +1367,16 @@ object TypeChecker:
           val resultTerm = checkArrayInit(tv, args, pos).!!
           Inference.solveTypeVars()
           resultTerm
+      case Arena() =>
+        hopefully:
+          given ctx1: Context = ctx.newInferenceScope
+          val returnType = Inference.createTypeVar("resultType", pos)
+          if args.length != 1 then
+            sorry(TypeError.GeneralError(s"Argument number mismatch, `arena` expects one term argument").withPos(pos))
+          val arg = args.head
+          val resultTerm = checkArena(returnType, arg, pos).!!
+          Inference.solveTypeVars()
+          resultTerm
       // case PrimitiveOp.Boundary =>
       //   hopefully:
       //     given ctx1: Context = ctx.newInferenceScope
