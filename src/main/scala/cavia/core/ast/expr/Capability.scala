@@ -63,6 +63,10 @@ object CaptureRef:
     case CaptureRef.Selection(root, _) => getRoot(root)
     case _ => ref
 
+  def isFresh(ref: CaptureRef): Boolean = ref match
+    case CaptureRef.CapInst(capId, CapKind.Fresh(_)) => true
+    case _ => false
+
 extension (ref: CaptureRef)
   def parents: Set[CaptureRef] = CaptureRef.getParents(ref)
   def root: CaptureRef = CaptureRef.getRoot(ref)
