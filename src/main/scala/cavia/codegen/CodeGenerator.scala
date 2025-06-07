@@ -53,7 +53,7 @@ object CodeGenerator:
     case LazyFuncDef(body: Expr.Closure)
     case GlobalDef(globalSym: Symbol)
 
-  case class StructInfo(sym: Symbol, nameMap: Map[String, Symbol], tagNumber: Option[Int] = None)
+  case class StructInfo(sym: Symbol, nameMap: Map[String, Symbol], layoutInfo: LayoutInfo, tagNumber: Option[Int] = None)
 
   case class ExtensionInfo(methodMap: Map[String, MethodInfo])
   enum MethodInfo:
@@ -69,6 +69,14 @@ object CodeGenerator:
   case class SpecSig(targs: List[ValType]):
     def encodedName: String =
       nameEncode(targs.map(_.show).mkString("_"))
+
+  /** Information of a memory layout. */
+  case class LayoutInfo(
+    totalSize: Int,
+    offsets: Map[Symbol, Int],
+  )
+  object LayoutInfo:
+    def empty: LayoutInfo = LayoutInfo(0, Map.empty)
 
   case class Context(
     funcs: ArrayBuffer[Func] = ArrayBuffer.empty,
@@ -288,7 +296,7 @@ object CodeGenerator:
         val Expr.Term.Select(base, fieldInfo) :: rhs :: Nil = args: @unchecked
         val rhsInstrs = genTerm(rhs)
         val AppliedStructType(classSym, typeArgs) = base.tpe.stripCaptures: @unchecked
-        val StructInfo(structSym, fieldMap, _) = createStructType(classSym, typeArgs)
+        val StructInfo(structSym, fieldMap, _, _) = createStructType(classSym, typeArgs)
         val fieldSym = fieldMap(fieldInfo.name)
         val baseInstrs = genTerm(base)
         val setFieldInstrs = List(Instruction.StructSet(structSym, fieldSym))
@@ -438,8 +446,11 @@ object CodeGenerator:
         val arrSym = createArrayType(arrType)
         ValType.TypedRef(arrSym)
       case AppliedStructType(sym, targs) =>
-        val StructInfo(structSym, _, _) = createStructType(sym, targs)
+        val StructInfo(structSym, _, _, _) = createStructType(sym, targs)
         ValType.TypedRef(structSym)
+      case AppliedStructTypeOnArena(sym, targs) => 
+        // Arena-allocated structs are simply a pointer to the linear memory
+        ValType.I32
       case AppliedEnumType(sym, targs) => ValType.TypedRef(Symbol.EnumClass)
       case Expr.Type.BinderRef(idx) =>
         //println(s"translateType: BinderRef($idx), binderInfos = ${ctx.binderInfos}")
@@ -677,7 +688,11 @@ object CodeGenerator:
       (arenaOp, targs, args) match
         case (Expr.Arena(), resType :: Nil, (body: Term.TermLambda) :: Nil) =>
           genArena(body, resType)
-        case _ => assert(false, s"unsupported arena primitive op: $arenaOp")
+        case (Expr.RegionAlloc(), Nil, _ :: (initTerm: Term.StructInit) :: Nil) =>
+          val StructInfo(_, _, layoutInfo, _) = createStructType(initTerm.sym, initTerm.targs)
+          println(s"layout info: $layoutInfo")
+          ???
+        case _ => assert(false, s"unsupported arena primitive op: $t")
     case Term.PrimOp(op, Nil, args) => genSimplePrimOp(args, op)
     case Term.If(cond, thenBranch, elseBranch) =>
       val resultType = translateType(t.tpe)
@@ -823,7 +838,7 @@ object CodeGenerator:
         val localBinderInfo = BinderInfo.Sym(binder, localSym)
         (bindInstr :: patInstrs, localBinderInfo :: patBinderInfos)
       case Pattern.EnumVariant(constructor, typeArgs, enumSym, fields) =>
-        val StructInfo(structSym, fieldMap, _) = createStructType(constructor, typeArgs)
+        val StructInfo(structSym, fieldMap, _, _) = createStructType(constructor, typeArgs)
         val localSym = Symbol.fresh(constructor.name)
         val valType = ValType.TypedRef(structSym)
         emitLocal(localSym, valType)
@@ -855,7 +870,7 @@ object CodeGenerator:
       case Pattern.Wildcard() => Instruction.Drop :: thenBranch
       case Pattern.Bind(binder, pat) => genPatternMatcher(pat, thenBranch, elseBranch, resType)
       case Pattern.EnumVariant(constructor, typeArgs, enumSym, fields) =>
-        val StructInfo(structSym, fieldMap, maybeTag) = createStructType(constructor, typeArgs)
+        val StructInfo(structSym, fieldMap, _, maybeTag) = createStructType(constructor, typeArgs)
         val localSym = Symbol.fresh(constructor.name)
         val localType = ValType.TypedRef(structSym)
         emitLocal(localSym, localType)
@@ -912,7 +927,7 @@ object CodeGenerator:
     scrutineeInstrs ++ setLocalInstrs ++ caseInstrs
 
   def genStructInit(classSym: Expr.StructSymbol, targs: List[Expr.Type | Expr.CaptureSet], args: List[Expr.Term])(using Context): List[Instruction] =
-    val StructInfo(structSym, _, tagNumber) = createStructType(classSym, targs)
+    val StructInfo(structSym, _, _, tagNumber) = createStructType(classSym, targs)
     var argInstrs = args.flatMap(genTerm)
     tagNumber match
       case Some(num) =>
@@ -924,7 +939,7 @@ object CodeGenerator:
   def genSelect(base: Expr.Term, fieldInfo: Expr.FieldInfo)(using Context): List[Instruction] =
     base.tpe.strip.simplify(using ctx.typecheckerCtx) match
       case AppliedStructType(classSym, targs) =>
-        val StructInfo(structSym, nameMap, _) = createStructType(classSym, targs)
+        val StructInfo(structSym, nameMap, _, _) = createStructType(classSym, targs)
         val fieldName = fieldInfo.name
         val fieldSym = nameMap(fieldName)
         val baseInstrs = genTerm(base)
@@ -937,6 +952,22 @@ object CodeGenerator:
       case tpe: Expr.Type => Some(translateType(tpe))
       case _ => None
     SpecSig(valTypes)
+
+  /** Number of bytes in the linear memory a value type takes. */
+  def sizeInMemory(tpe: ValType): Int = tpe match
+    case ValType.I32 => 4
+    case ValType.I64 => 8
+    case ValType.F64 => 8
+    case ValType.TypedRef(_, _) => 4
+    case ValType.AnyRef => 4
+
+  def createLayoutInfo(structType: StructType): LayoutInfo =
+    val fields = structType.fields
+    val fieldSizes = fields.map(f => sizeInMemory(f.tpe))
+    val totalSize = fieldSizes.sum
+    val offsets = fieldSizes.scanLeft(0)(_ + _)
+    val offsetsMap = Map.from(fields.map(_.sym).zip(offsets))
+    LayoutInfo(totalSize, offsetsMap)
 
   def createStructType(classSym: Expr.StructSymbol, targs: List[Expr.Type | Expr.CaptureSet])(using Context): StructInfo =
     val specSig = translateTypeArgs(targs)
@@ -951,7 +982,7 @@ object CodeGenerator:
       case None => 
         val structName = nameEncode(classSym.name ++ specSig.targs.map(vt => "_" ++ vt.show).mkString(""))
         val structSym = Symbol.fresh(structName)
-        specMap += (specSig -> StructInfo(structSym, Map.empty)) // first, put a placeholder
+        specMap += (specSig -> StructInfo(structSym, Map.empty, LayoutInfo.empty)) // first, put a placeholder
         val binders: List[Expr.Binder] = classSym.info.targs
         val binderInfos = (binders `zip` targs).map:
           case (bd, tpe: Expr.Type) => 
@@ -976,7 +1007,8 @@ object CodeGenerator:
         val nameMap = Map.from(fields.map((n, f) => (n, f.sym)))
         emitType(typeDef)
         val tagNumber = classSym.info.enumSymbol.map(_ => Tag.fresh())  // Create tag number for enum variants
-        val structInfo = StructInfo(structSym, nameMap, tagNumber)
+        val layoutInfo = createLayoutInfo(structType)
+        val structInfo = StructInfo(structSym, nameMap, layoutInfo, tagNumber)
         specMap += (specSig -> structInfo)
         structInfo
 
@@ -1043,10 +1075,33 @@ object CodeGenerator:
       case _ => None
     goInstrs(body).getOrElse(body)
 
+  def declareLocal(symName: String, tpe: ValType)(using Context): Symbol =
+    val sym = Symbol.fresh(symName)
+    emitLocal(sym, tpe)
+    sym
+
   def genArena(lambdaBody: Term.TermLambda, resType: Expr.Type)(using Context): List[Instruction] =
+    val resValType = translateType(resType)
+    val savedArenaPointerSym = declareLocal("__saved_arena_pointer", ValType.I32)
+    val resultSym = declareLocal("__result", resValType)
     val Term.TermLambda(ps, body, _) = lambdaBody
     val handleBinder :: Nil = ps: @unchecked
-    genTerm(body)(using ctx.withErasedBinder(handleBinder))
+    val saveArenaInstrs = List(
+      Instruction.GlobalGet(Symbol.ArenaCurrent),
+      Instruction.LocalSet(savedArenaPointerSym),
+    )
+    val bodyInstrs = genTerm(body)(using ctx.withErasedBinder(handleBinder))
+    val saveResultInstrs = List(
+      Instruction.LocalSet(resultSym),
+    )
+    val restoreArenaInstrs = List(
+      Instruction.LocalGet(savedArenaPointerSym),
+      Instruction.GlobalSet(Symbol.ArenaCurrent),
+    )
+    val returnResultInstrs = List(
+      Instruction.LocalGet(resultSym),
+    )
+    saveArenaInstrs ++ bodyInstrs ++ saveResultInstrs ++ restoreArenaInstrs ++ returnResultInstrs
 
   /** Generates code for a module-level function.
    * @param funType type of the module function
@@ -1208,6 +1263,12 @@ object CodeGenerator:
     val memory = Memory(Symbol.Memory, 1)
     emitMemory(memory)
 
+  def setupArena()(using Context): Unit =
+    val arenaMemory = Memory(Symbol.ArenaMemory, 8)
+    emitMemory(arenaMemory)
+    val arenaPointer = Global(Symbol.ArenaCurrent, ValType.I32, mutable = true, Instruction.I32Const(0))
+    emitGlobal(arenaPointer)
+
   def emitDefaultTypes()(using Context): Unit =
     val td = TypeDef(
       Symbol.EnumClass, 
@@ -1228,6 +1289,8 @@ object CodeGenerator:
     emitDefaultTypes()
     emitDefaultImports()
     emitDefaultMemory()
+    // Also, setup the arena
+    setupArena()
     // Next, create symbols for all the definitions
     //   for struct symbols, we create the type as well
     //   for function symbols, we create placeholders, either lazy or polymorphic

@@ -6,6 +6,7 @@ object WasmAssembler:
     "--enable-reference-types",
     "--enable-gc",
     "--enable-tail-call",
+    "--enable-multimemory",
   )
   def exists: Boolean = executableExists("wasm-as")
 

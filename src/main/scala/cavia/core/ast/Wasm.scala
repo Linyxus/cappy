@@ -188,6 +188,8 @@ object Wasm:
     val I32Println = fresh("__i32println")
     val I32Read = fresh("__i32read")
     val Memory = fresh("__memory")
+    val ArenaMemory = fresh("__arena_memory")
+    val ArenaCurrent = fresh("__arena_current")
     val PutChar = fresh("__putchar")
     val PerfCounter = fresh("__perf_counter")
     val EnumClass = fresh("__enum")

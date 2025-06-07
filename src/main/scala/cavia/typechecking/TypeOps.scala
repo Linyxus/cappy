@@ -614,6 +614,24 @@ object AppliedStructType:
     case Type.AppliedType(Type.SymbolRef(sym: StructSymbol), typeArgs) => Some((sym, typeArgs))
     case _ => None
 
+object ArenaRefType:
+  def unapply(tpe: Type): Option[Type] = tpe match
+    case Type.AppliedType(Type.Base(BaseType.ArenaRefType), (elemType: Type) :: Nil) => Some(elemType)
+    case _ => None
+  def apply(tpe: Type): Type = Definitions.arenaRefType(tpe)
+
+object AppliedStructTypeOnArena:
+  def unapply(tpe: Type): Option[(StructSymbol, List[Type | CaptureSet])] = tpe match
+    case ArenaRefType(AppliedStructType(sym, typeArgs)) => Some((sym, typeArgs))
+    case _ => None
+
+/** Extractor for struct types that are either on the GC heap or on the arena. */
+object GeneralAppliedStructType:
+  def unapply(tpe: Type): Option[(StructSymbol, List[Type | CaptureSet])] = tpe match
+    case AppliedStructType(sym, typeArgs) => Some((sym, typeArgs))
+    case AppliedStructTypeOnArena(sym, typeArgs) => Some((sym, typeArgs))
+    case _ => None
+
 object AppliedEnumType:
   def unapply(tpe: Type): Option[(EnumSymbol, List[Type | CaptureSet])] = tpe match
     case Type.SymbolRef(sym: EnumSymbol) => Some((sym, Nil))
@@ -709,12 +727,6 @@ object TypeFunctionType:
     case Type.TypeArrow(params, result) => Some((params, result))
     case Type.Capturing(base, _, _) => unapply(base)
     case _ => None
-
-object ArenaRefType:
-  def unapply(tpe: Type): Option[Type] = tpe match
-    case Type.AppliedType(Type.Base(BaseType.ArenaRefType), (elemType: Type) :: Nil) => Some(elemType)
-    case _ => None
-  def apply(tpe: Type): Type = Definitions.arenaRefType(tpe)
 
 def unshiftType(tpe: Type)(using ctx: TypeChecker.Context): Option[Type] =
   val tm = AvoidLocalBinder(Definitions.nothingType)
