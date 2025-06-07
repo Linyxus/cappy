@@ -308,13 +308,21 @@ object CodeGenerator:
       case Expr.StructSet() =>
         val Expr.Term.Select(base, fieldInfo) :: rhs :: Nil = args: @unchecked
         val rhsInstrs = genTerm(rhs)
-        val AppliedStructType(classSym, typeArgs) = base.tpe.stripCaptures: @unchecked
-        val StructInfo(structSym, fieldMap, _, _) = createStructType(classSym, typeArgs)
-        val fieldSym = fieldMap(fieldInfo.name)
-        val baseInstrs = genTerm(base)
-        val setFieldInstrs = List(Instruction.StructSet(structSym, fieldSym))
-        val unitInstrs = List(Instruction.I32Const(0))
-        baseInstrs ++ rhsInstrs ++ setFieldInstrs ++ unitInstrs
+        base.tpe.simplify(using ctx.typecheckerCtx).stripCaptures match
+          case AppliedStructType(classSym, typeArgs) =>
+            val StructInfo(structSym, fieldMap, _, _) = createStructType(classSym, typeArgs)
+            val fieldSym = fieldMap(fieldInfo.name)
+            val baseInstrs = genTerm(base)
+            val setFieldInstrs = List(Instruction.StructSet(structSym, fieldSym))
+            val unitInstrs = List(Instruction.I32Const(0))
+            baseInstrs ++ rhsInstrs ++ setFieldInstrs ++ unitInstrs
+          case AppliedStructTypeOnArena(classSym, typeArgs) =>
+            val structInfo = createStructType(classSym, typeArgs)
+            val baseInstrs = genTerm(base)
+            val rhsInstrs = genTerm(rhs)
+            val unitInstrs = List(Instruction.I32Const(0))
+            baseInstrs ++ genArenaStructSet(structInfo, fieldInfo, rhsInstrs) ++ unitInstrs
+          case _ => assert(false, s"Unsupported type: ${base.tpe}")
       case Expr.Sorry() =>
         // Generate `sorry` as `unreachable`, which is a runtime trap
         List(Instruction.Unreachable)
@@ -355,7 +363,7 @@ object CodeGenerator:
     val resultType = translateType(result)(using ctx.withMoreBinderInfos(typeBinderInfos))
     FuncType(paramTypes, Some(resultType))
 
-  def computeFuncType(tpe: Expr.Type, isClosure: Boolean = true)(using Context): FuncType = tpe match
+  def computeFuncType(tpe: Expr.Type, isClosure: Boolean = true)(using Context): FuncType = tpe.simplify(using ctx.typecheckerCtx) match
     case Expr.Type.TermArrow(params, result) =>
       var paramTypes = translateParamTypes(params)
       if isClosure then
@@ -375,7 +383,7 @@ object CodeGenerator:
       val resultType = translateType(result)(using ctx.withMoreBinderInfos(paramBinderInfos))
       FuncType(paramTypes, Some(resultType))
     case Expr.Type.Capturing(inner, _, _) => computeFuncType(inner, isClosure)
-    case _ => assert(false, s"Unsupported type for computing func type")
+    case _ => assert(false, s"Unsupported type for computing func type: $tpe")
 
   def createFuncParams(params: List[Expr.Binder.TermBinder])(using Context): List[(Symbol, ValType)] =
     val paramTypes = translateParamTypes(params)
@@ -438,6 +446,7 @@ object CodeGenerator:
       case Expr.BaseType.CharType => ValType.I32
       case Expr.BaseType.AnyType => ValType.AnyRef
       case Expr.BaseType.NothingType => ValType.AnyRef
+      case Expr.BaseType.ArenaType => ValType.I32
       case _ => assert(false, s"Unsupported base type: $tpe")
 
   /** What is the WASM value type of the WASM representation of a value of this type? */
@@ -636,6 +645,7 @@ object CodeGenerator:
     ctx.binderInfos(binder) match
       case BinderInfo.Sym(binder, sym) => List(Instruction.LocalGet(sym))
       case BinderInfo.ClosureSym(_, sym, _) => List(Instruction.LocalGet(sym))
+      case BinderInfo.Erased(binder) => List(Instruction.I32Const(0))
       case BinderInfo.Inaccessible(binder) => assert(false, s"Inaccessible binder: $binder")
       case BinderInfo.PolyClosureSym(_, _, _, _) => 
         assert(false, "Type-polymorphic function cannot be used as a first-class value. This is a restriction in the code generator.")
@@ -969,17 +979,18 @@ object CodeGenerator:
     )
     val setArgsInstr: List[Instruction] = (args `zip` classSym.info.fields).flatMap: (argTerm, fieldInfo) =>
       val argInstrs = genTerm(argTerm)
-      genArenaStructSet(structInfo, fieldInfo, getStructPtrInstrs, argInstrs)
+      getStructPtrInstrs ++ genArenaStructSet(structInfo, fieldInfo, argInstrs)
     setStructPtrInstrs ++ incArenaInstrs ++ setArgsInstr ++ getStructPtrInstrs
 
-  def genArenaStructSet(structInfo: StructInfo, fieldInfo: Expr.FieldInfo, getStructPtr: List[Instruction], getArg: List[Instruction])(using Context): List[Instruction] =
+  /** Generate instructions for setting a field of an arena-allocated struct, assuming that the struct pointer is on the top of the stack. */
+  def genArenaStructSet(structInfo: StructInfo, fieldInfo: Expr.FieldInfo, getArg: List[Instruction])(using Context): List[Instruction] =
     val StructInfo(_, nameMap, layoutInfo, _) = structInfo
     val FieldLayout(offset, memRepr) = layoutInfo.fields(nameMap(fieldInfo.name))
     val addressInstr = 
       if offset == 0 then
-        getStructPtr
+        Nil
       else
-        getStructPtr ++ List(
+        List(
           Instruction.I32Const(offset),
           Instruction.I32Add,
         )
