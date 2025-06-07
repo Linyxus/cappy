@@ -70,10 +70,23 @@ object CodeGenerator:
     def encodedName: String =
       nameEncode(targs.map(_.show).mkString("_"))
 
+  enum MemRepr:
+    case Plain(tpe: ValType)
+    case Ref(refType: ReferenceType)
+
+    def reprType: ValType = this match
+      case MemRepr.Plain(tpe) => tpe
+      case MemRepr.Ref(refType) => 
+        // Reference types are always represented as i32,
+        // which is the index in the shadow stack.
+        ValType.I32
+
+  case class FieldLayout(offset: Int, repr: MemRepr)
+
   /** Information of a memory layout. */
   case class LayoutInfo(
     totalSize: Int,
-    offsets: Map[Symbol, Int],
+    fields: Map[Symbol, FieldLayout],
   )
   object LayoutInfo:
     def empty: LayoutInfo = LayoutInfo(0, Map.empty)
@@ -162,13 +175,13 @@ object CodeGenerator:
       case Expr.ArrayGet() => 
         val memSym :: idx :: Nil = args: @unchecked
         val idxInstrs = genTerm(idx)
-        val loadInstrs = List(Instruction.I32Load(Symbol.Memory))
+        val loadInstrs = List(Instruction.Load(ValType.I32, Symbol.Memory))
         idxInstrs ++ loadInstrs
       case Expr.ArraySet() => 
         val memSym :: idx :: value :: Nil = args: @unchecked
         val idxInstrs = genTerm(idx)
         val valueInstrs = genTerm(value)
-        val storeInstrs = List(Instruction.I32Store(Symbol.Memory))
+        val storeInstrs = List(Instruction.Store(ValType.I32, Symbol.Memory))
         val unitInstrs = List(Instruction.I32Const(0))
         idxInstrs ++ valueInstrs ++ storeInstrs ++ unitInstrs
       case Expr.ArrayLen() => 
@@ -689,9 +702,7 @@ object CodeGenerator:
         case (Expr.Arena(), resType :: Nil, (body: Term.TermLambda) :: Nil) =>
           genArena(body, resType)
         case (Expr.RegionAlloc(), Nil, _ :: (initTerm: Term.StructInit) :: Nil) =>
-          val StructInfo(_, _, layoutInfo, _) = createStructType(initTerm.sym, initTerm.targs)
-          println(s"layout info: $layoutInfo")
-          ???
+          genArenaStructInit(initTerm.sym, initTerm.targs, initTerm.args)
         case _ => assert(false, s"unsupported arena primitive op: $t")
     case Term.PrimOp(op, Nil, args) => genSimplePrimOp(args, op)
     case Term.If(cond, thenBranch, elseBranch) =>
@@ -936,6 +947,48 @@ object CodeGenerator:
     val createStructInstrs = List(Instruction.StructNew(structSym))
     argInstrs ++ createStructInstrs
 
+  def memoryReprOf(valType: ValType): MemRepr = valType match
+    case ValType.I32 => MemRepr.Plain(ValType.I32)
+    case ValType.I64 => MemRepr.Plain(ValType.I64)
+    case ValType.F64 => MemRepr.Plain(ValType.F64)
+    case rtype: ReferenceType => MemRepr.Ref(rtype)
+
+  def genArenaStructInit(classSym: Expr.StructSymbol, targs: List[Expr.Type | Expr.CaptureSet], args: List[Expr.Term])(using Context): List[Instruction] =
+    val structSym = declareLocal("__struct", ValType.I32)
+    val getStructPtrInstrs = List(Instruction.LocalGet(structSym))
+    val structInfo = createStructType(classSym, targs)
+    val setStructPtrInstrs = List(
+      Instruction.GlobalGet(Symbol.ArenaCurrent),
+      Instruction.LocalSet(structSym),
+    )
+    val incArenaInstrs = List(
+      Instruction.GlobalGet(Symbol.ArenaCurrent),
+      Instruction.I32Const(structInfo.layoutInfo.totalSize),
+      Instruction.I32Add,
+      Instruction.GlobalSet(Symbol.ArenaCurrent),
+    )
+    val setArgsInstr: List[Instruction] = (args `zip` classSym.info.fields).flatMap: (argTerm, fieldInfo) =>
+      val argInstrs = genTerm(argTerm)
+      genArenaStructSet(structInfo, fieldInfo, getStructPtrInstrs, argInstrs)
+    setStructPtrInstrs ++ incArenaInstrs ++ setArgsInstr ++ getStructPtrInstrs
+
+  def genArenaStructSet(structInfo: StructInfo, fieldInfo: Expr.FieldInfo, getStructPtr: List[Instruction], getArg: List[Instruction])(using Context): List[Instruction] =
+    val StructInfo(_, nameMap, layoutInfo, _) = structInfo
+    val FieldLayout(offset, memRepr) = layoutInfo.fields(nameMap(fieldInfo.name))
+    val addressInstr = 
+      if offset == 0 then
+        getStructPtr
+      else
+        getStructPtr ++ List(
+          Instruction.I32Const(offset),
+          Instruction.I32Add,
+        )
+    assert(memRepr.isInstanceOf[MemRepr.Plain], "TODO: reference types are to be supported")
+    val storeInstrs = List(
+      Instruction.Store(memRepr.reprType, Symbol.ArenaMemory),
+    )
+    addressInstr ++ getArg ++ storeInstrs
+
   def genSelect(base: Expr.Term, fieldInfo: Expr.FieldInfo)(using Context): List[Instruction] =
     base.tpe.strip.simplify(using ctx.typecheckerCtx) match
       case AppliedStructType(classSym, targs) =>
@@ -945,7 +998,30 @@ object CodeGenerator:
         val baseInstrs = genTerm(base)
         val getFieldInstrs = List(Instruction.StructGet(structSym, fieldSym))
         baseInstrs ++ getFieldInstrs
+      case AppliedStructTypeOnArena(classSym, targs) =>
+        val structInfo = createStructType(classSym, targs)
+        val baseInstrs = genTerm(base)
+        val getFieldInstrs = genArenaStructGet(structInfo, fieldInfo)
+        baseInstrs ++ getFieldInstrs
       case _ => assert(false, "impossible, otherwise a bug in the typechecker")
+
+  /** Generate instructions for retrieving a field from an arena-allocated struct, assuming that the struct pointer is on the top of the stack. */
+  def genArenaStructGet(structInfo: StructInfo, fieldInfo: Expr.FieldInfo)(using Context): List[Instruction] =
+    val StructInfo(_, nameMap, layoutInfo, _) = structInfo
+    val FieldLayout(offset, memRepr) = layoutInfo.fields(nameMap(fieldInfo.name))
+    assert(memRepr.isInstanceOf[MemRepr.Plain], "TODO: reference types are to be supported")
+    val addressInstr = 
+      if offset == 0 then
+        Nil
+      else
+        List(
+          Instruction.I32Const(offset),
+          Instruction.I32Add,
+        )
+    val loadInstrs = List(
+      Instruction.Load(memRepr.reprType, Symbol.ArenaMemory),
+    )
+    addressInstr ++ loadInstrs
 
   def translateTypeArgs(targs: List[Expr.Type | Expr.CaptureSet])(using Context): SpecSig =
     val valTypes = targs.flatMap:
@@ -954,19 +1030,23 @@ object CodeGenerator:
     SpecSig(valTypes)
 
   /** Number of bytes in the linear memory a value type takes. */
-  def sizeInMemory(tpe: ValType): Int = tpe match
-    case ValType.I32 => 4
-    case ValType.I64 => 8
-    case ValType.F64 => 8
-    case ValType.TypedRef(_, _) => 4
-    case ValType.AnyRef => 4
+  def sizeInMemory(tpe: MemRepr): Int = tpe match
+    case MemRepr.Plain(ValType.I32) => 4
+    case MemRepr.Plain(ValType.I64) => 8
+    case MemRepr.Plain(ValType.F64) => 8
+    case MemRepr.Ref(_) => 4
+    case _ => assert(false, s"malformed memory representation: $tpe")
 
   def createLayoutInfo(structType: StructType): LayoutInfo =
     val fields = structType.fields
-    val fieldSizes = fields.map(f => sizeInMemory(f.tpe))
+    val fieldTypes = fields.map(t => memoryReprOf(t.tpe))
+    val fieldSizes = fieldTypes.map(sizeInMemory)
     val totalSize = fieldSizes.sum
     val offsets = fieldSizes.scanLeft(0)(_ + _)
-    val offsetsMap = Map.from(fields.map(_.sym).zip(offsets))
+    val offsetsMap = Map.from(fields.map(_.sym).zip(offsets).zip(fieldTypes).map:
+      case ((s: Symbol, o: Int), t: MemRepr) =>
+        (s -> FieldLayout(o, t))
+    )
     LayoutInfo(totalSize, offsetsMap)
 
   def createStructType(classSym: Expr.StructSymbol, targs: List[Expr.Type | Expr.CaptureSet])(using Context): StructInfo =

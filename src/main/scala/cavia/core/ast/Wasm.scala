@@ -3,12 +3,15 @@ package cavia.core.ast
 object Wasm:
   case class Module(fields: List[ModuleField])
 
+  // Marker trait for reference types.
+  trait ReferenceType
+
   enum ValType:
     case I32
     case I64
     case F64
-    case TypedRef(sym: Symbol, nullable: Boolean = false)
-    case AnyRef
+    case TypedRef(sym: Symbol, nullable: Boolean = false) extends ValType, ReferenceType
+    case AnyRef extends ValType, ReferenceType
 
     def show: String = this match
       case ValType.I32 => "i32"
@@ -80,8 +83,8 @@ object Wasm:
     case ArraySet(typeSym: Symbol)
     case ArrayGet(typeSym: Symbol)
     case ArrayLen
-    case I32Load(memorySym: Symbol)
-    case I32Store(memorySym: Symbol)
+    case Load(tpe: ValType, memorySym: Symbol)
+    case Store(tpe: ValType, memorySym: Symbol)
     case MemorySize(memorySym: Symbol)
     case Drop
     case Unreachable
@@ -146,10 +149,10 @@ object Wasm:
       case ArraySet(typeSym) => Some(s"array.set ${typeSym.show}")
       case ArrayGet(typeSym) => Some(s"array.get ${typeSym.show}")
       case ArrayLen => Some(s"array.len")
-      case I32Load(memorySym) => 
-        Some(s"i32.load ${memorySym.show}")
-      case I32Store(memorySym) => 
-        Some(s"i32.store ${memorySym.show}")
+      case Load(tpe, memorySym) => 
+        Some(s"${tpe.show}.load ${memorySym.show}")
+      case Store(tpe, memorySym) => 
+        Some(s"${tpe.show}.store ${memorySym.show}")
       case MemorySize(memorySym) =>
         Some(s"memory.size ${memorySym.show}")
       case Drop => Some("drop")
