@@ -496,9 +496,9 @@ object TypeChecker:
           case CaptureRef.CapInst(capId, CapKind.Fresh(level)) =>
             level < freshLevel
           case CaptureRef.CapInst(capId, CapKind.Sep(level)) =>
-            if level >= freshLevel then
-              sorry(TypeError.GeneralError(s"A local `cap` instance is leaked into the body of a lambda").withPos(srcPos))
-            true
+            // if level >= freshLevel then
+            //   sorry(TypeError.GeneralError(s"A local `cap` instance is leaked into the body of a lambda").withPos(srcPos))
+            level < freshLevel
           case _ => true
 
   def inNewFreshLevel[T](body: Context ?=> T)(using Context): T =
