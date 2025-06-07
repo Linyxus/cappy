@@ -10,7 +10,7 @@ const importObject = {
     read_i32: () => 42,
     println_char: (ch) => {
       const char = String.fromCharCode(ch);
-      console.log('print_char: ', char);
+      process.stdout.write(char);
     },
     get_timestamp: () => {
       return Number(process.hrtime.bigint()) / 1_000_000;
