@@ -271,6 +271,9 @@ object Expr:
   // marker trait for primitive ops that are related to arrays
   trait ArrayPrimitiveOp
 
+  // marker trait for primitive ops that are related to arenas
+  trait ArenaPrimitiveOp
+
   /** Language primitive operations */
   sealed trait PrimitiveOp extends Positioned
 
@@ -381,11 +384,11 @@ object Expr:
     override def toString: String = "#unbox"
   
   /** Open an arena */
-  case class Arena() extends PrimitiveOp:
+  case class Arena() extends PrimitiveOp with ArenaPrimitiveOp:
     override def toString: String = "arena"
   
   /** Allocate a struct */
-  case class RegionAlloc() extends PrimitiveOp:
+  case class RegionAlloc() extends PrimitiveOp with ArenaPrimitiveOp:
     override def toString: String = "#regionalloc"
 
   object PrimitiveOp:

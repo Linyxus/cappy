@@ -30,6 +30,8 @@ object CodeGenerator:
     case PolyClosureSym(binder: Expr.Binder.TermBinder, params: List[Expr.Binder], generator: List[BinderInfo] => (List[Instruction], Symbol), specMap: mutable.Map[SpecSig, (Symbol, Symbol)])
     /** This binder is inaccessible. It may be a variable not accessed by a closure. Or it is a capture binder. */
     case Inaccessible(binder: Expr.Binder)
+    /** This is a binder without a runtime representation, i.e. an erased capability. For instance, the arena handle. */
+    case Erased(binder: Expr.Binder)
     /** This is a type binder specialized to a concrete value type in the target. */
     case Specialized(binder: Expr.Binder, tpe: ValType)
     /** This is a type binder that is abstract. */
@@ -95,6 +97,9 @@ object CodeGenerator:
 
     def withPolyClosureSym(binder: Expr.Binder.TermBinder, params: List[Expr.Binder], generator: List[BinderInfo] => (List[Instruction], Symbol)): Context =
       copy(binderInfos = BinderInfo.PolyClosureSym(binder, params, generator, mutable.Map.empty) :: binderInfos)
+
+    def withErasedBinder(binder: Expr.Binder): Context =
+      copy(binderInfos = BinderInfo.Erased(binder) :: binderInfos)
     
     def usingBinderInfos(binderInfos: List[BinderInfo]): Context =
       copy(binderInfos = binderInfos)
@@ -668,6 +673,11 @@ object CodeGenerator:
           genMemoryOp(arrayOp, args)
         case _ =>
           genArrayPrimOp(arrayOp, t.tpe, targs, args)
+    case Term.PrimOp(arenaOp: Expr.ArenaPrimitiveOp, targs, args) =>
+      (arenaOp, targs, args) match
+        case (Expr.Arena(), resType :: Nil, (body: Term.TermLambda) :: Nil) =>
+          genArena(body, resType)
+        case _ => assert(false, s"unsupported arena primitive op: $arenaOp")
     case Term.PrimOp(op, Nil, args) => genSimplePrimOp(args, op)
     case Term.If(cond, thenBranch, elseBranch) =>
       val resultType = translateType(t.tpe)
@@ -1032,6 +1042,11 @@ object CodeGenerator:
             None
       case _ => None
     goInstrs(body).getOrElse(body)
+
+  def genArena(lambdaBody: Term.TermLambda, resType: Expr.Type)(using Context): List[Instruction] =
+    val Term.TermLambda(ps, body, _) = lambdaBody
+    val handleBinder :: Nil = ps: @unchecked
+    genTerm(body)(using ctx.withErasedBinder(handleBinder))
 
   /** Generates code for a module-level function.
    * @param funType type of the module function
