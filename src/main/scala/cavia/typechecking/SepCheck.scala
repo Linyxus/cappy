@@ -36,6 +36,7 @@ object SepCheck:
         case CaptureRef.Selection(root, qualifier) =>
           goRef(root.qualified(ref.mode)).map(ref => ref.select(qualifier))
     def goRefs(refs: List[QualifiedRef]): Set[QualifiedRef] =
+      //println(s"goRefs ${refs.map(_.show).mkString(", ")}")
       refs.flatMap(goRef).toSet
     val elems = goRefs(set.elems)
     CaptureSet(elems.toList)

@@ -45,7 +45,7 @@ object CaptureRef:
     nextCapId += 1
     result
 
-  def makeSkolemCapInst(kind: CapKind, fromInst: Option[InstantiatedCap]): InstantiatedCap =
+  def makeSkolemCapInst(kind: CapKind, fromInst: Option[CaptureRef]): InstantiatedCap =
     val inst = makeCapInst(kind)
     fromInst match
       case Some(fromInst) => Selection(fromInst, CaptureSelection.createSkolem())

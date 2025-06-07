@@ -64,7 +64,9 @@ class TypeMap:
             else assert(false, s"Don't know how to handle a widened capture ref at invariant occurrence")
     case CaptureRef.CAP() => CaptureSet(ref :: Nil)
     case _: CaptureRef.CapInst => CaptureSet(ref :: Nil)
-    case _: CaptureRef.Selection => CaptureSet(ref :: Nil)
+    case CaptureRef.Selection(root, qualifier) =>
+      val root1 = mapCaptureRef(root.qualified(ref.mode))
+      CaptureSet(root1.elems.map(ref => ref.select(qualifier)))
 
   def mapBaseType(base: Type.Base): Type = base
 

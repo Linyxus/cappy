@@ -363,7 +363,7 @@ object TypeChecker:
   private def dropLocalParams(crefs: List[QualifiedRef], numParams: Int, paramCapInsts: List[InstantiatedCap]): (Boolean, List[QualifiedRef]) = 
     var existsLocalParams = false
     val newCrefs = crefs.flatMap: ref =>
-      ref.core match
+      ref.core.root match
         case CaptureRef.Ref(singleton) =>
           val (root, recover) = getRoot(singleton)
           root match
@@ -408,7 +408,7 @@ object TypeChecker:
           sorry(TypeError.GeneralError(s"Type argument number mismatch: expected ${formals.length}, but got ${targs.length}").withPos(srcPos))
       go(targs, formalTypes, Nil)
 
-  def instantiateCaps(tpe: Type, isFresh: Boolean, fromInst: Option[CaptureRef.CapInst] = None)(using Context): (Type, List[InstantiatedCap]) =
+  def instantiateCaps(tpe: Type, isFresh: Boolean, fromInst: Option[CaptureRef] = None)(using Context): (Type, List[InstantiatedCap]) =
     var createdCaps: List[InstantiatedCap] = Nil
     val curLevel = ctx.freshLevel
     val capKind = if isFresh then CapKind.Fresh(curLevel) else CapKind.Sep(curLevel)
@@ -747,16 +747,15 @@ object TypeChecker:
         case Syntax.Term.Apply(sel @ Syntax.Term.Select(base, field), args) =>
           val base1 = checkTerm(base).!!
           if base1.tpe.isArenaHandleType then
-            val peaks = SepCheck.computePeak(base1.tpe.captureSet)
-            val regionPeak: CaptureRef.CapInst = peaks.elems match
-              case (QualifiedRef(_, inst: CaptureRef.CapInst)) :: Nil => inst
+            val regionCap: CaptureRef = base1.tpe.captureSet.elems match
+              case (QualifiedRef(_, inst: CaptureRef)) :: Nil => inst
               case _ => sorry(TypeError.GeneralError(s"Invalid region with type ${base1.tpe.show}"))
             val classSym = lookupStructSymbol(field) match
               case None => sorry(TypeError.GeneralError(s"Regions only allocate `struct`s, but $field is not a struct").withPos(sel.pos))
               case Some(sym) => sym
             val initTerm = checkStructInit(classSym, Left(Nil), args, expected, t.pos, onRegion = true).!!
             val outTerm = Term.PrimOp(RegionAlloc(), Nil, List(base1, initTerm)).like(initTerm).withMoreCV(base1.cv)
-            instantiateFresh(outTerm, fromInst = Some(regionPeak))
+            instantiateFresh(outTerm, fromInst = Some(regionCap))
             Some(outTerm)
           else None
         case _ => None
@@ -978,8 +977,7 @@ object TypeChecker:
       outTerm = maybeAdaptBoxed(outTerm, expected).!!
       if !expected.exists || TypeComparer.checkSubtype(outTerm.tpe, expected) then
         outTerm
-      else 
-        sorry(TypeError.TypeMismatch(expected.show, outTerm.tpe.show).withPos(t.pos))
+      else sorry(TypeError.TypeMismatch(expected.show, outTerm.tpe.show).withPos(t.pos))
 
   def checkIf(
     cond: Syntax.Term, 
@@ -1193,7 +1191,7 @@ object TypeChecker:
         case _ => sorry(TypeError.GeneralError(s"Expected a term function, but got ${funType.show}").withPos(srcPos))
 
   /** Instantiate fresh capabilities in the result of a function apply. */
-  def instantiateFresh(t: Term, fromInst: Option[CaptureRef.CapInst] = None)(using Context): Term =
+  def instantiateFresh(t: Term, fromInst: Option[CaptureRef] = None)(using Context): Term =
     val tpe = t.tpe
     val (tpe1, insts) = instantiateCaps(tpe, isFresh = true, fromInst = fromInst)
     val t1 = t.withTpe(tpe1)

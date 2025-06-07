@@ -45,6 +45,10 @@ object TypeComparer:
           def tryParent: Boolean =
             checkSubcapture(base.singletonCaptureSet.qualify(x1.mode), cs2)
           tryWiden || tryParent
+        case CaptureRef.Selection(root, qualifier) =>
+          def tryParent: Boolean =
+            checkSubcapture(root.qualified(x1.mode), cs2)
+          tryParent
         case _ => false
     }
 
