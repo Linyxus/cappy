@@ -312,7 +312,7 @@ object CodeGenerator:
       case Expr.StructSet() =>
         val Expr.Term.Select(base, fieldInfo) :: rhs :: Nil = args: @unchecked
         val rhsInstrs = genTerm(rhs)
-        base.tpe.simplify(using ctx.typecheckerCtx).stripCaptures match
+        base.tpe.simplify(using ctx.typecheckerCtx).strip match
           case AppliedStructType(classSym, typeArgs) =>
             val StructInfo(structSym, fieldMap, _, _) = createStructType(classSym, typeArgs)
             val fieldSym = fieldMap(fieldInfo.name)
