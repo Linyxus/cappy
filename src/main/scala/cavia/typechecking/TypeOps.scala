@@ -641,6 +641,11 @@ object AppliedEnumType:
   def apply(enumSym: EnumSymbol, typeArgs: List[Type | CaptureSet]): Type =
     Type.AppliedType(Definitions.enumConstructorType(enumSym), typeArgs)
 
+object AppliedEnumTypeOnArena:
+  def unapply(tpe: Type): Option[(EnumSymbol, List[Type | CaptureSet])] = tpe match
+    case ArenaRefType(AppliedEnumType(sym, typeArgs)) => Some((sym, typeArgs))
+    case _ => None
+
 extension (tpe: Type)
   def refined(refinements: List[FieldInfo]): Type = 
     if refinements.isEmpty then tpe

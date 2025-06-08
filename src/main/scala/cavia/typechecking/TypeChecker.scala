@@ -600,6 +600,8 @@ object TypeChecker:
     hopefully:
       def go(tpe: Type): (EnumSymbol | StructSymbol, List[Type | CaptureSet]) =
         tpe match
+          case AppliedEnumTypeOnArena(sym, targs) => (sym, targs)
+          case AppliedStructTypeOnArena(sym, targs) => (sym, targs)
           case Type.RefinedType(base, _) => go(base)
           case Type.SymbolRef(sym: EnumSymbol) => (sym, Nil)
           case Type.SymbolRef(sym: StructSymbol) => (sym, Nil)
