@@ -664,6 +664,10 @@ extension (tpe: Type)
     case Type.RefinedType(base, refinements) => Type.RefinedType(base.asReadOnlyType, refinements)
     case tpe => tpe
 
+  def isOnArena: Boolean = tpe match
+    case ArenaRefType(_) => true
+    case _ => false
+
 object CheckVariance:
   case class Mismatch(idx: Int, useSite: Variance)
 

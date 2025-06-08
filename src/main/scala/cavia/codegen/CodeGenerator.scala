@@ -863,25 +863,35 @@ object CodeGenerator:
         val localBinderInfo = BinderInfo.Sym(binder, localSym)
         (bindInstr :: patInstrs, localBinderInfo :: patBinderInfos)
       case Pattern.EnumVariant(constructor, typeArgs, enumSym, fields) =>
-        val StructInfo(structSym, fieldMap, _, _) = createStructType(constructor, typeArgs)
+        val onArena = pat.tpe.strip.isOnArena
+        val structInfo = createStructType(constructor, typeArgs)
+        val StructInfo(structSym, fieldMap, _, _) = structInfo
         val localSym = Symbol.fresh(constructor.name)
-        val valType = ValType.TypedRef(structSym)
+        val valType = 
+          if onArena then
+            ValType.I32
+          else
+            ValType.TypedRef(structSym)
         emitLocal(localSym, valType)
         val setLocalInstrs =
           enumSym match
-            case None => List(Instruction.LocalSet(localSym))
-            case Some(_) =>
+            case Some(_) if !onArena =>
               List(
                 Instruction.RefCast(structSym),
                 Instruction.LocalSet(localSym),
               )
+            case _ => List(Instruction.LocalSet(localSym))
         val fieldResults = (constructor.info.fields `zip` fields).map: (fieldInfo, field) =>
           val (instrs, binders) = genPatternExtractor(field)
           val fieldName = fieldInfo.name
-          val getFieldInstrs = List(
-            Instruction.LocalGet(localSym),
-            Instruction.StructGet(structSym, fieldMap(fieldName)),
-          )
+          val getFieldInstrs = 
+            if !onArena then
+              List(
+                Instruction.LocalGet(localSym),
+                Instruction.StructGet(structSym, fieldMap(fieldName)),
+              )
+            else
+              Instruction.LocalGet(localSym) :: genArenaStructGet(structInfo, fieldInfo)
           (getFieldInstrs ++ instrs, binders)
         val (instrs, binders) = fieldResults.unzip
         (setLocalInstrs ++ instrs.flatten, binders.flatten)
@@ -895,19 +905,29 @@ object CodeGenerator:
       case Pattern.Wildcard() => Instruction.Drop :: thenBranch
       case Pattern.Bind(binder, pat) => genPatternMatcher(pat, thenBranch, elseBranch, resType)
       case Pattern.EnumVariant(constructor, typeArgs, enumSym, fields) =>
-        val StructInfo(structSym, fieldMap, _, maybeTag) = createStructType(constructor, typeArgs)
+        val onArena = pat.tpe.strip.isOnArena
+        val structInfo = createStructType(constructor, typeArgs)
+        val StructInfo(structSym, fieldMap, _, maybeTag) = structInfo
         val localSym = Symbol.fresh(constructor.name)
-        val localType = ValType.TypedRef(structSym)
+        val localType = 
+          if onArena then
+            ValType.I32
+          else
+            ValType.TypedRef(structSym)
         emitLocal(localSym, localType)
         val setLocalInstrs = List(Instruction.LocalSet(localSym))
         val getLocalInstr = Instruction.LocalGet(localSym)
         def go(fields: List[(Expr.FieldInfo, Expr.Pattern)]): List[Instruction] = fields match
           case (fieldInfo, field) :: rest =>
             val fieldSym = fieldMap(fieldInfo.name)
-            val projFieldInstrs = List(
-              getLocalInstr,
-              Instruction.StructGet(structSym, fieldSym),
-            )
+            val projFieldInstrs = 
+              if !onArena then
+                List(
+                  getLocalInstr,
+                  Instruction.StructGet(structSym, fieldSym),
+                )
+              else
+                getLocalInstr :: genArenaStructGet(structInfo, fieldInfo)
             projFieldInstrs ++ genPatternMatcher(field, go(rest), elseBranch, resType)
           case Nil => thenBranch
         val fieldInstrs = go(constructor.info.fields `zip` fields)
