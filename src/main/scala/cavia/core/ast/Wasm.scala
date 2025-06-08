@@ -194,6 +194,7 @@ object Wasm:
     val ArenaMemory = fresh("__arena_memory")
     val ArenaCurrent = fresh("__arena_current")
     val ShadowTable = fresh("__shadow_table")
+    val ShadowTableCurrent = fresh("__shadow_table_current")
     val PutChar = fresh("__putchar")
     val PerfCounter = fresh("__perf_counter")
     val EnumClass = fresh("__enum")

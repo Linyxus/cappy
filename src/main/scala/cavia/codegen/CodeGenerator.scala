@@ -1178,12 +1178,15 @@ object CodeGenerator:
   def genArena(lambdaBody: Term.TermLambda, resType: Expr.Type)(using Context): List[Instruction] =
     val resValType = translateType(resType)
     val savedArenaPointerSym = declareLocal("__saved_arena_pointer", ValType.I32)
+    val savedShadowTablePointerSym = declareLocal("__saved_shadow_table_pointer", ValType.I32)
     val resultSym = declareLocal("__result", resValType)
     val Term.TermLambda(ps, body, _) = lambdaBody
     val handleBinder :: Nil = ps: @unchecked
     val saveArenaInstrs = List(
       Instruction.GlobalGet(Symbol.ArenaCurrent),
       Instruction.LocalSet(savedArenaPointerSym),
+      Instruction.GlobalGet(Symbol.ShadowTableCurrent),
+      Instruction.LocalSet(savedShadowTablePointerSym),
     )
     val bodyInstrs = genTerm(body)(using ctx.withErasedBinder(handleBinder))
     val saveResultInstrs = List(
@@ -1192,6 +1195,8 @@ object CodeGenerator:
     val restoreArenaInstrs = List(
       Instruction.LocalGet(savedArenaPointerSym),
       Instruction.GlobalSet(Symbol.ArenaCurrent),
+      Instruction.LocalGet(savedShadowTablePointerSym),
+      Instruction.GlobalSet(Symbol.ShadowTableCurrent),
     )
     val returnResultInstrs = List(
       Instruction.LocalGet(resultSym),
@@ -1365,6 +1370,8 @@ object CodeGenerator:
     emitGlobal(arenaPointer)
     val shadowTable = Table(Symbol.ShadowTable, 256, ValType.AnyRef)
     emitTable(shadowTable)
+    val shadowTableCurrent = Global(Symbol.ShadowTableCurrent, ValType.I32, mutable = true, Instruction.I32Const(0))
+    emitGlobal(shadowTableCurrent)
 
   def emitDefaultTypes()(using Context): Unit =
     val td = TypeDef(
