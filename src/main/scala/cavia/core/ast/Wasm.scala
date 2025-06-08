@@ -4,7 +4,10 @@ object Wasm:
   case class Module(fields: List[ModuleField])
 
   // Marker trait for reference types.
-  trait ReferenceType
+  sealed trait ReferenceType:
+    def getTypeSymbol: Option[Symbol] = this match
+      case ValType.TypedRef(sym, nullable) => Some(sym)
+      case ValType.AnyRef => None
 
   enum ValType:
     case I32
@@ -259,3 +262,12 @@ object Wasm:
   case class Start(funcSym: Symbol) extends ModuleField
   case class Memory(ident: Symbol, size: Int) extends ModuleField
   case class Table(ident: Symbol, size: Int, elemType: ValType) extends ModuleField
+
+  class CodeBuilder:
+    import collection.mutable.ArrayBuffer
+    private var code: ArrayBuffer[Instruction] = ArrayBuffer.empty
+    def emit(instr: Instruction*): Unit =
+      code ++= instr.toList
+    def emit(instrs: List[Instruction]): Unit =
+      code ++= instrs
+    def output: List[Instruction] = code.toList

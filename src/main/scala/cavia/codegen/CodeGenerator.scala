@@ -983,7 +983,7 @@ object CodeGenerator:
     )
     val setArgsInstr: List[Instruction] = (args `zip` classSym.info.fields).flatMap: (argTerm, fieldInfo) =>
       val argInstrs = genTerm(argTerm)
-      getStructPtrInstrs ++ genArenaStructSet(structInfo, fieldInfo, argInstrs)
+      getStructPtrInstrs ++ genArenaStructSet(structInfo, fieldInfo, argInstrs, isInitialising = true)
     setStructPtrInstrs ++ incArenaInstrs ++ setArgsInstr ++ getStructPtrInstrs
 
   /** Generate instructions for setting a field of an arena-allocated struct, assuming that the struct pointer is on the top of the stack. */
@@ -998,11 +998,36 @@ object CodeGenerator:
           Instruction.I32Const(offset),
           Instruction.I32Add,
         )
-    assert(memRepr.isInstanceOf[MemRepr.Plain], "TODO: reference types are to be supported")
-    val storeInstrs = List(
-      Instruction.Store(memRepr.reprType, Symbol.ArenaMemory),
-    )
-    addressInstr ++ getArg ++ storeInstrs
+    memRepr match
+      case MemRepr.Plain(tpe) =>
+        val storeInstrs = List(
+          Instruction.Store(memRepr.reprType, Symbol.ArenaMemory),
+        )
+        addressInstr ++ getArg ++ storeInstrs
+      case MemRepr.Ref(refType) =>
+        val builder = CodeBuilder()
+        builder.emit(addressInstr)
+        if isInitialising then
+          // Allocate a shadow table entry for the struct
+          val addrSym = declareLocal("__addr", ValType.I32)
+          builder.emit(
+            Instruction.LocalTee(addrSym),
+            Instruction.GlobalGet(Symbol.ShadowTableCurrent),
+            Instruction.Store(ValType.I32, Symbol.ArenaMemory),
+            // Increment the shadow table pointer
+            Instruction.GlobalGet(Symbol.ShadowTableCurrent),
+            Instruction.I32Const(1),
+            Instruction.I32Add,
+            Instruction.GlobalSet(Symbol.ShadowTableCurrent),
+            // Push the address back to the stack
+            Instruction.LocalGet(addrSym),
+          )
+        // Get the shadow entry index
+        builder.emit(Instruction.Load(ValType.I32, Symbol.ArenaMemory))
+        builder.emit(getArg)
+        // Set the entry
+        builder.emit(Instruction.TableSet(Symbol.ShadowTable))
+        builder.output
 
   def genSelect(base: Expr.Term, fieldInfo: Expr.FieldInfo)(using Context): List[Instruction] =
     base.tpe.strip.simplify(using ctx.typecheckerCtx) match
@@ -1024,7 +1049,6 @@ object CodeGenerator:
   def genArenaStructGet(structInfo: StructInfo, fieldInfo: Expr.FieldInfo)(using Context): List[Instruction] =
     val StructInfo(_, nameMap, layoutInfo, _) = structInfo
     val FieldLayout(offset, memRepr) = layoutInfo.fields(nameMap(fieldInfo.name))
-    assert(memRepr.isInstanceOf[MemRepr.Plain], "TODO: reference types are to be supported")
     val addressInstr = 
       if offset == 0 then
         Nil
@@ -1033,10 +1057,22 @@ object CodeGenerator:
           Instruction.I32Const(offset),
           Instruction.I32Add,
         )
-    val loadInstrs = List(
-      Instruction.Load(memRepr.reprType, Symbol.ArenaMemory),
-    )
-    addressInstr ++ loadInstrs
+    memRepr match
+      case MemRepr.Plain(tpe) =>
+        val loadInstrs = List(
+          Instruction.Load(memRepr.reprType, Symbol.ArenaMemory),
+        )
+        addressInstr ++ loadInstrs
+      case MemRepr.Ref(refType) =>
+        val builder = CodeBuilder()
+        builder.emit(addressInstr)
+        builder.emit(Instruction.Load(ValType.I32, Symbol.ArenaMemory))
+        builder.emit(Instruction.TableGet(Symbol.ShadowTable))
+        refType.getTypeSymbol match
+          case Some(refTypeSym) =>
+            builder.emit(Instruction.RefCast(refTypeSym))
+          case _ =>
+        builder.output
 
   def translateTypeArgs(targs: List[Expr.Type | Expr.CaptureSet])(using Context): SpecSig =
     val valTypes = targs.flatMap:
