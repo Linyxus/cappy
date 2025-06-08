@@ -193,6 +193,7 @@ object Wasm:
     val Memory = fresh("__memory")
     val ArenaMemory = fresh("__arena_memory")
     val ArenaCurrent = fresh("__arena_current")
+    val ShadowTable = fresh("__shadow_table")
     val PutChar = fresh("__putchar")
     val PerfCounter = fresh("__perf_counter")
     val EnumClass = fresh("__enum")
@@ -246,3 +247,4 @@ object Wasm:
   case class Global(ident: Symbol, tpe: ValType, mutable: Boolean, init: Instruction) extends ModuleField
   case class Start(funcSym: Symbol) extends ModuleField
   case class Memory(ident: Symbol, size: Int) extends ModuleField
+  case class Table(ident: Symbol, size: Int, elemType: ValType) extends ModuleField

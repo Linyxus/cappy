@@ -23,6 +23,7 @@ class WasmPrinter extends IndentedPrinter:
     case g: Global => printGlobal(g)
     case s: Start => printStart(s)
     case m: Memory => printMemory(m)
+    case t: Table => printTable(t)
 
   def printInstruction(instruction: Instruction): Unit =
     instruction.showIfSimple match
@@ -99,6 +100,9 @@ class WasmPrinter extends IndentedPrinter:
 
   def printStart(s: Start): Unit =
     print(s"(start ${s.funcSym.show})")
+
+  def printTable(t: Table): Unit =
+    print(s"(table ${t.ident.show} ${t.size} ${t.elemType.show})")
 
 extension (mod: Module)
   def show: String =

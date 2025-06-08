@@ -95,6 +95,7 @@ object CodeGenerator:
     funcs: ArrayBuffer[Func] = ArrayBuffer.empty,
     globals: ArrayBuffer[Global] = ArrayBuffer.empty,
     memories: ArrayBuffer[Memory] = ArrayBuffer.empty,
+    tables: ArrayBuffer[Table] = ArrayBuffer.empty,
     exports: ArrayBuffer[Export] = ArrayBuffer.empty,
     imports: ArrayBuffer[ImportFunc] = ArrayBuffer.empty,
     locals: ArrayBuffer[(Symbol, ValType)] = ArrayBuffer.empty,
@@ -161,6 +162,9 @@ object CodeGenerator:
 
   def emitType(t: TypeDef)(using Context): Unit =
     ctx.types += t
+
+  def emitTable(t: Table)(using Context): Unit =
+    ctx.tables += t
 
   def emitElemDeclare(kind: ExportKind, sym: Symbol)(using Context): Unit =
     ctx.declares += ElemDeclare(kind, sym)
@@ -983,7 +987,7 @@ object CodeGenerator:
     setStructPtrInstrs ++ incArenaInstrs ++ setArgsInstr ++ getStructPtrInstrs
 
   /** Generate instructions for setting a field of an arena-allocated struct, assuming that the struct pointer is on the top of the stack. */
-  def genArenaStructSet(structInfo: StructInfo, fieldInfo: Expr.FieldInfo, getArg: List[Instruction])(using Context): List[Instruction] =
+  def genArenaStructSet(structInfo: StructInfo, fieldInfo: Expr.FieldInfo, getArg: List[Instruction], isInitialising: Boolean = false)(using Context): List[Instruction] =
     val StructInfo(_, nameMap, layoutInfo, _) = structInfo
     val FieldLayout(offset, memRepr) = layoutInfo.fields(nameMap(fieldInfo.name))
     val addressInstr = 
@@ -1359,6 +1363,8 @@ object CodeGenerator:
     emitMemory(arenaMemory)
     val arenaPointer = Global(Symbol.ArenaCurrent, ValType.I32, mutable = true, Instruction.I32Const(0))
     emitGlobal(arenaPointer)
+    val shadowTable = Table(Symbol.ShadowTable, 256, ValType.AnyRef)
+    emitTable(shadowTable)
 
   def emitDefaultTypes()(using Context): Unit =
     val td = TypeDef(
@@ -1461,6 +1467,7 @@ object CodeGenerator:
       ctx.declares.toList ++ 
         ctx.imports.toList ++ 
         ctx.memories.toList ++
+        ctx.tables.toList ++
         ctx.types.toList ++ 
         ctx.globals.toList ++
         ctx.funcs.toList ++ 
