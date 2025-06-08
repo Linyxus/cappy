@@ -86,6 +86,11 @@ object Wasm:
     case Load(tpe: ValType, memorySym: Symbol)
     case Store(tpe: ValType, memorySym: Symbol)
     case MemorySize(memorySym: Symbol)
+    case TableGet(tableSym: Symbol)
+    case TableSet(tableSym: Symbol)
+    case TableSize(tableSym: Symbol)
+    case TableGrow(tableSym: Symbol)
+    case TableFill(tableSym: Symbol)
     case Drop
     case Unreachable
 
@@ -149,6 +154,11 @@ object Wasm:
       case ArraySet(typeSym) => Some(s"array.set ${typeSym.show}")
       case ArrayGet(typeSym) => Some(s"array.get ${typeSym.show}")
       case ArrayLen => Some(s"array.len")
+      case TableGet(tableSym) => Some(s"table.get ${tableSym.show}")
+      case TableSet(tableSym) => Some(s"table.set ${tableSym.show}")
+      case TableSize(tableSym) => Some(s"table.size ${tableSym.show}")
+      case TableGrow(tableSym) => Some(s"table.grow ${tableSym.show}")
+      case TableFill(tableSym) => Some(s"table.fill ${tableSym.show}")
       case Load(tpe, memorySym) => 
         Some(s"${tpe.show}.load ${memorySym.show}")
       case Store(tpe, memorySym) => 
