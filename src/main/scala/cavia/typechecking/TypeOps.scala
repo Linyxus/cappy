@@ -525,9 +525,9 @@ class CollectSignature extends TypeMap:
         val (root, _) = getRoot(path)
         root match
           case Term.BinderRef(idx) if idx < localBinders.size =>
-          case root => collected += ref
+          case root => collected += ref.shift(-localBinders.size)
       case CaptureRef.CAP() => // do not collect general caps
-      case _ => collected += ref
+      case _ => collected += ref.shift(-localBinders.size)
     CaptureSet(ref :: Nil)
 
   override def apply(tpe: Type): Type = tpe match

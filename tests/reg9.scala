@@ -3,16 +3,25 @@ enum ArListBase:
   case ACons(head: i32, tail: Ar[ArListBase]^)
 type ArList = Ar[ArListBase]
 def enumerate(until: i32, zone: Arena^): ArList^{zone} =
-  def recur(cur: i32): ArList^{zone} =
-    if cur >= until then zone.ANil()
-    else zone.ACons(cur, recur(cur+1))
-  recur(0)
+  def recur(cur: i32, acc: ArList^{zone}): ArList^{zone} =
+    if cur < 0 then acc
+    else recur(cur - 1, zone.ACons(cur, acc))
+  recur(until - 1, zone.ANil())
 def print(xs: ArList^): Unit =
   xs match
     case ANil() => ()
     case ACons(h, t) =>
       #i32println(h)
       print(t)
-def main(): Unit = arena: z =>
-  val xs1 = enumerate(100, z)
-  print(xs1)
+def sum(xs: ArList^): i32 =
+  def recur(xs: ArList^, acc: i32): i32 = xs match
+    case ANil() => acc
+    case ACons(h, t) => recur(t, h + acc)
+  recur(xs, 0)
+def run(): Unit = arena: z =>
+  val xs1 = enumerate(100000, z)
+  #i32println(sum(xs1))
+def main(): Unit = 
+  run()
+  run()
+  run()
