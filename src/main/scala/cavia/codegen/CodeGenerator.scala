@@ -477,6 +477,9 @@ object CodeGenerator:
       case AppliedStructTypeOnArena(sym, targs) => 
         // Arena-allocated structs are simply a pointer to the linear memory
         ValType.I32
+      case AppliedEnumTypeOnArena(sym, targs) =>
+        // Arena-allocated enums are simply a pointer to the linear memory
+        ValType.I32
       case AppliedEnumType(sym, targs) => ValType.TypedRef(Symbol.EnumClass)
       case Expr.Type.BinderRef(idx) =>
         //println(s"translateType: BinderRef($idx), binderInfos = ${ctx.binderInfos}")
