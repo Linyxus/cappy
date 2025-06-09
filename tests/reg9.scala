@@ -19,7 +19,7 @@ def sum(xs: ArList^): i32 =
     case ACons(h, t) => recur(t, h + acc)
   recur(xs, 0)
 def run(): Unit = arena: z =>
-  val xs1 = enumerate(100000, z)
+  val xs1 = enumerate(50000, z)
   #i32println(sum(xs1))
 def main(): Unit = 
   run()

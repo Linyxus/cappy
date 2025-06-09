@@ -1445,7 +1445,7 @@ object CodeGenerator:
     emitMemory(memory)
 
   def setupArena()(using Context): Unit =
-    val arenaMemory = Memory(Symbol.ArenaMemory, 8)
+    val arenaMemory = Memory(Symbol.ArenaMemory, 64)
     emitMemory(arenaMemory)
     val arenaPointer = Global(Symbol.ArenaCurrent, ValType.I32, mutable = true, Instruction.I32Const(0))
     emitGlobal(arenaPointer)
