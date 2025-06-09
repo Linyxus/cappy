@@ -688,6 +688,10 @@ object TypeChecker:
           if structSym1.info.enumSymbol.isDefined && structSym1.info.enumSymbol == structSym2.info.enumSymbol then
             Some(AppliedEnumType(structSym1.info.enumSymbol.get, targs1))
           else None
+        case (AppliedStructTypeOnArena(structSym1, targs1), AppliedStructTypeOnArena(structSym2, targs2)) if targs1 == targs2 =>
+          if structSym1.info.enumSymbol.isDefined && structSym1.info.enumSymbol == structSym2.info.enumSymbol then
+            Some(AppliedEnumTypeOnArena(structSym1.info.enumSymbol.get, targs1))
+          else None
         case _ => None
     trySame `orElse` tryStripCaptures `orElse` tryStripRefinements `orElse` tryEnum
 
