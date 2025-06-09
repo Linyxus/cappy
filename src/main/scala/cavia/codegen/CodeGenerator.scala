@@ -1449,7 +1449,7 @@ object CodeGenerator:
     emitMemory(arenaMemory)
     val arenaPointer = Global(Symbol.ArenaCurrent, ValType.I32, mutable = true, Instruction.I32Const(0))
     emitGlobal(arenaPointer)
-    val shadowTable = Table(Symbol.ShadowTable, 256, ValType.AnyRef)
+    val shadowTable = Table(Symbol.ShadowTable, 65536, ValType.AnyRef)
     emitTable(shadowTable)
     val shadowTableCurrent = Global(Symbol.ShadowTableCurrent, ValType.I32, mutable = true, Instruction.I32Const(0))
     emitGlobal(shadowTableCurrent)
