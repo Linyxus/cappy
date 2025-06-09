@@ -106,6 +106,8 @@ object TypeComparer:
           val tp22 = tp2.reduce
           !(tp22 eq tp2) && checkSubtype(tp1, tp22)
         tryDefault || tryReduceLeft || tryReduceRight
+      case (tp1 @ Type.AppliedType(base1, Nil), tp2) => checkSubtype(base1, tp2)
+      case (tp1, tp2 @ Type.AppliedType(base2, Nil)) => checkSubtype(tp1, base2)
       case (Type.Capturing(inner, isReadOnly1, captureSet), tp2) =>
         def modeCompatible: Boolean = !isReadOnly1 || tp2.isReadOnlyType
         modeCompatible && checkSubcapture(captureSet, tp2.captureSet) && checkSubtype(inner, tp2)

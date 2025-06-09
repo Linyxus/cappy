@@ -673,7 +673,7 @@ extension (tpe: Type)
     case Type.RefinedType(base, refinements) => Type.RefinedType(base.asReadOnlyType, refinements)
     case tpe => tpe
 
-  def isOnArena: Boolean = tpe match
+  def isOnArena(using TypeChecker.Context): Boolean = tpe.simplify match
     case ArenaRefType(_) => true
     case _ => false
 

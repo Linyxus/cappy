@@ -866,7 +866,7 @@ object CodeGenerator:
         val localBinderInfo = BinderInfo.Sym(binder, localSym)
         (bindInstr :: patInstrs, localBinderInfo :: patBinderInfos)
       case Pattern.EnumVariant(constructor, typeArgs, enumSym, fields) =>
-        val onArena = pat.tpe.strip.isOnArena
+        val onArena = pat.tpe.strip.isOnArena(using ctx.typecheckerCtx)
         val structInfo = createStructType(constructor, typeArgs)
         val StructInfo(structSym, fieldMap, _, _) = structInfo
         val localSym = Symbol.fresh(constructor.name)
@@ -908,7 +908,7 @@ object CodeGenerator:
       case Pattern.Wildcard() => Instruction.Drop :: thenBranch
       case Pattern.Bind(binder, pat) => genPatternMatcher(pat, thenBranch, elseBranch, resType)
       case Pattern.EnumVariant(constructor, typeArgs, enumSym, fields) =>
-        val onArena = pat.tpe.strip.isOnArena
+        val onArena = pat.tpe.strip.isOnArena(using ctx.typecheckerCtx)
         val structInfo = createStructType(constructor, typeArgs)
         val StructInfo(structSym, fieldMap, _, maybeTag) = structInfo
         val localSym = Symbol.fresh(constructor.name)
