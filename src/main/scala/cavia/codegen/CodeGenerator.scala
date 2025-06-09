@@ -938,15 +938,24 @@ object CodeGenerator:
           case None => setLocalInstrs ++ fieldInstrs
           case Some(_) =>
             val originalSym = Symbol.fresh("original")
-            emitLocal(originalSym, ValType.TypedRef(Symbol.EnumClass))
+            val originalType = if onArena then ValType.I32 else ValType.TypedRef(Symbol.EnumClass)
+            emitLocal(originalSym, originalType)
+            val getTagInstrs =
+              if !onArena then
+                List(Instruction.StructGet(Symbol.EnumClass, Symbol.Tag))
+              else genArenaStructGet(structInfo, Symbol.Tag)
             val testInstrs = 
               List(
-                Instruction.LocalTee(originalSym), 
-                Instruction.StructGet(Symbol.EnumClass, Symbol.Tag),
+                Instruction.LocalTee(originalSym)
+              ) ++ getTagInstrs ++ List(
                 Instruction.I32Const(maybeTag.get),
                 Instruction.I32Eq,
               )
-            val castInstrs = List(Instruction.LocalGet(originalSym), Instruction.RefCast(structSym))
+            val castInstrs = 
+              if !onArena then
+                List(Instruction.LocalGet(originalSym), Instruction.RefCast(structSym))
+              else 
+                List(Instruction.LocalGet(originalSym))
             val ifInstr = Instruction.If(
               resType,
               thenBranch = castInstrs ++ setLocalInstrs ++ fieldInstrs,
@@ -1007,12 +1016,20 @@ object CodeGenerator:
     val setArgsInstr: List[Instruction] = (args `zip` classSym.info.fields).flatMap: (argTerm, fieldInfo) =>
       val argInstrs = genTerm(argTerm)
       getStructPtrInstrs ++ genArenaStructSet(structInfo, fieldInfo, argInstrs, isInitialising = true)
-    setStructPtrInstrs ++ incArenaInstrs ++ setArgsInstr ++ getStructPtrInstrs
+    val setTagInstrs = structInfo.tagNumber match
+      case Some(tag) => getStructPtrInstrs ++ genArenaStructSet(structInfo, Symbol.Tag, List(Instruction.I32Const(tag)), isInitialising = true)
+      case None => Nil
+    setStructPtrInstrs ++ incArenaInstrs ++ setArgsInstr ++ setTagInstrs ++ getStructPtrInstrs
 
   /** Generate instructions for setting a field of an arena-allocated struct, assuming that the struct pointer is on the top of the stack. */
-  def genArenaStructSet(structInfo: StructInfo, fieldInfo: Expr.FieldInfo, getArg: List[Instruction], isInitialising: Boolean = false)(using Context): List[Instruction] =
+  def genArenaStructSet(structInfo: StructInfo, fieldInfo: Expr.FieldInfo | Symbol, getArg: List[Instruction], isInitialising: Boolean = false)(using Context): List[Instruction] =
     val StructInfo(_, nameMap, layoutInfo, _) = structInfo
-    val FieldLayout(offset, memRepr) = layoutInfo.fields(nameMap(fieldInfo.name))
+    val FieldLayout(offset, memRepr) =
+      fieldInfo match
+        case fieldInfo: Expr.FieldInfo =>
+          layoutInfo.fields(nameMap(fieldInfo.name))
+        case fieldSym: Symbol =>
+          layoutInfo.fields(fieldSym)
     val addressInstr = 
       if offset == 0 then
         Nil
@@ -1069,9 +1086,14 @@ object CodeGenerator:
       case _ => assert(false, "impossible, otherwise a bug in the typechecker")
 
   /** Generate instructions for retrieving a field from an arena-allocated struct, assuming that the struct pointer is on the top of the stack. */
-  def genArenaStructGet(structInfo: StructInfo, fieldInfo: Expr.FieldInfo)(using Context): List[Instruction] =
+  def genArenaStructGet(structInfo: StructInfo, fieldInfo: Expr.FieldInfo | Symbol)(using Context): List[Instruction] =
     val StructInfo(_, nameMap, layoutInfo, _) = structInfo
-    val FieldLayout(offset, memRepr) = layoutInfo.fields(nameMap(fieldInfo.name))
+    val FieldLayout(offset, memRepr) = 
+      fieldInfo match
+        case fieldInfo: Expr.FieldInfo =>
+          layoutInfo.fields(nameMap(fieldInfo.name))
+        case fieldSym: Symbol =>
+          layoutInfo.fields(fieldSym)
     val addressInstr = 
       if offset == 0 then
         Nil
