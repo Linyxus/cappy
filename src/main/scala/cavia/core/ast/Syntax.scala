@@ -2,6 +2,7 @@ package cavia
 package core
 package ast
 
+import scala.collection.mutable, mutable.ArrayBuffer
 import tokenizing.*
 import expr.Expr
 
@@ -100,7 +101,13 @@ object Syntax:
 
   case class Module(name: ModuleName, defs: List[Definition], var sourceFile: io.SourceFile) extends Positioned
 
+  sealed trait Annotation extends Positioned
+  case class TermAnnotation(term: Term) extends Annotation
+
   enum Definition extends Positioned:
+    /** Annotations for this definition. */
+    val annots: mutable.ArrayBuffer[Annotation] = ArrayBuffer.empty
+
     /** A value definition, like val x: T = ... */
     case ValDef(name: String, tpe: Option[Type], expr: Term)
     /** A function definition, like def f[T](x: T): U = ... */

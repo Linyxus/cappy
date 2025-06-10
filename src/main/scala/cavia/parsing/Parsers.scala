@@ -181,6 +181,22 @@ object Parsers:
   def definitionP: Parser[Definition] = 
     valDefP `or` defDefP `or` structP `or` extensionDefP `or` typeDefP `or` enumP
 
+  def annotationP: Parser[Annotation] =
+    val p = (tokenP[Token.AT], termP).p.map: (_, term) =>
+      TermAnnotation(term)
+    p.positioned.withWhat("an annotation")
+
+  def annotationsP: Parser[List[Annotation]] =
+    val p = (annotationP, tokenP[Token.NEWLINE].optional).p.map: (annot, _) =>
+      annot
+    p.many
+
+  def annotatedDefinitionP: Parser[Definition] =
+    val p = (annotationsP, definitionP).p.map: (annots, defn) =>
+      defn.annots ++= annots
+      defn
+    p
+
   def moduleNameP: Parser[ModuleName] =
     val moreP = (tokenP[Token.DOT], tokenP[Token.IDENT]).p.map((_, nameTk) => nameTk)
     val p = (tokenP[Token.IDENT], moreP.many).p.map: (nameTk, more) =>
@@ -192,7 +208,7 @@ object Parsers:
     p.withWhat("a module name")
 
   def programP: Parser[List[Definition]] =
-    (tokenP[Token.NEWLINE].optional, definitionP.sepBy(tokenP[Token.NEWLINE]), wsUntilEndP).p.map((_, defs, _) => defs)
+    (tokenP[Token.NEWLINE].optional, annotatedDefinitionP.sepBy(tokenP[Token.NEWLINE]), wsUntilEndP).p.map((_, defs, _) => defs)
 
   def moduleP: Parser[Module] =
     val headerP = (keywordP("module"), moduleNameP).p.map(_._2)

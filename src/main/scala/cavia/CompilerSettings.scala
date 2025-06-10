@@ -14,8 +14,12 @@ object CompilerSettings:
     case Help
 
   case class CompilerConfig(
+    /** Whether to print the ids of `cap`-instances. */
     printIds: Boolean,
+    /** Whether to include standard library. */
     includeStd: Boolean,
+    /** Whether to print parsed trees. */
+    printParser: Boolean,
   ):
     def turnOffPrintIds: CompilerConfig = copy(printIds = false)
 
@@ -23,4 +27,5 @@ object CompilerSettings:
     val default: CompilerConfig = CompilerConfig(
       printIds = true,
       includeStd = true,
+      printParser = false,
     )

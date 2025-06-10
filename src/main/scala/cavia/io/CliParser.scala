@@ -81,6 +81,7 @@ class CompilerCliParser extends CliParser.GenericCliParser:
 
   lazy val myOptions: List[CliOption[?]] = List(
     printIdsOption,
+    printParserOption,
     includeStdOption,
     sourceFilesOption,
   )
@@ -88,5 +89,6 @@ class CompilerCliParser extends CliParser.GenericCliParser:
   val printIdsOption = new TrueOrFalseOption("printids")
   val includeStdOption = new TrueOrFalseOption("std")
   val sourceFilesOption = new SourceFilesOption()
+  val printParserOption = new TrueOrFalseOption("printparser")
 
   def options: List[CliOption[?]] = myOptions

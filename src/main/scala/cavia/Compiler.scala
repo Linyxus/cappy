@@ -15,12 +15,18 @@ import java.nio.file.*
 import core.ast.expr.Expr
 
 object Compiler:
-  object ParseStep extends CompilerStep[List[SourceFile], List[Syntax.Module]]:
+  class ParseStep(config: CompilerConfig) extends CompilerStep[List[SourceFile], List[Syntax.Module]]:
     def run(sources: List[SourceFile]): Outcome[List[Syntax.Module]] =
       parseAll(sources) match
         case Left(err: Tokenizer.Error) => Outcome.simpleFailure(err.asMessage)
         case Left(err: Parser.ParseError) => Outcome.simpleFailure(Message.multiline(getErrorMessages(err), err.pos))
-        case Right(modules) => Outcome.simpleSuccess(modules)
+        case Right(modules) => 
+          if config.printParser then
+            println("--- parsed modules")
+            modules.foreach: m =>
+              if m.sourceFile.name != "<stdlib>" then
+                println(m)
+          Outcome.simpleSuccess(modules)
 
   class TypecheckStep(config: CompilerConfig) extends CompilerStep[List[Syntax.Module], List[Expr.Module]]:
     def run(sources: List[Syntax.Module]): Outcome[List[Expr.Module]] =
@@ -85,6 +91,7 @@ object Compiler:
         val config = CompilerConfig(
           printIds = p.printIdsOption.get,
           includeStd = p.includeStdOption.get,
+          printParser = p.printParserOption.get,
         )
         CompilerAction.Check(p.sourceFilesOption.get, config)
       case "gen" :: moreArgs => hopefully:
@@ -92,6 +99,7 @@ object Compiler:
         val config = CompilerConfig(
           printIds = p.printIdsOption.get,
           includeStd = p.includeStdOption.get,
+          printParser = p.printParserOption.get,
         )
         CompilerAction.Codegen(p.sourceFilesOption.get, config)
       case "compile" :: moreArgs => hopefully:
@@ -99,6 +107,7 @@ object Compiler:
         val config = CompilerConfig(
           printIds = p.printIdsOption.get,
           includeStd = p.includeStdOption.get,
+          printParser = p.printParserOption.get,
         )
         CompilerAction.Compile(p.sourceFilesOption.get, config)
       case  cmd :: _ => Left(s"Invalid command: $cmd")
@@ -111,14 +120,14 @@ object Compiler:
         println("       cavia compile <source files>")
       case CompilerAction.Check(sources, config) =>
         val sources1 = sources :+ stdlib
-        val runner = ParseStep `fuse` TypecheckStep(config) `fuse` PrintModulesStep("typecheck", config)
+        val runner = ParseStep(config) `fuse` TypecheckStep(config) `fuse` PrintModulesStep("typecheck", config)
         val res = runner.execute(sources1)
         res match
           case Some(modules) =>
           case None =>
       case CompilerAction.Codegen(sources, config) =>
         val runner = 
-          ParseStep 
+          ParseStep(config)
             `fuse` TypecheckStep(config)
             `fuse` PrintModulesStep("typecheck", config)
             `fuse` CodegenStep("out.wat")
@@ -130,7 +139,7 @@ object Compiler:
             println("--- codegen failed")
       case CompilerAction.Compile(sources, config) =>
         val runner = 
-          ParseStep 
+          ParseStep(config)
             `fuse` TypecheckStep(config)
             `fuse` PrintModulesStep("typecheck", config)
             `fuse` CodegenStep("out.wat")
