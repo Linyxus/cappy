@@ -65,18 +65,11 @@ private class PyCodeGen()(using genCtx: Context):
     */
   private val pendingLocalDefs = mutable.ListBuffer.empty[PyStmt]
 
-  /** Tracks modules referenced via LoadModule during codegen of a single class.
-    * Used to generate cross-module imports.
-    */
-  private val referencedModules = mutable.Set.empty[QualName]
-
   // ─── Entry point ───────────────────────────────────────────────────
 
   def run(): Unit =
     genCompilationUnit(genCtx.compilationUnit)
-    for module <- generatedModules do
-      genPyFile(genCtx.compilationUnit, module)
-    emitRuntime()
+    linkAndWrite()
 
   // ─── Compilation unit traversal ────────────────────────────────────
 
@@ -95,25 +88,15 @@ private class PyCodeGen()(using genCtx: Context):
       if !sym.isPrimitiveValueClass && sym != defn.ArrayClass then
         currentClassSym = sym
         encoding.resetLocalNames()
-        referencedModules.clear()
         val module0 =
           if sym.is(Trait) then genInterface(td)
           else if isStaticModule(sym) then genModuleClass(td)
           else genScalaClass(td)
-        // Add imports for referenced modules (excluding self and runtime-provided)
-        val selfName = encoding.encodeClassName(sym)
-        val imports = referencedModules.toList
-          .filterNot(q => q == selfName || runtimeProvidedModules.contains(q.parts.last))
-          .map { qualName =>
-            val pyFileName = qualName.parts.last
-            PyImport.FromImport(QualName(List(pyFileName)), List((PyName(pyFileName + "_MODULE"), None)))
-          }
         // Add if __name__ == "__main__" entry point for main classes
-        val mainEntryPoint =
+        val mainStmts =
           if genCtx.platform.hasMainMethod(sym) then
             val className = encoding.encodeSimpleClassName(sym)
-            val sysImport = List(PyImport.Import(QualName(List("sys")), None))
-            val mainCall = PyStmt.If(
+            List(PyStmt.If(
               cond = PyExpr.Compare(
                 PyExpr.Name(PyName("__name__")),
                 List(PyCmpOp.Eq),
@@ -123,15 +106,10 @@ private class PyCodeGen()(using genCtx: Context):
                   PyExpr.Attr(PyExpr.Name(className), PyName("main")),
                   List(PyExpr.Name(PyName("sys.argv[1:]")))))),
               elifs = Nil,
-              elseBody = None)
-            (sysImport, List(mainCall))
-          else
-            (Nil, Nil)
+              elseBody = None))
+          else Nil
 
-        val module = module0.copy(
-          imports = mainEntryPoint._1 ::: imports ::: module0.imports,
-          initStmts = module0.initStmts ::: mainEntryPoint._2
-        )
+        val module = module0.copy(initStmts = module0.initStmts ::: mainStmts)
         generatedModules += module
 
   // ─── Class generation ──────────────────────────────────────────────
@@ -166,7 +144,7 @@ private class PyCodeGen()(using genCtx: Context):
       initMethod.toList ::: methods
 
     val classDef = PyClassDef(className, PyClassKind.ModuleClass, bases, allMembers, posOf(td))
-    val moduleName = PyName(className.value + "_MODULE")
+    val moduleName = PyName(PyEmitter.Prefix + "mod_" + className.value)
     val defs = List(PyTopLevelDef.TLClassDef(classDef))
     val initStmts = List(
       PyStmt.Assign(PyExpr.Name(moduleName), PyExpr.New(PyExpr.Name(className), Nil))
@@ -291,13 +269,20 @@ private class PyCodeGen()(using genCtx: Context):
 
     val returnType = encoding.toPyType(sym.info.finalResultType)
 
-    val bodyStmts =
+    val isUnitReturn = sym.info.finalResultType.isRef(defn.UnitClass)
+                    || sym.info.finalResultType.isRef(defn.NothingClass)
+
+    val bodyStmts0 =
       if sym.is(Deferred) then
         List(PyStmt.Raise(Some(PyExpr.Call(PyExpr.Name(PyName("NotImplementedError")), Nil))))
       else if dd.rhs.isEmpty then
         List(PyStmt.Pass)
       else
         flattenToStmts(genStat(dd.rhs))
+
+    val bodyStmts =
+      if isUnitReturn || sym.isClassConstructor then bodyStmts0
+      else wrapLastReturn(bodyStmts0)
 
     val body = if bodyStmts.isEmpty then List(PyStmt.Pass) else bodyStmts
 
@@ -762,29 +747,17 @@ private class PyCodeGen()(using genCtx: Context):
 
   // ─── File output ───────────────────────────────────────────────────
 
-  private def genPyFile(cunit: CompilationUnit, module: PyModule): Unit =
+  /** Link all generated modules into a single bundled .py file. */
+  private def linkAndWrite(): Unit =
     val outputDirectory = genCtx.settings.outputDir.value
-    val pathParts = module.name.parts
-    val dir = pathParts.init.foldLeft(outputDirectory)(_.subdirectoryNamed(_))
-    val filename = pathParts.last + ".py"
-    val outfile = dir.fileNamed(filename)
+    // Use the source file name (without extension) as output name
+    val sourceName = genCtx.compilationUnit.source.file.name.stripSuffix(".scala")
+    val outfile = outputDirectory.fileNamed(sourceName + ".py")
     val output = outfile.bufferedOutput
     try
       val writer = new java.io.PrintWriter(output)
       try
-        PyEmitter.emit(module, writer)
-        writer.flush()
-      finally writer.close()
-    finally output.close()
-
-  private def emitRuntime(): Unit =
-    val outputDirectory = genCtx.settings.outputDir.value
-    val outfile = outputDirectory.fileNamed("scalapy_runtime.py")
-    val output = outfile.bufferedOutput
-    try
-      val writer = new java.io.PrintWriter(output)
-      try
-        writer.print(ScalaPyRuntime.content)
+        PyLinker.link(generatedModules.toList, ScalaPyRuntime.content, writer)
         writer.flush()
       finally writer.close()
     finally output.close()
@@ -824,84 +797,108 @@ private class PyCodeGen()(using genCtx: Context):
   private def nonEmpty(stmts: List[PyStmt]): List[PyStmt] =
     if stmts.isEmpty then List(PyStmt.Pass) else stmts
 
-  /** Modules provided by scalapy_runtime.py or that should not generate cross-module imports. */
-  private val runtimeProvidedModules = Set(
-    "Predef",
-    "CommandLineParser",  // @main wrapper internals
-    "ModuleSerializationProxy",
-  )
+  /** Wrap the last expression in a list of statements with `return`.
+    * Recurses into blocks, if/elif/else branches so every exit path returns.
+    */
+  private def wrapLastReturn(stmts: List[PyStmt]): List[PyStmt] =
+    if stmts.isEmpty then stmts
+    else stmts.init :+ wrapStmtReturn(stmts.last)
+
+  private def wrapStmtReturn(stmt: PyStmt): PyStmt = stmt match
+    case PyStmt.ExprStmt(PyExpr.NoneLit) => stmt // don't return None for Unit-typed tails
+    case PyStmt.ExprStmt(expr)           => PyStmt.Return(Some(expr))
+    case PyStmt.VarDef(n, t, m, rhs)     => PyStmt.VarDef(n, t, m, rhs) // can't return a vardef
+    case PyStmt.Block(inner)             => PyStmt.Block(wrapLastReturn(inner))
+    case PyStmt.If(cond, body, elifs, elseBody) =>
+      PyStmt.If(
+        cond, wrapLastReturn(body),
+        elifs.map((c, b) => (c, wrapLastReturn(b))),
+        elseBody.map(wrapLastReturn))
+    case PyStmt.Try(body, handlers, elseBody, fin) =>
+      PyStmt.Try(
+        wrapLastReturn(body),
+        handlers.map(h => h.copy(body = wrapLastReturn(h.body))),
+        elseBody.map(wrapLastReturn),
+        fin)
+    case _: PyStmt.Return | _: PyStmt.Raise | _: PyStmt.LabelReturn => stmt // already exits
+    case _ => stmt
 
   private def loadModule(qualName: QualName): PyExpr =
-    referencedModules += qualName
     PyExpr.LoadModule(qualName)
 
-/** Hard-coded Python runtime for generated code. */
+
+/** Hard-coded Python runtime for generated code.
+  *
+  * Naming convention:
+  *   - Compiler-invented names use the `_scpy_` prefix (e.g., `_scpy_i32`, `_scpy_mod_Foo`)
+  *   - Real Scala class/module names keep their natural encoding (e.g., `CommandLineParser_ParseError`)
+  */
 private object ScalaPyRuntime:
+  private val P = PyEmitter.Prefix
   val content: String =
-    """|# Scala.py runtime support — generated by the Scala 3 Python backend
-       |import struct
-       |from typing import Any
-       |
-       |__all__ = [
-       |    '_rt_i32', '_rt_i64', '_rt_f32',
-       |    'Predef_MODULE',
-       |    'CommandLineParser_ParseError', 'CommandLineParser_MODULE',
-       |    'ModuleSerializationProxy',
-       |    'Any',
-       |]
-       |
-       |# ── Numeric wrapping (Scala overflow semantics) ──
-       |
-       |def _rt_i32(x):
-       |    return ((int(x) + 0x80000000) & 0xFFFFFFFF) - 0x80000000
-       |
-       |def _rt_i64(x):
-       |    return ((int(x) + 0x8000000000000000) & 0xFFFFFFFFFFFFFFFF) - 0x8000000000000000
-       |
-       |def _rt_f32(x):
-       |    return struct.unpack('f', struct.pack('f', float(x)))[0]
-       |
-       |# ── scala.Predef ──
-       |
-       |class _Predef:
-       |    def println(self, *args):
-       |        print(*args)
-       |
-       |    def print_(self, *args):
-       |        print(*args, end="")
-       |
-       |    def assert_(self, cond, msg=None):
-       |        if msg is not None:
-       |            assert cond, msg
-       |        else:
-       |            assert cond
-       |
-       |    def require(self, cond, msg=None):
-       |        if not cond:
-       |            raise ValueError(msg if msg else "requirement failed")
-       |
-       |    def identity(self, x):
-       |        return x
-       |
-       |    def locally(self, x):
-       |        return x
-       |
-       |Predef_MODULE = _Predef()
-       |
-       |# ── @main wrapper support ──
-       |
-       |class CommandLineParser_ParseError(Exception):
-       |    pass
-       |
-       |class _CommandLineParser:
-       |    def showError(self, error):
-       |        print(str(error))
-       |
-       |CommandLineParser_MODULE = _CommandLineParser()
-       |
-       |# ── Serialization stub ──
-       |
-       |class ModuleSerializationProxy:
-       |    def __init__(self, cls):
-       |        self.cls = cls
-       |""".stripMargin
+    s"""|# Scala.py runtime — generated by the Scala 3 Python backend
+        |#
+        |# Names prefixed with ${P} are compiler-invented and don't correspond
+        |# to Scala source identifiers. All other names are real Scala classes.
+        |import struct
+        |import builtins as _builtins
+        |from typing import Any
+        |
+        |# ── Compiler-invented: numeric wrapping (Scala overflow semantics) ──
+        |
+        |def ${P}i32(x):
+        |    return ((_builtins.int(x) + 0x80000000) & 0xFFFFFFFF) - 0x80000000
+        |
+        |def ${P}i64(x):
+        |    return ((_builtins.int(x) + 0x8000000000000000) & 0xFFFFFFFFFFFFFFFF) - 0x8000000000000000
+        |
+        |def ${P}f32(x):
+        |    return struct.unpack('f', struct.pack('f', _builtins.float(x)))[0]
+        |
+        |def ${P}to_str(x):
+        |    return _builtins.str(x)
+        |
+        |# ── scala.Predef ──
+        |
+        |class _Predef:
+        |    def println(self, *args):
+        |        _builtins.print(*args)
+        |
+        |    def print_(self, *args):
+        |        _builtins.print(*args, end="")
+        |
+        |    def assert_(self, cond, msg=None):
+        |        if msg is not None:
+        |            assert cond, msg
+        |        else:
+        |            assert cond
+        |
+        |    def require(self, cond, msg=None):
+        |        if not cond:
+        |            raise ValueError(msg if msg else "requirement failed")
+        |
+        |    def identity(self, x):
+        |        return x
+        |
+        |    def locally(self, x):
+        |        return x
+        |
+        |${P}mod_Predef = _Predef()
+        |
+        |# ── scala.util.CommandLineParser (@main wrapper support) ──
+        |
+        |class CommandLineParser_ParseError(Exception):
+        |    pass
+        |
+        |class _CommandLineParser:
+        |    def showError(self, error):
+        |        _builtins.print(_builtins.str(error))
+        |
+        |${P}mod_CommandLineParser = _CommandLineParser()
+        |
+        |# ── scala.runtime.ModuleSerializationProxy ──
+        |
+        |class ModuleSerializationProxy:
+        |    def __init__(self, cls):
+        |        self.cls = cls
+        |""".stripMargin
