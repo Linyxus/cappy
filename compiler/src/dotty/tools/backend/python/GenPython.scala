@@ -65,12 +65,18 @@ private class PyCodeGen()(using genCtx: Context):
     */
   private val pendingLocalDefs = mutable.ListBuffer.empty[PyStmt]
 
+  /** Tracks modules referenced via LoadModule during codegen of a single class.
+    * Used to generate cross-module imports.
+    */
+  private val referencedModules = mutable.Set.empty[QualName]
+
   // ─── Entry point ───────────────────────────────────────────────────
 
   def run(): Unit =
     genCompilationUnit(genCtx.compilationUnit)
     for module <- generatedModules do
       genPyFile(genCtx.compilationUnit, module)
+    emitRuntime()
 
   // ─── Compilation unit traversal ────────────────────────────────────
 
@@ -89,10 +95,43 @@ private class PyCodeGen()(using genCtx: Context):
       if !sym.isPrimitiveValueClass && sym != defn.ArrayClass then
         currentClassSym = sym
         encoding.resetLocalNames()
-        val module =
+        referencedModules.clear()
+        val module0 =
           if sym.is(Trait) then genInterface(td)
           else if isStaticModule(sym) then genModuleClass(td)
           else genScalaClass(td)
+        // Add imports for referenced modules (excluding self and runtime-provided)
+        val selfName = encoding.encodeClassName(sym)
+        val imports = referencedModules.toList
+          .filterNot(q => q == selfName || runtimeProvidedModules.contains(q.parts.last))
+          .map { qualName =>
+            val pyFileName = qualName.parts.last
+            PyImport.FromImport(QualName(List(pyFileName)), List((PyName(pyFileName + "_MODULE"), None)))
+          }
+        // Add if __name__ == "__main__" entry point for main classes
+        val mainEntryPoint =
+          if genCtx.platform.hasMainMethod(sym) then
+            val className = encoding.encodeSimpleClassName(sym)
+            val sysImport = List(PyImport.Import(QualName(List("sys")), None))
+            val mainCall = PyStmt.If(
+              cond = PyExpr.Compare(
+                PyExpr.Name(PyName("__name__")),
+                List(PyCmpOp.Eq),
+                List(PyExpr.StringLit("__main__"))),
+              body = List(PyStmt.ExprStmt(
+                PyExpr.Call(
+                  PyExpr.Attr(PyExpr.Name(className), PyName("main")),
+                  List(PyExpr.Name(PyName("sys.argv[1:]")))))),
+              elifs = Nil,
+              elseBody = None)
+            (sysImport, List(mainCall))
+          else
+            (Nil, Nil)
+
+        val module = module0.copy(
+          imports = mainEntryPoint._1 ::: imports ::: module0.imports,
+          initStmts = module0.initStmts ::: mainEntryPoint._2
+        )
         generatedModules += module
 
   // ─── Class generation ──────────────────────────────────────────────
@@ -335,21 +374,21 @@ private class PyCodeGen()(using genCtx: Context):
 
       case tree: This =>
         if tree.symbol.is(ModuleClass) && tree.symbol != currentClassSym then
-          PyExpr.LoadModule(encoding.encodeClassName(tree.symbol))
+          loadModule(encoding.encodeClassName(tree.symbol))
         else
           PyExpr.This
 
       case Select(qualifier, _) =>
         val sym = tree.symbol
         if sym.is(Module) then
-          PyExpr.LoadModule(encoding.encodeClassName(sym.moduleClass))
+          loadModule(encoding.encodeClassName(sym.moduleClass))
         else
           PyExpr.Attr(genExpr(qualifier), encoding.encodeFieldName(sym))
 
       case tree: Ident =>
         val sym = tree.symbol
         if sym.is(Module) then
-          PyExpr.LoadModule(encoding.encodeClassName(sym.moduleClass))
+          loadModule(encoding.encodeClassName(sym.moduleClass))
         else
           PyExpr.Name(encoding.encodeLocalName(sym))
 
@@ -460,7 +499,7 @@ private class PyCodeGen()(using genCtx: Context):
         val methodName = encoding.encodeMethodName(sym)
         // Static method call or local function call
         if sym.owner.is(ModuleClass) then
-          val module = PyExpr.LoadModule(encoding.encodeClassName(sym.owner))
+          val module = loadModule(encoding.encodeClassName(sym.owner))
           PyExpr.Call(PyExpr.Attr(module, methodName), args)
         else
           PyExpr.Call(PyExpr.Name(methodName), args)
@@ -738,6 +777,18 @@ private class PyCodeGen()(using genCtx: Context):
       finally writer.close()
     finally output.close()
 
+  private def emitRuntime(): Unit =
+    val outputDirectory = genCtx.settings.outputDir.value
+    val outfile = outputDirectory.fileNamed("scalapy_runtime.py")
+    val output = outfile.bufferedOutput
+    try
+      val writer = new java.io.PrintWriter(output)
+      try
+        writer.print(ScalaPyRuntime.content)
+        writer.flush()
+      finally writer.close()
+    finally output.close()
+
   // ─── Helpers ───────────────────────────────────────────────────────
 
   private def posOf(tree: Tree): PyPos =
@@ -772,3 +823,85 @@ private class PyCodeGen()(using genCtx: Context):
 
   private def nonEmpty(stmts: List[PyStmt]): List[PyStmt] =
     if stmts.isEmpty then List(PyStmt.Pass) else stmts
+
+  /** Modules provided by scalapy_runtime.py or that should not generate cross-module imports. */
+  private val runtimeProvidedModules = Set(
+    "Predef",
+    "CommandLineParser",  // @main wrapper internals
+    "ModuleSerializationProxy",
+  )
+
+  private def loadModule(qualName: QualName): PyExpr =
+    referencedModules += qualName
+    PyExpr.LoadModule(qualName)
+
+/** Hard-coded Python runtime for generated code. */
+private object ScalaPyRuntime:
+  val content: String =
+    """|# Scala.py runtime support — generated by the Scala 3 Python backend
+       |import struct
+       |from typing import Any
+       |
+       |__all__ = [
+       |    '_rt_i32', '_rt_i64', '_rt_f32',
+       |    'Predef_MODULE',
+       |    'CommandLineParser_ParseError', 'CommandLineParser_MODULE',
+       |    'ModuleSerializationProxy',
+       |    'Any',
+       |]
+       |
+       |# ── Numeric wrapping (Scala overflow semantics) ──
+       |
+       |def _rt_i32(x):
+       |    return ((int(x) + 0x80000000) & 0xFFFFFFFF) - 0x80000000
+       |
+       |def _rt_i64(x):
+       |    return ((int(x) + 0x8000000000000000) & 0xFFFFFFFFFFFFFFFF) - 0x8000000000000000
+       |
+       |def _rt_f32(x):
+       |    return struct.unpack('f', struct.pack('f', float(x)))[0]
+       |
+       |# ── scala.Predef ──
+       |
+       |class _Predef:
+       |    def println(self, *args):
+       |        print(*args)
+       |
+       |    def print_(self, *args):
+       |        print(*args, end="")
+       |
+       |    def assert_(self, cond, msg=None):
+       |        if msg is not None:
+       |            assert cond, msg
+       |        else:
+       |            assert cond
+       |
+       |    def require(self, cond, msg=None):
+       |        if not cond:
+       |            raise ValueError(msg if msg else "requirement failed")
+       |
+       |    def identity(self, x):
+       |        return x
+       |
+       |    def locally(self, x):
+       |        return x
+       |
+       |Predef_MODULE = _Predef()
+       |
+       |# ── @main wrapper support ──
+       |
+       |class CommandLineParser_ParseError(Exception):
+       |    pass
+       |
+       |class _CommandLineParser:
+       |    def showError(self, error):
+       |        print(str(error))
+       |
+       |CommandLineParser_MODULE = _CommandLineParser()
+       |
+       |# ── Serialization stub ──
+       |
+       |class ModuleSerializationProxy:
+       |    def __init__(self, cls):
+       |        self.cls = cls
+       |""".stripMargin

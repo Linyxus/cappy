@@ -33,7 +33,7 @@ class PyEncoding(using Context):
     val name = sym.javaClassName.toString
     // Strip trailing $ from module classes
     val clean = if sym.is(ModuleClass) && name.endsWith("$") then name.dropRight(1) else name
-    QualName(clean.split('.').toList)
+    QualName(clean.split('.').map(sanitizeName).toList)
 
   def encodeSimpleClassName(sym: Symbol): PyName =
     val parts = encodeClassName(sym).parts
