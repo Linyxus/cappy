@@ -8,6 +8,8 @@ import Symbols.*
 import Types.*
 import Denotations.*
 
+import dotty.tools.dotc.report
+
 import dotty.tools.backend.python.ir.*
 
 import scala.collection.mutable
@@ -146,5 +148,9 @@ class PyEncoding(using Context):
 
   private def sanitizeName(name: String): String =
     val cleaned = name.replace("$", "_")
+    if cleaned.startsWith(PyEmitter.Prefix) then
+      report.warning(
+        s"Scala identifier '$name' maps to Python name '$cleaned' which uses the " +
+        s"reserved '${PyEmitter.Prefix}' prefix. This may collide with compiler-generated names.")
     if pythonKeywords.contains(cleaned) then cleaned + "_"
     else cleaned
