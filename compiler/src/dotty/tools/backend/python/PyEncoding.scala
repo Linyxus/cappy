@@ -4,140 +4,178 @@ import dotty.tools.dotc.core.*
 import Contexts.*
 import Flags.*
 import Names.*
+import NameOps.*
 import Symbols.*
 import Types.*
-import Denotations.*
 
 import dotty.tools.dotc.report
 
-import dotty.tools.backend.python.ir.*
+import dotty.tools.backend.python.ir.pyir.*
 
-import scala.collection.mutable
-
-/** Translates Scala symbols and types into Python IR names and type annotations. */
+/** Translates Scala symbols and types into PyIR names and type references.
+ *
+ *  This is the boundary between the compiler's `Symbol`/`Type` world and
+ *  the IR's typed `PyName`/`PyTypeRef` world. Every identifier in the IR
+ *  comes from here.
+ */
 class PyEncoding(using Context):
 
-  // ─── Fresh name generation ─────────────────────────────────────────
+  // --- Class names ---------------------------------------------------
 
-  private val nameCounters = mutable.Map.empty[String, Int]
+  def encodeClassName(sym: Symbol): PyClassName =
+    // For Java-defined module classes, re-anchor to the companion class.
+    val rewired =
+      if sym.isAllOf(ModuleClass | JavaDefined) && sym.linkedClass.exists then
+        sym.linkedClass
+      else sym
+    val raw = rewired.javaClassName.toString
+    val clean =
+      if rewired.is(ModuleClass) && raw.endsWith("$") then raw.dropRight(1)
+      else raw
+    val segments = clean.split('.').toList.map(sanitizeName)
+    PyClassName(segments.mkString("."))
 
-  def freshName(base: String): PyName =
-    val count = nameCounters.getOrElseUpdate(base, 0)
-    nameCounters(base) = count + 1
-    if count == 0 then PyName(base) else PyName(s"${base}_$count")
+  // --- Method names --------------------------------------------------
 
-  def resetLocalNames(): Unit =
-    nameCounters.clear()
-
-  // ─── Class names ───────────────────────────────────────────────────
-
-  def encodeClassName(sym: Symbol): QualName =
-    val name = sym.javaClassName.toString
-    // Strip trailing $ from module classes
-    val clean = if sym.is(ModuleClass) && name.endsWith("$") then name.dropRight(1) else name
-    QualName(clean.split('.').map(sanitizeName).toList)
-
-  def encodeSimpleClassName(sym: Symbol): PyName =
-    val parts = encodeClassName(sym).parts
-    PyName(parts.last)
-
-  // ─── Method names ──────────────────────────────────────────────────
-
+  /** Map from Scala operator-mangled names to Python dunder names.
+   *  Purely cosmetic - these still go through `PyMethodName.encoded` with
+   *  dunder special-casing so the signature suffix is dropped. */
   private val operatorMap: Map[String, String] = Map(
-    "$plus"     -> "__add__",
-    "$minus"    -> "__sub__",
-    "$times"    -> "__mul__",
-    "$div"      -> "__truediv__",
-    "$percent"  -> "__mod__",
-    "$less"     -> "__lt__",
-    "$greater"  -> "__gt__",
-    "$amp"      -> "__and__",
-    "$bar"      -> "__or__",
-    "$up"       -> "__xor__",
-    "$tilde"    -> "__invert__",
-    "$eq$eq"    -> "__eq__",
-    "$bang$eq"  -> "__ne__",
-    "$less$eq"  -> "__le__",
+    "$plus"      -> "__add__",
+    "$minus"     -> "__sub__",
+    "$times"     -> "__mul__",
+    "$div"       -> "__truediv__",
+    "$percent"   -> "__mod__",
+    "$less"      -> "__lt__",
+    "$greater"   -> "__gt__",
+    "$amp"       -> "__and__",
+    "$bar"       -> "__or__",
+    "$up"        -> "__xor__",
+    "$tilde"     -> "__invert__",
+    "$eq$eq"     -> "__eq__",
+    "$bang$eq"   -> "__ne__",
+    "$less$eq"   -> "__le__",
     "$greater$eq" -> "__ge__",
     "$hash$hash" -> "__hash__",
-    "toString"  -> "__str__",
-    "hashCode"  -> "__hash__",
-    "equals"    -> "__eq__",
+    "toString"   -> "__str__",
+    "hashCode"   -> "__hash__",
+    "equals"     -> "__eq__"
   )
 
-  def encodeMethodName(sym: Symbol): PyName =
-    if sym.isClassConstructor then PyName("__init__")
+  def encodeMethodName(sym: Symbol): PyMethodName =
+    if sym.isClassConstructor then
+      // dotc reports a constructor's `info.resultType` as the enclosing
+      // class, not Unit. Patch to VoidRef so the method identity is
+      // consistent with sjsir and so the encoded name collapses to `__init__`.
+      PyMethodName(
+        PySimpleMethodName.Constructor,
+        paramTypeRefsOf(sym),
+        PyPrimRef.VoidRef
+      )
     else
-      val name = sym.name.mangledString
-      PyName(operatorMap.getOrElse(name, sanitizeName(name)))
+      val rawName = sym.name.mangledString
+      val mapped = operatorMap.getOrElse(rawName, sanitizeName(rawName))
+      PyMethodName(
+        PySimpleMethodName(mapped),
+        paramTypeRefsOf(sym),
+        encodeTypeRef(sym.info.finalResultType)
+      )
 
-  // ─── Field names ───────────────────────────────────────────────────
+  private def paramTypeRefsOf(sym: Symbol): List[PyTypeRef] =
+    sym.info.paramInfoss.flatten.map(encodeTypeRef)
 
-  def encodeFieldName(sym: Symbol): PyName =
-    val name = sym.name.mangledString
-    if sym.is(Private) then
-      val ownerName = sym.owner.name.mangledString.stripSuffix("$")
-      PyName(s"_${ownerName}__${sanitizeName(name)}")
-    else
-      PyName(sanitizeName(name))
+  // --- Field names ---------------------------------------------------
 
-  // ─── Local variable names ──────────────────────────────────────────
+  def encodeFieldName(sym: Symbol): PyFieldName =
+    // The owner is baked in so a subclass field shadowing a parent field
+    // produces a distinct PyFieldName. Python's attribute access uses only
+    // the simple name, so shadowing works via normal Python semantics.
+    PyFieldName(
+      encodeClassName(sym.owner),
+      PySimpleFieldName(sanitizeName(sym.name.mangledString))
+    )
 
-  def encodeLocalName(sym: Symbol): PyName =
-    PyName(sanitizeName(sym.name.mangledString))
+  // --- Locals / labels -----------------------------------------------
 
-  def encodeLabelName(sym: Symbol): PyName =
-    PyName(sanitizeName(sym.name.mangledString))
+  def encodeLocalName(sym: Symbol): PyLocalName =
+    PyLocalName(sanitizeName(sym.name.mangledString))
 
-  // ─── Type annotations ─────────────────────────────────────────────
+  def encodeLabelName(sym: Symbol): PyLabelName =
+    PyLabelName(sanitizeName(sym.name.mangledString))
 
-  def toPyType(tp: Type): Option[PyTypeAnnot] =
-    val sym = tp.typeSymbol
-    if sym == defn.IntClass then Some(PyTypeAnnot.Named("int"))
-    else if sym == defn.LongClass then Some(PyTypeAnnot.Named("int"))
-    else if sym == defn.FloatClass then Some(PyTypeAnnot.Named("float"))
-    else if sym == defn.DoubleClass then Some(PyTypeAnnot.Named("float"))
-    else if sym == defn.BooleanClass then Some(PyTypeAnnot.Named("bool"))
-    else if sym == defn.StringClass then Some(PyTypeAnnot.Named("str"))
-    else if sym == defn.UnitClass then Some(PyTypeAnnot.Named("None"))
-    else if sym == defn.CharClass then Some(PyTypeAnnot.Named("int"))
-    else if sym == defn.ByteClass then Some(PyTypeAnnot.Named("int"))
-    else if sym == defn.ShortClass then Some(PyTypeAnnot.Named("int"))
-    else if sym == defn.NothingClass then Some(PyTypeAnnot.Named("None"))
-    else if sym == defn.NullClass then Some(PyTypeAnnot.Named("None"))
-    else if sym == defn.ObjectClass then Some(PyTypeAnnot.Any)
-    else if sym == defn.ArrayClass then
-      tp match
-        case AppliedType(_, List(elemTp)) =>
-          toPyType(elemTp).map(et => PyTypeAnnot.Parameterized(PyTypeAnnot.Named("list"), List(et)))
-        case _ => Some(PyTypeAnnot.Named("list"))
-    else if sym.exists && !sym.isAbstractOrParamType then
-      Some(PyTypeAnnot.Qualified(encodeClassName(sym)))
-    else Some(PyTypeAnnot.Any)
+  // --- Type encoding -------------------------------------------------
 
-  /** Determine whether an erased Scala type corresponds to a Python int (needs wrapping). */
+  /** Convert a post-erasure Scala type to a `PyTypeRef` (for method
+   *  signatures and IsInstanceOf test types).
+   *
+   *  Post-erasure, `Array[T]` is a `JavaArrayType(elem)`, not
+   *  `AppliedType(ArrayClass, ...)`. Match accordingly.
+   */
+  def encodeTypeRef(tp: Type): PyTypeRef =
+    tp match
+      case JavaArrayType(elem) =>
+        encodeTypeRef(elem) match
+          case PyArrayRef(base, dims) => PyArrayRef(base, dims + 1)
+          case other                  => PyArrayRef(other, 1)
+      case _ =>
+        val sym = tp.typeSymbol
+        if sym == defn.IntClass then PyPrimRef.IntRef
+        else if sym == defn.LongClass then PyPrimRef.LongRef
+        else if sym == defn.FloatClass then PyPrimRef.FloatRef
+        else if sym == defn.DoubleClass then PyPrimRef.DoubleRef
+        else if sym == defn.BooleanClass then PyPrimRef.BooleanRef
+        else if sym == defn.CharClass then PyPrimRef.CharRef
+        else if sym == defn.ByteClass then PyPrimRef.ByteRef
+        else if sym == defn.ShortClass then PyPrimRef.ShortRef
+        else if sym == defn.UnitClass then PyPrimRef.VoidRef
+        else if sym == defn.NothingClass then PyPrimRef.NothingRef
+        else if sym == defn.NullClass then PyPrimRef.NullRef
+        else if sym == defn.StringClass then PyClassRef(PyClassName.StringClass)
+        else if sym.exists && sym.isClass then PyClassRef(encodeClassName(sym))
+        else PyClassRef(PyClassName.ObjectClass)
+
+  /** Convert a post-erasure Scala type to a runtime `PyType` (attached to
+   *  `PyTree` nodes). */
+  def encodeType(tp: Type): PyType =
+    tp match
+      case _: JavaArrayType => PyArrayType
+      case _ =>
+        val sym = tp.typeSymbol
+        if sym == defn.IntClass then PyIntType
+        else if sym == defn.LongClass then PyLongType
+        else if sym == defn.FloatClass then PyFloatType
+        else if sym == defn.DoubleClass then PyDoubleType
+        else if sym == defn.BooleanClass then PyBooleanType
+        else if sym == defn.CharClass then PyCharType
+        else if sym == defn.ByteClass then PyByteType
+        else if sym == defn.ShortClass then PyShortType
+        else if sym == defn.UnitClass then PyVoidType
+        else if sym == defn.NothingClass then PyNothingType
+        else if sym == defn.NullClass then PyNullType
+        else if sym == defn.StringClass then PyStringType
+        else if sym.exists && sym.isClass then PyClassType(encodeClassName(sym))
+        else PyAnyType
+
+  /** Original source name for diagnostics. */
+  def originalNameOf(sym: Symbol): PyOriginalName =
+    PyOriginalName.fromString(sym.name.unexpandedName.toString)
+
+  // --- isXxxType helpers (used by GenPython's primitive dispatch) ----
+
   def isIntType(tp: Type): Boolean =
     val sym = tp.typeSymbol
-    sym == defn.IntClass || sym == defn.ByteClass || sym == defn.ShortClass || sym == defn.CharClass
+    sym == defn.IntClass || sym == defn.ByteClass ||
+    sym == defn.ShortClass || sym == defn.CharClass
 
-  def isLongType(tp: Type): Boolean =
-    tp.typeSymbol == defn.LongClass
+  def isLongType(tp: Type): Boolean = tp.typeSymbol == defn.LongClass
+  def isFloatType(tp: Type): Boolean = tp.typeSymbol == defn.FloatClass
+  def isDoubleType(tp: Type): Boolean = tp.typeSymbol == defn.DoubleClass
+  def isBooleanType(tp: Type): Boolean = tp.typeSymbol == defn.BooleanClass
+  def isStringType(tp: Type): Boolean = tp.typeSymbol == defn.StringClass
 
-  def isFloatType(tp: Type): Boolean =
-    tp.typeSymbol == defn.FloatClass
+  // --- Utilities -----------------------------------------------------
 
-  def isDoubleType(tp: Type): Boolean =
-    tp.typeSymbol == defn.DoubleClass
-
-  def isBooleanType(tp: Type): Boolean =
-    tp.typeSymbol == defn.BooleanClass
-
-  def isStringType(tp: Type): Boolean =
-    tp.typeSymbol == defn.StringClass
-
-  // ─── Utilities ─────────────────────────────────────────────────────
-
-  /** Python reserved words that must be escaped. */
+  /** Python reserved words that must be escaped in identifiers. */
   private val pythonKeywords = Set(
     "False", "None", "True", "and", "as", "assert", "async", "await",
     "break", "class", "continue", "def", "del", "elif", "else", "except",
@@ -147,10 +185,10 @@ class PyEncoding(using Context):
   )
 
   private def sanitizeName(name: String): String =
-    val cleaned = name.replace("$", "_")
-    if cleaned.startsWith(PyEmitter.Prefix) then
+    val cleaned = name.replace('$', '_')
+    if cleaned.startsWith("_scpy_") then
       report.warning(
-        s"Scala identifier '$name' maps to Python name '$cleaned' which uses the " +
-        s"reserved '${PyEmitter.Prefix}' prefix. This may collide with compiler-generated names.")
+        s"Scala identifier '$name' maps to Python name '$cleaned' which uses " +
+        s"the reserved '_scpy_' prefix. This may collide with compiler-generated names.")
     if pythonKeywords.contains(cleaned) then cleaned + "_"
     else cleaned
