@@ -17,11 +17,13 @@ import StdNames.*
 
 import dotty.tools.dotc.report
 import dotty.tools.dotc.transform.Erasure
+import dotty.tools.dotc.util.{NoSourcePosition, SourcePosition}
+import dotty.tools.dotc.util.Spans.Span
 
 import dotty.tools.backend.ScalaPrimitives
 import dotty.tools.backend.ScalaPrimitivesOps.*
 
-import dotty.tools.backend.python.ir.*
+import dotty.tools.backend.python.ir.pyir.*
 
 import scala.collection.mutable
 
@@ -45,40 +47,40 @@ object GenPython:
   val name: String = "genPython"
   val description: String = "generate Python source files"
 
-/** Main code generator that translates post-erasure Scala trees into Python IR.
-  *
-  * Modeled after `dotty.tools.backend.sjs.JSCodeGen`.
+/** Main code generator that translates post-erasure Scala trees into the
+  * typed PyIR. Modeled after `dotty.tools.backend.sjs.JSCodeGen`.
   */
 private class PyCodeGen()(using genCtx: Context):
 
   private val encoding = new PyEncoding()
   private val primitives = new ScalaPrimitives(genCtx)
-  private val generatedModules = mutable.ListBuffer.empty[PyModule]
+  private val generatedClasses = mutable.ListBuffer.empty[PyClassDef]
+  private var mainEntry: Option[PyIREmitter.MainEntry] = None
 
-  // ─── Scoped state ──────────────────────────────────────────────────
+  // --- Scoped state --------------------------------------------------
 
-  private var currentClassSym: Symbol = _
-  private var currentMethodSym: Symbol = _
+  private var currentClassSym: Symbol = NoSymbol
+  private var currentMethodSym: Symbol = NoSymbol
 
-  /** Side-channel for local function defs emitted by closure generation.
-    * Accumulated during expression generation, flushed by the enclosing statement.
-    */
-  private val pendingLocalDefs = mutable.ListBuffer.empty[PyStmt]
+  /** Side-channel for statements produced during expression generation
+    * (Block-in-expression-position). Drained by `flattenToStmts` at the
+    * enclosing statement. */
+  private val pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
 
-  // ─── Entry point ───────────────────────────────────────────────────
+  // --- Entry point ---------------------------------------------------
 
   def run(): Unit =
     genCompilationUnit(genCtx.compilationUnit)
     linkAndWrite()
 
-  // ─── Compilation unit traversal ────────────────────────────────────
+  // --- Compilation unit traversal ------------------------------------
 
   private def genCompilationUnit(cunit: CompilationUnit): Unit =
     def collectTypeDefs(tree: Tree): List[TypeDef] = tree match
       case EmptyTree            => Nil
       case PackageDef(_, stats) => stats.flatMap(collectTypeDefs)
       case cd: TypeDef          => cd :: Nil
-      case _: ValDef            => Nil // module instances
+      case _: ValDef            => Nil
       case _                    => Nil
 
     val allTypeDefs = collectTypeDefs(cunit.tpdTree)
@@ -87,162 +89,130 @@ private class PyCodeGen()(using genCtx: Context):
       val sym = td.symbol
       if !sym.isPrimitiveValueClass && sym != defn.ArrayClass then
         currentClassSym = sym
-        encoding.resetLocalNames()
-        val module0 =
-          if sym.is(Trait) then genInterface(td)
-          else if isStaticModule(sym) then genModuleClass(td)
-          else genScalaClass(td)
-        // Add if __name__ == "__main__" entry point for main classes
-        val mainStmts =
-          if genCtx.platform.hasMainMethod(sym) then
-            val className = encoding.encodeSimpleClassName(sym)
-            List(PyStmt.If(
-              cond = PyExpr.Compare(
-                PyExpr.Name(PyName("__name__")),
-                List(PyCmpOp.Eq),
-                List(PyExpr.StringLit("__main__"))),
-              body = List(PyStmt.ExprStmt(
-                PyExpr.Call(
-                  PyExpr.Attr(PyExpr.Name(className), PyName("main")),
-                  List(PyExpr.Name(PyName("sys.argv[1:]")))))),
-              elifs = Nil,
-              elseBody = None))
-          else Nil
+        val kind =
+          if sym.is(Trait) then PyClassKind.Interface
+          else if isStaticModule(sym) then PyClassKind.ModuleClass
+          else PyClassKind.Class
+        val classDef = genClassDef(td, kind)
+        generatedClasses += classDef
+        if genCtx.platform.hasMainMethod(sym) then
+          mainEntry = Some((classDef.name, kind))
 
-        val module = module0.copy(initStmts = module0.initStmts ::: mainStmts)
-        generatedModules += module
+  // --- Class generation ----------------------------------------------
 
-  // ─── Class generation ──────────────────────────────────────────────
-
-  private def genScalaClass(td: TypeDef): PyModule =
+  private def genClassDef(td: TypeDef, kind: PyClassKind): PyClassDef =
     val sym = td.symbol.asClass
-    val className = encoding.encodeSimpleClassName(sym)
-    val qualName = encoding.encodeClassName(sym)
-
-    val bases = genBases(sym)
-    val (fields, methods) = genClassMembers(td)
-
+    val className = encoding.encodeClassName(sym)
+    val (superClass, interfaces) = genBases(sym)
+    val (fields, methodDefs) = genClassMembers(td)
     val initMethod = genInitMethod(sym, td, fields)
-    val allMembers: List[PyClassMember] =
-      initMethod.toList ::: methods
+    val allMethods = initMethod.toList ::: methodDefs
 
-    val classDef = PyClassDef(className, PyClassKind.Class, bases, allMembers, posOf(td))
-    val defs = List(PyTopLevelDef.TLClassDef(classDef))
-
-    PyModule(qualName, Nil, defs, Nil, posOf(td))
-
-  private def genModuleClass(td: TypeDef): PyModule =
-    val sym = td.symbol.asClass
-    val className = encoding.encodeSimpleClassName(sym)
-    val qualName = encoding.encodeClassName(sym)
-
-    val bases = genBases(sym)
-    val (fields, methods) = genClassMembers(td)
-
-    val initMethod = genInitMethod(sym, td, fields)
-    val allMembers: List[PyClassMember] =
-      initMethod.toList ::: methods
-
-    val classDef = PyClassDef(className, PyClassKind.ModuleClass, bases, allMembers, posOf(td))
-    val moduleName = PyName(PyEmitter.Prefix + "mod_" + className.value)
-    val defs = List(PyTopLevelDef.TLClassDef(classDef))
-    val initStmts = List(
-      PyStmt.Assign(PyExpr.Name(moduleName), PyExpr.New(PyExpr.Name(className), Nil))
+    PyClassDef(
+      name         = className,
+      originalName = encoding.originalNameOf(sym),
+      kind         = kind,
+      superClass   = superClass,
+      interfaces   = interfaces,
+      fields       = fields,
+      methods      = allMethods,
+      pos          = posOf(td)
     )
 
-    PyModule(qualName, Nil, defs, initStmts, posOf(td))
+  private def genBases(sym: ClassSymbol): (Option[PyClassName], List[PyClassName]) =
+    val superSym = sym.superClass
+    val superName =
+      if superSym != defn.ObjectClass && superSym != NoSymbol then
+        Some(encoding.encodeClassName(superSym))
+      else None
+    val interfaceNames = sym.directlyInheritedTraits.map(encoding.encodeClassName)
+    (superName, interfaceNames)
 
-  private def genInterface(td: TypeDef): PyModule =
-    val sym = td.symbol.asClass
-    val className = encoding.encodeSimpleClassName(sym)
-    val qualName = encoding.encodeClassName(sym)
+  // --- Class member collection ---------------------------------------
 
-    val bases = genBases(sym)
-
-    val methods = mutable.ListBuffer.empty[PyClassMember]
-    for tree <- collectMemberDefs(td) do
-      tree match
-        case dd: DefDef =>
-          genMethod(dd).foreach(m => methods += m)
-        case _ => ()
-
-    val members = if methods.isEmpty then List(PyClassMember.Pass) else methods.toList
-    val classDef = PyClassDef(className, PyClassKind.Trait, bases, members, posOf(td))
-    val defs = List(PyTopLevelDef.TLClassDef(classDef))
-
-    PyModule(qualName, Nil, defs, Nil, posOf(td))
-
-  // ─── Class member collection ───────────────────────────────────────
-
-  private def genBases(sym: ClassSymbol): List[PyExpr] =
-    val superClass = sym.superClass
-    val superExpr =
-      if superClass != defn.ObjectClass && superClass != NoSymbol then
-        List(PyExpr.Name(encoding.encodeSimpleClassName(superClass)))
-      else Nil
-    val interfaceExprs = sym.directlyInheritedTraits.map { intf =>
-      PyExpr.Name(encoding.encodeSimpleClassName(intf))
-    }
-    superExpr ::: interfaceExprs
-
-  private def genClassMembers(td: TypeDef): (List[(PyName, Option[PyExpr])], List[PyClassMember]) =
-    val fields = mutable.ListBuffer.empty[(PyName, Option[PyExpr])]
-    val methods = mutable.ListBuffer.empty[PyClassMember]
+  private def genClassMembers(td: TypeDef): (List[PyFieldDef], List[PyMethodDef]) =
+    val fields = mutable.ListBuffer.empty[PyFieldDef]
+    val methods = mutable.ListBuffer.empty[PyMethodDef]
 
     for tree <- collectMemberDefs(td) do
       tree match
         case vd: ValDef =>
           val sym = vd.symbol
           if !sym.is(Module) then
-            val name = encoding.encodeFieldName(sym)
-            val init = if vd.rhs.isEmpty then None else Some(genExpr(vd.rhs))
-            fields += ((name, init))
+            fields += PyFieldDef(
+              flags        = PyMemberFlags.empty.withMutable(sym.is(Mutable)),
+              name         = encoding.encodeFieldName(sym),
+              originalName = encoding.originalNameOf(sym),
+              ftpe         = encoding.encodeType(sym.info),
+              pos          = posOf(vd)
+            )
 
         case dd: DefDef =>
           if !dd.symbol.isClassConstructor then
-            genMethod(dd).foreach(m => methods += m)
+            genMethod(dd).foreach(methods += _)
+
         case _ => ()
 
     (fields.toList, methods.toList)
 
-  private def genInitMethod(sym: ClassSymbol, td: TypeDef, fields: List[(PyName, Option[PyExpr])]): Option[PyClassMember] =
-    // Find constructor DefDef
+  // --- __init__ synthesis --------------------------------------------
+
+  private def genInitMethod(
+      sym: ClassSymbol, td: TypeDef, fields: List[PyFieldDef]
+  ): Option[PyMethodDef] =
     val ctorOpt = collectMemberDefs(td).collectFirst {
       case dd: DefDef if dd.symbol.isClassConstructor => dd
     }
 
-    ctorOpt match
-      case None => None
-      case Some(ctorDef) =>
-        val ctorSym = ctorDef.symbol
-        currentMethodSym = ctorSym
+    ctorOpt.map { ctorDef =>
+      val ctorSym = ctorDef.symbol
+      currentMethodSym = ctorSym
+      val ctorPos = posOf(ctorDef)
+      val classTpe = PyClassType(encoding.encodeClassName(sym))
 
-        val params = ctorDef.termParamss.flatten.map { p =>
-          PyParam(encoding.encodeLocalName(p.symbol), encoding.toPyType(p.symbol.info), None)
-        }
-        val selfParam = PyParam(PyName("self"), None, None)
+      val params = ctorDef.termParamss.flatten.map(genParamDef)
 
-        // Generate field initializations: self.field = param or default
-        val fieldInits: List[PyStmt] = fields.map { (name, defaultOpt) =>
-          val value = defaultOpt.getOrElse(PyExpr.NoneLit)
-          PyStmt.Assign(
-            PyExpr.Attr(PyExpr.Name(PyName("self")), name),
-            value
-          )
-        }
+      val fieldInits: List[PyTree] = fields.map { f =>
+        PyAssign(
+          PySelect(
+            PyThis()(classTpe, ctorPos),
+            f.name
+          )(f.ftpe, ctorPos),
+          defaultValueFor(f.ftpe, ctorPos)
+        )(ctorPos)
+      }
 
-        // Generate constructor body
-        val bodyStmts = if ctorDef.rhs.isEmpty then fieldInits
-          else fieldInits ::: flattenToStmts(genStat(ctorDef.rhs))
+      val bodyStmts =
+        if ctorDef.rhs.isEmpty then fieldInits
+        else fieldInits ::: flattenToStmts(genStat(ctorDef.rhs))
 
-        val body = if bodyStmts.isEmpty then List(PyStmt.Pass) else bodyStmts
+      val body = stmtsToBody(bodyStmts, ctorPos)
 
-        val funcDef = PyFuncDef(PyName("__init__"), selfParam :: params, body, Some(PyTypeAnnot.Named("None")), posOf(ctorDef))
-        Some(PyClassMember.Method(funcDef, Nil))
+      PyMethodDef(
+        flags        = PyMemberFlags.empty.withNamespace(PyMemberNamespace.Constructor),
+        name         = encoding.encodeMethodName(ctorSym),
+        originalName = encoding.originalNameOf(ctorSym),
+        args         = params,
+        resultType   = PyVoidType,
+        body         = Some(body),
+        pos          = ctorPos
+      )
+    }
 
-  // ─── Method generation ─────────────────────────────────────────────
+  private def defaultValueFor(tpe: PyType, pos: PyPosition): PyTree = tpe match
+    case PyBooleanType => PyBooleanLit(false)(pos)
+    case PyByteType    => PyByteLit(0)(pos)
+    case PyShortType   => PyShortLit(0)(pos)
+    case PyCharType    => PyCharLit('\u0000')(pos)
+    case PyIntType     => PyIntLit(0)(pos)
+    case PyLongType    => PyLongLit(0L)(pos)
+    case PyFloatType   => PyFloatLit(0.0f)(pos)
+    case PyDoubleType  => PyDoubleLit(0.0)(pos)
+    case _             => PyNullLit()(pos)
 
-  private def genMethod(dd: DefDef): Option[PyClassMember] =
+  // --- Method generation ---------------------------------------------
+
+  private def genMethod(dd: DefDef): Option[PyMethodDef] =
     val sym = dd.symbol
 
     // Skip primitives and bridges
@@ -250,524 +220,669 @@ private class PyCodeGen()(using genCtx: Context):
     if sym.is(Bridge) then return None
 
     currentMethodSym = sym
-    encoding.resetLocalNames()
+    val pos = posOf(dd)
 
-    val methodName = encoding.encodeMethodName(sym)
-    val isStatic = sym.is(JavaStatic) || (sym.owner.is(ModuleClass) && !sym.isClassConstructor)
+    val params = dd.termParamss.flatten.map(genParamDef)
+    val resultType = encoding.encodeType(sym.info.finalResultType)
 
-    val params = dd.termParamss.flatten.map { p =>
-      PyParam(encoding.encodeLocalName(p.symbol), encoding.toPyType(p.symbol.info), None)
-    }
+    val isStatic =
+      sym.is(JavaStatic) || (sym.owner.is(ModuleClass) && !sym.isClassConstructor)
+    val namespace = (isStatic, sym.is(Private)) match
+      case (true,  true)  => PyMemberNamespace.PrivateStatic
+      case (true,  false) => PyMemberNamespace.PublicStatic
+      case (false, true)  => PyMemberNamespace.Private
+      case (false, false) => PyMemberNamespace.Public
 
-    val allParams =
-      if isStatic then params
-      else PyParam(PyName("self"), None, None) :: params
+    val body: Option[PyTree] =
+      if sym.is(Deferred) then None
+      else if dd.rhs.isEmpty then Some(PySkip()(pos))
+      else Some(stmtsToBody(flattenToStmts(genStat(dd.rhs)), pos))
 
-    val decorators =
-      if isStatic then List(PyDecorator.StaticMethod)
-      else Nil
+    Some(PyMethodDef(
+      flags        = PyMemberFlags.empty.withNamespace(namespace),
+      name         = encoding.encodeMethodName(sym),
+      originalName = encoding.originalNameOf(sym),
+      args         = params,
+      resultType   = resultType,
+      body         = body,
+      pos          = pos
+    ))
 
-    val returnType = encoding.toPyType(sym.info.finalResultType)
+  private def genParamDef(p: ValDef): PyParamDef =
+    val sym = p.symbol
+    PyParamDef(
+      name         = encoding.encodeLocalName(sym),
+      originalName = encoding.originalNameOf(sym),
+      ptpe         = encoding.encodeType(sym.info),
+      mutable      = sym.is(Mutable),
+      pos          = posOf(p)
+    )
 
-    val isUnitReturn = sym.info.finalResultType.isRef(defn.UnitClass)
-                    || sym.info.finalResultType.isRef(defn.NothingClass)
+  private def stmtsToBody(stmts: List[PyTree], pos: PyPosition): PyTree =
+    stmts match
+      case Nil       => PySkip()(pos)
+      case hd :: Nil => hd
+      case _         => PyBlock(stmts.init, stmts.last)(pos)
 
-    val bodyStmts0 =
-      if sym.is(Deferred) then
-        List(PyStmt.Raise(Some(PyExpr.Call(PyExpr.Name(PyName("NotImplementedError")), Nil))))
-      else if dd.rhs.isEmpty then
-        List(PyStmt.Pass)
-      else
-        flattenToStmts(genStat(dd.rhs))
+  // --- Statement generation ------------------------------------------
 
-    val bodyStmts =
-      if isUnitReturn || sym.isClassConstructor then bodyStmts0
-      else wrapLastReturn(bodyStmts0)
-
-    val body = if bodyStmts.isEmpty then List(PyStmt.Pass) else bodyStmts
-
-    val funcDef = PyFuncDef(methodName, allParams, body, returnType, posOf(dd))
-    Some(PyClassMember.Method(funcDef, decorators))
-
-  // ─── Statement generation ──────────────────────────────────────────
-
-  private def genStat(tree: Tree): PyStmt =
+  private def genStat(tree: Tree): PyTree =
+    val pos = posOf(tree)
     tree match
-      case vd @ ValDef(name, _, _) =>
+      case vd: ValDef =>
         val sym = vd.symbol
-        val rhs = if vd.rhs.isEmpty then PyExpr.NoneLit else genExpr(vd.rhs)
-        PyStmt.VarDef(encoding.encodeLocalName(sym), encoding.toPyType(sym.info), sym.is(Mutable), rhs)
+        val rhs = if vd.rhs.isEmpty then PyNullLit()(pos) else genExpr(vd.rhs)
+        PyVarDef(
+          name         = encoding.encodeLocalName(sym),
+          originalName = encoding.originalNameOf(sym),
+          vtpe         = encoding.encodeType(sym.info),
+          mutable      = sym.is(Mutable),
+          rhs          = rhs
+        )(pos)
 
       case If(cond, thenp, elsep) =>
-        val thenStmts = flattenToStmts(genStat(thenp))
-        val elseStmts = if elsep.isEmpty then None
-          else
-            val es = flattenToStmts(genStat(elsep))
-            if es.isEmpty || es == List(PyStmt.ExprStmt(PyExpr.NoneLit)) then None
-            else Some(es)
-        PyStmt.If(genExpr(cond), nonEmpty(thenStmts), Nil, elseStmts)
+        PyIf(genExpr(cond), genStat(thenp), genStat(elsep))(PyVoidType, pos)
 
       case Labeled(bind, expr) =>
-        PyStmt.Labeled(encoding.encodeLabelName(bind.symbol), flattenToStmts(genStat(expr)))
+        PyLabeled(
+          encoding.encodeLabelName(bind.symbol),
+          genStat(expr)
+        )(PyVoidType, pos)
 
       case Return(expr, from) =>
         val fromSym = from.symbol
+        val value =
+          if expr == EmptyTree || expr.tpe.isRef(defn.UnitClass) then PyUnitLit()(pos)
+          else genExpr(expr)
         if fromSym.is(Label) then
-          PyStmt.LabelReturn(encoding.encodeLabelName(fromSym), genExpr(expr))
+          PyLabelReturn(encoding.encodeLabelName(fromSym), value)(pos)
         else
-          val value = if expr.tpe.isRef(defn.UnitClass) then None else Some(genExpr(expr))
-          PyStmt.Return(value)
+          PyReturn(value)(pos)
 
       case WhileDo(cond, body) =>
-        val genCond = if cond == EmptyTree then PyExpr.BoolLit(true) else genExpr(cond)
-        PyStmt.While(genCond, nonEmpty(flattenToStmts(genStat(body))))
+        val genCond = if cond == EmptyTree then PyBooleanLit(true)(pos) else genExpr(cond)
+        PyWhile(genCond, genStat(body))(pos)
 
       case t: Try =>
         genTry(t)
 
       case Assign(lhs, rhs) =>
-        PyStmt.Assign(genExpr(lhs), genExpr(rhs))
+        PyAssign(genAssignableLhs(lhs), genExpr(rhs))(pos)
 
       case Block(stats, expr) =>
-        val stmts = stats.map(genStat) :+ genStat(expr)
-        PyStmt.Block(stmts)
+        val statTrees = stats.map(genStat)
+        val exprTree  = genStat(expr)
+        PyBlock(statTrees, exprTree)(pos)
 
       case app: Apply =>
-        genApply(app) match
-          case Left(stmt) => stmt
-          case Right(expr) => PyStmt.ExprStmt(expr)
-
-      case app: TypeApply =>
-        PyStmt.ExprStmt(genTypeApply(app))
-
-      case EmptyTree =>
-        PyStmt.Pass
-
-      case _ =>
-        // Fall back: try to generate as expression
-        PyStmt.ExprStmt(genExpr(tree))
-
-  // ─── Expression generation ─────────────────────────────────────────
-
-  private def genExpr(tree: Tree): PyExpr =
-    tree match
-      case Literal(value) =>
-        genLiteral(value)
-
-      case If(cond, thenp, elsep) =>
-        PyExpr.IfExpr(genExpr(cond), genExpr(thenp), genExpr(elsep))
-
-      case tree: This =>
-        if tree.symbol.is(ModuleClass) && tree.symbol != currentClassSym then
-          loadModule(encoding.encodeClassName(tree.symbol))
-        else
-          PyExpr.This
-
-      case Select(qualifier, _) =>
-        val sym = tree.symbol
-        if sym.is(Module) then
-          loadModule(encoding.encodeClassName(sym.moduleClass))
-        else
-          PyExpr.Attr(genExpr(qualifier), encoding.encodeFieldName(sym))
-
-      case tree: Ident =>
-        val sym = tree.symbol
-        if sym.is(Module) then
-          loadModule(encoding.encodeClassName(sym.moduleClass))
-        else
-          PyExpr.Name(encoding.encodeLocalName(sym))
-
-      case Block(stats, expr) =>
-        // In expression position, blocks are tricky.
-        // Emit stats as pending side effects, return final expression.
-        for s <- stats do
-          pendingLocalDefs += genStat(s)
-        genExpr(expr)
-
-      case Typed(expr, _) =>
-        expr match
-          case _: Super => PyExpr.This
-          case _        => genExpr(expr)
-
-      case app: Apply =>
-        genApply(app) match
-          case Left(stmt) =>
-            // Statement in expression position — shouldn't happen often
-            pendingLocalDefs += stmt
-            PyExpr.NoneLit
-          case Right(expr) => expr
+        genApply(app)
 
       case app: TypeApply =>
         genTypeApply(app)
 
-      case tree @ Closure(env, meth, tpt) =>
+      case EmptyTree =>
+        PySkip()(pos)
+
+      case _ =>
+        // Fall through: treat as expression. The emitter emits any non-void
+        // expression as a statement by printing its text on a line.
+        genExpr(tree)
+
+  /** Build a `PyAssignable` LHS for an assignment. Scala's typer
+   *  guarantees `Assign.lhs` is a valid LHS tree, so the matched cases
+   *  cover everything. */
+  private def genAssignableLhs(tree: Tree): PyAssignable =
+    val pos = posOf(tree)
+    tree match
+      case id: Ident =>
+        PyVarRef(encoding.encodeLocalName(id.symbol))(encoding.encodeType(tree.tpe), pos)
+      case sel @ Select(qual, _) =>
+        PySelect(
+          genExpr(qual),
+          encoding.encodeFieldName(sel.symbol)
+        )(encoding.encodeType(tree.tpe), pos)
+      case _ =>
+        report.error(s"Unsupported assignment LHS: ${tree.show}", tree.sourcePos)
+        PyVarRef(PyLocalName("_scpy_error"))(PyAnyType, pos)
+
+  // --- Expression generation -----------------------------------------
+
+  private def genExpr(tree: Tree): PyTree =
+    val pos = posOf(tree)
+    tree match
+      case Literal(value) =>
+        genLiteral(value, pos)
+
+      case If(cond, thenp, elsep) =>
+        PyIf(genExpr(cond), genExpr(thenp), genExpr(elsep))(encoding.encodeType(tree.tpe), pos)
+
+      case t: This =>
+        if t.symbol.is(ModuleClass) && t.symbol != currentClassSym then
+          PyLoadModule(encoding.encodeClassName(t.symbol))(pos)
+        else
+          PyThis()(encoding.encodeType(tree.tpe), pos)
+
+      case Select(qualifier, _) =>
+        val sym = tree.symbol
+        if sym.is(Module) then
+          PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
+        else
+          PySelect(
+            genExpr(qualifier),
+            encoding.encodeFieldName(sym)
+          )(encoding.encodeType(tree.tpe), pos)
+
+      case id: Ident =>
+        val sym = id.symbol
+        if sym.is(Module) then
+          PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
+        else
+          PyVarRef(encoding.encodeLocalName(sym))(encoding.encodeType(tree.tpe), pos)
+
+      case Block(stats, expr) =>
+        // Side effects become pending local defs; return the final expr.
+        for s <- stats do pendingLocalDefs += genStat(s)
+        genExpr(expr)
+
+      case Typed(sup: Super, _) =>
+        PyThis()(encoding.encodeType(tree.tpe), pos)
+      case Typed(inner, _) =>
+        genExpr(inner)
+
+      case app: Apply =>
+        genApply(app)
+
+      case app: TypeApply =>
+        genTypeApply(app)
+
+      case tree: Closure =>
         genClosure(tree)
 
       case Match(selector, cases) =>
-        genMatchExpr(selector, cases)
+        genMatchExpr(selector, cases, pos, encoding.encodeType(tree.tpe))
 
       case EmptyTree =>
-        PyExpr.NoneLit
+        PyUnitLit()(pos)
 
       case _ =>
-        // Fallback for unhandled trees
-        PyExpr.NoneLit
+        // Unhandled - silent fallback matching legacy behavior.
+        PyUnitLit()(pos)
 
-  // ─── Literal generation ────────────────────────────────────────────
+  // --- Literal generation --------------------------------------------
 
-  private def genLiteral(value: Constant): PyExpr =
+  private def genLiteral(value: Constant, pos: PyPosition): PyTree =
     value.tag match
-      case UnitTag    => PyExpr.NoneLit
-      case BooleanTag => PyExpr.BoolLit(value.booleanValue)
-      case ByteTag    => PyExpr.IntLit(value.byteValue.toLong)
-      case ShortTag   => PyExpr.IntLit(value.shortValue.toLong)
-      case CharTag    => PyExpr.IntLit(value.charValue.toLong)
-      case IntTag     => PyExpr.IntLit(value.intValue.toLong)
-      case LongTag    => PyExpr.IntLit(value.longValue)
-      case FloatTag   => PyExpr.FloatLit(value.floatValue.toDouble)
-      case DoubleTag  => PyExpr.FloatLit(value.doubleValue)
-      case StringTag  => PyExpr.StringLit(value.stringValue)
-      case NullTag    => PyExpr.NoneLit
-      case ClazzTag   => PyExpr.Name(PyName(encoding.encodeClassName(value.typeValue.typeSymbol).toString))
-      case _          => PyExpr.NoneLit
+      case UnitTag    => PyUnitLit()(pos)
+      case BooleanTag => PyBooleanLit(value.booleanValue)(pos)
+      case ByteTag    => PyByteLit(value.byteValue)(pos)
+      case ShortTag   => PyShortLit(value.shortValue)(pos)
+      case CharTag    => PyCharLit(value.charValue)(pos)
+      case IntTag     => PyIntLit(value.intValue)(pos)
+      case LongTag    => PyLongLit(value.longValue)(pos)
+      case FloatTag   => PyFloatLit(value.floatValue)(pos)
+      case DoubleTag  => PyDoubleLit(value.doubleValue)(pos)
+      case StringTag  => PyStringLit(value.stringValue)(pos)
+      case NullTag    => PyNullLit()(pos)
+      case ClazzTag   => PyClassOf(encoding.encodeTypeRef(value.typeValue))(pos)
+      case _          => PyUnitLit()(pos)
 
-  // ─── Apply dispatch ────────────────────────────────────────────────
+  // --- Apply dispatch ------------------------------------------------
 
-  private def genApply(app: Apply): Either[PyStmt, PyExpr] =
+  private def genApply(app: Apply): PyTree =
     val sym = app.fun.symbol
-    val args = app.args
+    val pos = posOf(app)
 
     app.fun match
       // super.method(args)
-      case Select(sup @ Super(_, _), _) =>
-        Right(genSuperCall(app))
+      case Select(_: Super, _) =>
+        genSuperCall(app, pos)
 
       // new ClassName(args)
       case Select(New(tpt), nme.CONSTRUCTOR) =>
-        Right(genApplyNew(app))
+        genApplyNew(app, pos)
 
       case _ =>
         if primitives.isPrimitive(app) then
-          Right(genPrimitiveOp(app))
-        else if Erasure.Boxing.isBox(sym) then
-          Right(genExpr(args.head))
-        else if Erasure.Boxing.isUnbox(sym) then
-          Right(genExpr(args.head))
+          genPrimitiveOp(app, pos)
+        else if Erasure.Boxing.isBox(sym) || Erasure.Boxing.isUnbox(sym) then
+          genExpr(app.args.head)
         else
-          Right(genNormalApply(app))
+          genNormalApply(app, pos)
 
-  private def genSuperCall(app: Apply): PyExpr =
+  private def genSuperCall(app: Apply, pos: PyPosition): PyTree =
+    val sym = app.fun.symbol
+    val args = app.args.map(genExpr)
+    val ownerName = encoding.encodeClassName(sym.owner)
+    val methodName = encoding.encodeMethodName(sym)
+    val tpe = encoding.encodeType(sym.info.finalResultType)
+    val classTpe = PyClassType(encoding.encodeClassName(currentClassSym))
+    PyApplyStatically(
+      PyApplyFlags.empty,
+      PyThis()(classTpe, pos),
+      ownerName,
+      methodName,
+      args
+    )(tpe, pos)
+
+  private def genApplyNew(app: Apply, pos: PyPosition): PyTree =
+    val Apply(fun @ Select(New(tpt), _), args) = app: @unchecked
+    val classSym = tpt.tpe.typeSymbol
+    val className = encoding.encodeClassName(classSym)
+    val ctorName = encoding.encodeMethodName(fun.symbol)
+    PyNew(className, ctorName, args.map(genExpr))(pos)
+
+  private def genNormalApply(app: Apply, pos: PyPosition): PyTree =
     val sym = app.fun.symbol
     val args = app.args.map(genExpr)
     val methodName = encoding.encodeMethodName(sym)
-    PyExpr.Call(
-      PyExpr.Attr(PyExpr.SuperRef(PyExpr.This, None), methodName),
-      args
-    )
-
-  private def genApplyNew(app: Apply): PyExpr =
-    val Apply(Select(New(tpt), _), args) = app: @unchecked
-    val classSym = tpt.tpe.typeSymbol
-    val className = encoding.encodeSimpleClassName(classSym)
-    PyExpr.New(PyExpr.Name(className), args.map(genExpr))
-
-  private def genNormalApply(app: Apply): PyExpr =
-    val sym = app.fun.symbol
-    val args = app.args.map(genExpr)
+    val ownerName  = encoding.encodeClassName(sym.owner)
+    val resultTpe  = encoding.encodeType(sym.info.finalResultType)
+    val isStaticTarget =
+      sym.is(JavaStatic) || (sym.owner.is(ModuleClass) && !sym.isClassConstructor)
 
     app.fun match
+      case _ if isStaticTarget =>
+        PyApplyStatic(
+          PyApplyFlags.empty,
+          ownerName,
+          methodName,
+          args
+        )(resultTpe, pos)
+
       case Select(receiver, _) =>
-        val methodName = encoding.encodeMethodName(sym)
-        PyExpr.Call(PyExpr.Attr(genExpr(receiver), methodName), args)
+        PyApply(
+          PyApplyFlags.empty,
+          genExpr(receiver),
+          ownerName,
+          methodName,
+          args
+        )(resultTpe, pos)
 
       case Ident(_) =>
-        val methodName = encoding.encodeMethodName(sym)
-        // Static method call or local function call
         if sym.owner.is(ModuleClass) then
-          val module = loadModule(encoding.encodeClassName(sym.owner))
-          PyExpr.Call(PyExpr.Attr(module, methodName), args)
+          PyApplyStatic(
+            PyApplyFlags.empty,
+            ownerName,
+            methodName,
+            args
+          )(resultTpe, pos)
         else
-          PyExpr.Call(PyExpr.Name(methodName), args)
+          PyApplyExternal(
+            PyExternalName(methodName.encoded),
+            args
+          )(resultTpe, pos)
 
       case _ =>
-        PyExpr.Call(genExpr(app.fun), args)
+        PyApplyExternal(
+          PyExternalName(methodName.encoded),
+          args
+        )(resultTpe, pos)
 
-  // ─── TypeApply (isInstanceOf / asInstanceOf) ───────────────────────
+  // --- TypeApply (isInstanceOf / asInstanceOf) -----------------------
 
-  private def genTypeApply(app: TypeApply): PyExpr =
+  private def genTypeApply(app: TypeApply): PyTree =
     val TypeApply(fun, targs) = app
+    val pos = posOf(app)
     val sym = fun.symbol
 
     if sym == defn.Any_isInstanceOf then
       val receiver = qualifierOf(fun)
-      val targetTpe = targs.head.tpe
-      val targetName = encoding.encodeSimpleClassName(targetTpe.typeSymbol)
-      PyExpr.IsInstance(genExpr(receiver), PyExpr.Name(targetName))
+      PyIsInstanceOf(genExpr(receiver), encoding.encodeTypeRef(targs.head.tpe))(pos)
     else if sym == defn.Any_asInstanceOf then
       val receiver = qualifierOf(fun)
-      val targetTpe = targs.head.tpe
-      val targetName = encoding.encodeSimpleClassName(targetTpe.typeSymbol)
-      PyExpr.Cast(genExpr(receiver), PyExpr.Name(targetName))
+      PyAsInstanceOf(genExpr(receiver), encoding.encodeType(targs.head.tpe))(pos)
     else
-      // Other type applications (e.g., classOf) — just evaluate the expression
       genExpr(fun)
 
-  // ─── Primitive operations ──────────────────────────────────────────
+  // --- Primitive operations ------------------------------------------
 
-  private def genPrimitiveOp(app: Apply): PyExpr =
+  private def genPrimitiveOp(app: Apply, pos: PyPosition): PyTree =
     val Apply(fun, args) = app
     val receiver = qualifierOf(fun)
     val code = primitives.getPrimitive(app, receiver.tpe)
 
     if isArithmeticOp(code) || isLogicalOp(code) || isComparisonOp(code) then
-      genSimpleOp(app, receiver, args, code)
+      genSimpleOp(receiver, args, code, pos)
     else if code == CONCAT then
-      genStringConcat(receiver, args)
+      genStringConcat(receiver, args, pos)
     else if code == HASH then
-      PyExpr.Call(PyExpr.Name(PyName("hash")), List(genExpr(receiver)))
+      PyApplyExternal(PyExternalName("hash"), List(genExpr(receiver)))(PyIntType, pos)
     else if isArrayOp(code) then
-      genArrayOp(app, receiver, args, code)
+      genArrayOp(app, receiver, args, code, pos)
     else if code == SYNCHRONIZED then
-      // Python has no monitors; just evaluate the body
       genExpr(args.head)
     else if isCoercion(code) then
-      genCoercion(receiver, code)
+      genCoercion(receiver, code, pos)
     else
-      // Unknown primitive — fall back to method call
-      genNormalApply(app)
+      genNormalApply(app, pos)
 
-  private def genSimpleOp(app: Apply, receiver: Tree, args: List[Tree], code: Int): PyExpr =
-    import PyBinOp.*, PyUnaryOp.*, PyCmpOp.*, PyBoolOp.*
+  private def genSimpleOp(
+      receiver: Tree, args: List[Tree], code: Int, pos: PyPosition
+  ): PyTree =
+    import PyBinaryCode.*
+    import PyUnaryCode.*
 
     val receiverType = receiver.tpe
+    val lhs = genExpr(receiver)
 
     args match
       // Unary operations
       case Nil =>
         code match
-          case POS  => genExpr(receiver)
-          case NEG  => wrapNumeric(PyExpr.UnaryOp(Neg, genExpr(receiver)), receiverType)
-          case NOT  => wrapNumeric(PyExpr.UnaryOp(Invert, genExpr(receiver)), receiverType)
-          case ZNOT => PyExpr.UnaryOp(Not, genExpr(receiver))
-          case _    => genExpr(receiver) // shouldn't happen
+          case POS => lhs
+          case NEG =>
+            if encoding.isIntType(receiverType) then PyUnaryOp(IntNeg, lhs)(pos)
+            else if encoding.isLongType(receiverType) then PyUnaryOp(LongNeg, lhs)(pos)
+            else if encoding.isFloatType(receiverType) then PyUnaryOp(FloatNeg, lhs)(pos)
+            else PyUnaryOp(DoubleNeg, lhs)(pos)
+          case NOT =>
+            if encoding.isIntType(receiverType) then PyUnaryOp(IntNot, lhs)(pos)
+            else PyUnaryOp(LongNot, lhs)(pos)
+          case ZNOT => PyUnaryOp(BoolNot, lhs)(pos)
+          case _    => lhs
 
       // Binary operations
       case List(rhs) =>
-        val lhs = genExpr(receiver)
         val rhsExpr = genExpr(rhs)
-
-        code match
+        val op: PyBinaryCode = code match
           // Short-circuit booleans
-          case ZOR  => PyExpr.BoolOp(Or, List(lhs, rhsExpr))
-          case ZAND => PyExpr.BoolOp(And, List(lhs, rhsExpr))
-
+          case ZOR  => BoolOr
+          case ZAND => BoolAnd
           // Reference equality
-          case ID => PyExpr.Compare(lhs, List(Is), List(rhsExpr))
-          case NI => PyExpr.Compare(lhs, List(IsNot), List(rhsExpr))
-
-          // Universal equality
-          case EQ => PyExpr.Compare(lhs, List(Eq), List(rhsExpr))
-          case NE => PyExpr.Compare(lhs, List(NotEq), List(rhsExpr))
-
-          // Numeric comparisons
-          case LT => PyExpr.Compare(lhs, List(Lt), List(rhsExpr))
-          case LE => PyExpr.Compare(lhs, List(LtE), List(rhsExpr))
-          case GT => PyExpr.Compare(lhs, List(Gt), List(rhsExpr))
-          case GE => PyExpr.Compare(lhs, List(GtE), List(rhsExpr))
-
+          case ID => RefEq
+          case NI => RefNe
+          // Equality dispatched by type
+          case EQ =>
+            if encoding.isIntType(receiverType) then IntEq
+            else if encoding.isLongType(receiverType) then LongEq
+            else if encoding.isFloatType(receiverType) then FloatEq
+            else if encoding.isDoubleType(receiverType) then DoubleEq
+            else if encoding.isBooleanType(receiverType) then BoolEq
+            else if encoding.isStringType(receiverType) then StringEq
+            else RefEq
+          case NE =>
+            if encoding.isIntType(receiverType) then IntNe
+            else if encoding.isLongType(receiverType) then LongNe
+            else if encoding.isFloatType(receiverType) then FloatNe
+            else if encoding.isDoubleType(receiverType) then DoubleNe
+            else if encoding.isBooleanType(receiverType) then BoolNe
+            else RefNe
+          case LT =>
+            if encoding.isIntType(receiverType) then IntLt
+            else if encoding.isLongType(receiverType) then LongLt
+            else if encoding.isFloatType(receiverType) then FloatLt
+            else DoubleLt
+          case LE =>
+            if encoding.isIntType(receiverType) then IntLe
+            else if encoding.isLongType(receiverType) then LongLe
+            else if encoding.isFloatType(receiverType) then FloatLe
+            else DoubleLe
+          case GT =>
+            if encoding.isIntType(receiverType) then IntGt
+            else if encoding.isLongType(receiverType) then LongGt
+            else if encoding.isFloatType(receiverType) then FloatGt
+            else DoubleGt
+          case GE =>
+            if encoding.isIntType(receiverType) then IntGe
+            else if encoding.isLongType(receiverType) then LongGe
+            else if encoding.isFloatType(receiverType) then FloatGe
+            else DoubleGe
           // Arithmetic
-          case ADD => wrapNumeric(PyExpr.BinOp(Add, lhs, rhsExpr), receiverType)
-          case SUB => wrapNumeric(PyExpr.BinOp(Sub, lhs, rhsExpr), receiverType)
-          case MUL => wrapNumeric(PyExpr.BinOp(Mul, lhs, rhsExpr), receiverType)
+          case ADD =>
+            if encoding.isIntType(receiverType) then IntAdd
+            else if encoding.isLongType(receiverType) then LongAdd
+            else if encoding.isFloatType(receiverType) then FloatAdd
+            else DoubleAdd
+          case SUB =>
+            if encoding.isIntType(receiverType) then IntSub
+            else if encoding.isLongType(receiverType) then LongSub
+            else if encoding.isFloatType(receiverType) then FloatSub
+            else DoubleSub
+          case MUL =>
+            if encoding.isIntType(receiverType) then IntMul
+            else if encoding.isLongType(receiverType) then LongMul
+            else if encoding.isFloatType(receiverType) then FloatMul
+            else DoubleMul
           case DIV =>
-            if encoding.isIntType(receiverType) || encoding.isLongType(receiverType) then
-              wrapNumeric(PyExpr.BinOp(FloorDiv, lhs, rhsExpr), receiverType)
-            else
-              PyExpr.BinOp(Div, lhs, rhsExpr)
-          case MOD => wrapNumeric(PyExpr.BinOp(Mod, lhs, rhsExpr), receiverType)
-
+            if encoding.isIntType(receiverType) then IntDiv
+            else if encoding.isLongType(receiverType) then LongDiv
+            else if encoding.isFloatType(receiverType) then FloatDiv
+            else DoubleDiv
+          case MOD =>
+            if encoding.isIntType(receiverType) then IntMod
+            else if encoding.isLongType(receiverType) then LongMod
+            else if encoding.isFloatType(receiverType) then FloatMod
+            else DoubleMod
           // Bitwise
-          case OR  => wrapNumeric(PyExpr.BinOp(BitOr, lhs, rhsExpr), receiverType)
-          case XOR => wrapNumeric(PyExpr.BinOp(BitXor, lhs, rhsExpr), receiverType)
-          case AND => wrapNumeric(PyExpr.BinOp(BitAnd, lhs, rhsExpr), receiverType)
-
+          case OR  => if encoding.isIntType(receiverType) then IntOr  else LongOr
+          case AND => if encoding.isIntType(receiverType) then IntAnd else LongAnd
+          case XOR => if encoding.isIntType(receiverType) then IntXor else LongXor
           // Shifts
-          case LSL => wrapNumeric(PyExpr.BinOp(LShift, lhs, rhsExpr), receiverType)
-          case ASR => wrapNumeric(PyExpr.BinOp(RShift, lhs, rhsExpr), receiverType)
-          case LSR =>
-            // Unsigned right shift: mask to unsigned first
-            if encoding.isIntType(receiverType) then
-              PyExpr.IntWrap32(
-                PyExpr.BinOp(RShift,
-                  PyExpr.BinOp(BitAnd, lhs, PyExpr.IntLit(0xFFFFFFFFL)),
-                  rhsExpr))
-            else if encoding.isLongType(receiverType) then
-              PyExpr.IntWrap64(
-                PyExpr.BinOp(RShift,
-                  PyExpr.BinOp(BitAnd, lhs, PyExpr.IntLit(Long.MaxValue)),
-                  rhsExpr))
-            else
-              PyExpr.BinOp(RShift, lhs, rhsExpr)
+          case LSL => if encoding.isIntType(receiverType) then IntShl else LongShl
+          case ASR => if encoding.isIntType(receiverType) then IntShr else LongShr
+          case LSR => if encoding.isIntType(receiverType) then IntUShr else LongUShr
+          case _   => RefEq  // fallback - unreachable in practice
+        PyBinaryOp(op, lhs, rhsExpr)(pos)
 
-          case _ => PyExpr.NoneLit // shouldn't happen
+      case _ => PyUnitLit()(pos)
 
-      case _ => PyExpr.NoneLit // shouldn't happen
+  /** String concatenation. The receiver is always String (post-erasure);
+   *  wrap any non-String operand in `_scpy_to_str` so Python `+` succeeds. */
+  private def genStringConcat(receiver: Tree, args: List[Tree], pos: PyPosition): PyTree =
+    def asString(t: Tree): PyTree =
+      val e = genExpr(t)
+      if e.tpe == PyStringType then e
+      else PyApplyExternal(PyExternalName("_scpy_to_str"), List(e))(PyStringType, pos)
+    PyBinaryOp(PyBinaryCode.StringConcat, asString(receiver), asString(args.head))(pos)
 
-  /** Wrap arithmetic result in IntWrap32/64 or FloatWrap based on result type. */
-  private def wrapNumeric(expr: PyExpr, tp: Type): PyExpr =
-    if encoding.isIntType(tp) then PyExpr.IntWrap32(expr)
-    else if encoding.isLongType(tp) then PyExpr.IntWrap64(expr)
-    else if encoding.isFloatType(tp) then PyExpr.FloatWrap(expr)
-    else expr // Double or other: no wrapping
-
-  private def genStringConcat(receiver: Tree, args: List[Tree]): PyExpr =
-    val lhs = genExpr(receiver)
-    val rhs = genExpr(args.head)
-    PyExpr.StringConcat(List(lhs, rhs))
-
-  private def genArrayOp(app: Apply, receiver: Tree, args: List[Tree], code: Int): PyExpr =
+  private def genArrayOp(
+      app: Apply, receiver: Tree, args: List[Tree], code: Int, pos: PyPosition
+  ): PyTree =
     if isArrayLength(code) then
-      PyExpr.ArrayLength(genExpr(receiver))
+      PyUnaryOp(PyUnaryCode.ArrayLength, genExpr(receiver))(pos)
     else if isArrayGet(code) then
-      PyExpr.ArraySelect(genExpr(receiver), genExpr(args.head))
+      val elemTpe = encoding.encodeType(app.tpe)
+      PyArraySelect(genExpr(receiver), genExpr(args.head))(elemTpe, pos)
     else if isArraySet(code) then
-      pendingLocalDefs += PyStmt.Assign(
-        PyExpr.ArraySelect(genExpr(receiver), genExpr(args(0))),
+      PyAssign(
+        PyArraySelect(genExpr(receiver), genExpr(args(0)))(PyAnyType, pos),
         genExpr(args(1))
-      )
-      PyExpr.NoneLit
+      )(pos)
     else if isArrayNew(code) then
-      val init = code match
-        case NEW_ZARRAY => PyExpr.BoolLit(false)
-        case NEW_BARRAY | NEW_SARRAY | NEW_CARRAY | NEW_IARRAY | NEW_LARRAY => PyExpr.IntLit(0)
-        case NEW_FARRAY | NEW_DARRAY => PyExpr.FloatLit(0.0)
-        case _ => PyExpr.NoneLit
-      PyExpr.NewArray(genExpr(args.head), init)
+      val elemRef: PyTypeRef = code match
+        case NEW_ZARRAY => PyPrimRef.BooleanRef
+        case NEW_BARRAY => PyPrimRef.ByteRef
+        case NEW_SARRAY => PyPrimRef.ShortRef
+        case NEW_CARRAY => PyPrimRef.CharRef
+        case NEW_IARRAY => PyPrimRef.IntRef
+        case NEW_LARRAY => PyPrimRef.LongRef
+        case NEW_FARRAY => PyPrimRef.FloatRef
+        case NEW_DARRAY => PyPrimRef.DoubleRef
+        case _          => PyClassRef(PyClassName.ObjectClass)
+      PyNewArray(elemRef, genExpr(args.head))(pos)
     else
-      PyExpr.NoneLit
+      PyUnitLit()(pos)
 
-  private def genCoercion(receiver: Tree, code: Int): PyExpr =
+  private def genCoercion(receiver: Tree, code: Int, pos: PyPosition): PyTree =
+    import PyUnaryCode.*
     val src = genExpr(receiver)
     code match
       // Identity coercions
       case B2B | S2S | C2C | I2I | L2L | F2F | D2D => src
 
-      // To Int types (just truncate)
+      // Widening to Int - pass through (Python int is big)
       case B2I | S2I | C2I => src
-      case L2I => PyExpr.IntWrap32(src)
-      case F2I | D2I => PyExpr.IntWrap32(PyExpr.Call(PyExpr.Name(PyName("int")), List(src)))
+      case L2I => PyUnaryOp(LongToInt, src)(pos)
+      case F2I => PyUnaryOp(FloatToInt, src)(pos)
+      case D2I => PyUnaryOp(DoubleToInt, src)(pos)
 
-      // To Long
-      case B2L | S2L | C2L | I2L => src
-      case F2L | D2L => PyExpr.IntWrap64(PyExpr.Call(PyExpr.Name(PyName("int")), List(src)))
+      // Widening to Long
+      case B2L | S2L | C2L | I2L => PyUnaryOp(IntToLong, src)(pos)
+      case F2L => PyUnaryOp(FloatToLong, src)(pos)
+      case D2L => PyUnaryOp(DoubleToLong, src)(pos)
 
-      // To Float
-      case B2F | S2F | C2F | I2F | L2F =>
-        PyExpr.FloatWrap(PyExpr.Call(PyExpr.Name(PyName("float")), List(src)))
-      case D2F => PyExpr.FloatWrap(src)
+      // Widening to Float
+      case B2F | S2F | C2F | I2F => PyUnaryOp(IntToFloat, src)(pos)
+      case L2F => PyUnaryOp(LongToFloat, src)(pos)
+      case D2F => PyUnaryOp(DoubleToFloat, src)(pos)
 
-      // To Double
-      case B2D | S2D | C2D | I2D | L2D | F2D =>
-        PyExpr.Call(PyExpr.Name(PyName("float")), List(src))
+      // Widening to Double
+      case B2D | S2D | C2D | I2D => PyUnaryOp(IntToDouble, src)(pos)
+      case L2D => PyUnaryOp(LongToDouble, src)(pos)
+      case F2D => PyUnaryOp(FloatToDouble, src)(pos)
 
-      // To Byte/Short/Char (narrowing)
-      case I2B | L2B | F2B | D2B | S2B | C2B =>
-        PyExpr.IntWrap32(PyExpr.BinOp(PyBinOp.BitAnd, src, PyExpr.IntLit(0xFF)))
-      case I2S | L2S | F2S | D2S | B2S | C2S =>
-        PyExpr.IntWrap32(PyExpr.BinOp(PyBinOp.BitAnd, src, PyExpr.IntLit(0xFFFF)))
-      case I2C | L2C | F2C | D2C | B2C | S2C =>
-        PyExpr.BinOp(PyBinOp.BitAnd, src, PyExpr.IntLit(0xFFFF))
+      // Narrowing to Byte / Short / Char
+      case I2B | L2B | F2B | D2B | S2B | C2B => PyUnaryOp(IntToByte, src)(pos)
+      case I2S | L2S | F2S | D2S | B2S | C2S => PyUnaryOp(IntToShort, src)(pos)
+      case I2C | L2C | F2C | D2C | B2C | S2C => PyUnaryOp(IntToChar, src)(pos)
 
       case _ => src
 
-  // ─── Exception handling ────────────────────────────────────────────
+  // --- Exception handling --------------------------------------------
 
-  private def genTry(tree: Try): PyStmt =
+  private def genTry(tree: Try): PyTree =
     val Try(block, catches, finalizer) = tree
+    val pos = posOf(tree)
+    val bodyTree = genStat(block)
 
-    val bodyStmts = nonEmpty(flattenToStmts(genStat(block)))
+    val tryCatch: PyTree =
+      if catches.isEmpty then bodyTree
+      else
+        val exVar = PyLocalName("_scpy_ex")
+        val exVarRef = PyVarRef(exVar)(PyAnyType, pos)
 
-    val handlers = catches.map { caseDef =>
-      val CaseDef(pat, _, body) = caseDef
-
-      val (exnType, boundName) = pat match
-        case Typed(Ident(nme.WILDCARD), tpt) =>
-          (Some(PyExpr.Name(encoding.encodeSimpleClassName(tpt.tpe.typeSymbol))), None)
-        case Ident(nme.WILDCARD) =>
-          (Some(PyExpr.Name(PyName("Exception"))), None)
-        case Bind(name, Typed(_, tpt)) =>
-          (Some(PyExpr.Name(encoding.encodeSimpleClassName(tpt.tpe.typeSymbol))),
-           Some(encoding.encodeLocalName(pat.symbol)))
-        case Bind(name, _) =>
-          (Some(PyExpr.Name(PyName("Exception"))),
-           Some(encoding.encodeLocalName(pat.symbol)))
-        case _ =>
-          (None, None)
-
-      PyExceptHandler(exnType, boundName, nonEmpty(flattenToStmts(genStat(body))), posOf(caseDef))
-    }
-
-    val fin = if finalizer.isEmpty then None
-      else Some(nonEmpty(flattenToStmts(genStat(finalizer))))
-
-    PyStmt.Try(bodyStmts, handlers, None, fin)
-
-  // ─── Match generation ──────────────────────────────────────────────
-
-  private def genMatchExpr(selector: Tree, cases: List[CaseDef]): PyExpr =
-    cases match
-      case Nil => PyExpr.NoneLit
-      case List(CaseDef(_, _, body)) => genExpr(body)
-      case _ =>
-        cases.foldRight(PyExpr.NoneLit: PyExpr) { (caseDef, elsePart) =>
-          val CaseDef(pat, guard, body) = caseDef
-          pat match
-            case Literal(c) =>
-              val test = PyExpr.Compare(
-                genExpr(selector),
-                List(PyCmpOp.Eq),
-                List(genLiteral(c))
-              )
-              PyExpr.IfExpr(test, genExpr(body), elsePart)
+        val handler = catches.foldRight[PyTree](
+          PyUnaryOp(PyUnaryCode.Throw, exVarRef)(pos)  // default: rethrow
+        ) { (caseDef, elsePart) =>
+          val CaseDef(pat, _, body) = caseDef  // guards dropped
+          val (exnTypeRef, bindOpt): (Option[PyTypeRef], Option[Symbol]) = pat match
+            case Typed(Ident(nme.WILDCARD), tpt) =>
+              (Some(encoding.encodeTypeRef(tpt.tpe)), None)
+            case Ident(nme.WILDCARD) =>
+              (None, None)
+            case Bind(_, Typed(_, tpt)) =>
+              (Some(encoding.encodeTypeRef(tpt.tpe)), Some(pat.symbol))
+            case Bind(_, _) =>
+              (None, Some(pat.symbol))
             case _ =>
-              genExpr(body)
+              (None, None)
+
+          val handlerBody: PyTree = bindOpt match
+            case Some(bindSym) =>
+              val bindDef = PyVarDef(
+                encoding.encodeLocalName(bindSym),
+                encoding.originalNameOf(bindSym),
+                PyAnyType, false, exVarRef
+              )(pos)
+              PyBlock(List(bindDef), genStat(body))(pos)
+            case None =>
+              genStat(body)
+
+          exnTypeRef match
+            case Some(ref) =>
+              PyIf(
+                PyIsInstanceOf(exVarRef, ref)(pos),
+                handlerBody,
+                elsePart
+              )(PyVoidType, pos)
+            case None =>
+              handlerBody  // catch-all
         }
 
-  // ─── Closure generation ────────────────────────────────────────────
+        PyTryCatch(
+          bodyTree, exVar, PyOriginalName.NoOriginalName, handler
+        )(PyVoidType, pos)
 
-  private def genClosure(tree: Closure): PyExpr =
-    val Closure(env, meth, tpt) = tree
-    val targetSym = meth.symbol
+    if finalizer.isEmpty then tryCatch
+    else PyTryFinally(tryCatch, genStat(finalizer))(pos)
 
-    if env.isEmpty then
-      PyExpr.Attr(PyExpr.This, encoding.encodeMethodName(targetSym))
-    else
-      val methodRef = PyExpr.Attr(PyExpr.This, encoding.encodeMethodName(targetSym))
-      methodRef // simplified — captures are already lifted
+  // --- Match generation ----------------------------------------------
 
-  // ─── File output ───────────────────────────────────────────────────
+  private def genMatchExpr(
+      selector: Tree, cases: List[CaseDef], pos: PyPosition, resultTpe: PyType
+  ): PyTree =
+    val sel = genExpr(selector)
+    val litCases = mutable.ListBuffer.empty[(List[PyMatchableLiteral], PyTree)]
+    var defaultTree: PyTree = PyUnitLit()(pos)
+    var defaultSet = false
 
-  /** Link all generated modules into a single bundled .py file. */
+    for caseDef <- cases do
+      caseDef match
+        case CaseDef(Literal(c), _, body) =>
+          val lit = genLiteral(c, pos) match
+            case ml: PyMatchableLiteral => ml
+            case _ => PyNullLit()(pos): PyMatchableLiteral
+          litCases += ((List(lit), genExpr(body)))
+        case CaseDef(_, _, body) =>
+          if !defaultSet then
+            defaultTree = genExpr(body)
+            defaultSet = true
+
+    PyMatch(sel, litCases.toList, defaultTree)(resultTpe, pos)
+
+  // --- Closure generation --------------------------------------------
+
+  /** Emit a Scala closure. Known limitation: captures are silently
+   *  dropped (same broken behavior as the legacy backend). We emit a
+   *  `self.<method>` Python bound-method reference which at least
+   *  syntactically typechecks. */
+  private def genClosure(tree: Closure): PyTree =
+    val pos = posOf(tree)
+    val targetSym = tree.meth.symbol
+    val methodName = encoding.encodeMethodName(targetSym)
+    val owner = encoding.encodeClassName(currentClassSym)
+    PySelect(
+      PyThis()(PyClassType(owner), pos),
+      PyFieldName(owner, PySimpleFieldName(methodName.encoded))
+    )(PyAnyType, pos)
+
+  // --- File output ---------------------------------------------------
+
   private def linkAndWrite(): Unit =
+    val linkedBundle =
+      try
+        PyLinker.link(List(PyLinker.Input(generatedClasses.toList, mainEntry)))
+      catch
+        case err: PyLinkingException =>
+          reportLinkerErrors(err.errors)
+          return
+
     val outputDirectory = genCtx.settings.outputDir.value
-    // Use the source file name (without extension) as output name
     val sourceName = genCtx.compilationUnit.source.file.name.stripSuffix(".scala")
     val outfile = outputDirectory.fileNamed(sourceName + ".py")
     val output = outfile.bufferedOutput
     try
       val writer = new java.io.PrintWriter(output)
       try
-        PyLinker.link(generatedModules.toList, ScalaPyRuntime.content, writer)
+        PyIREmitter.emit(linkedBundle.classes, linkedBundle.mainEntry, writer)
         writer.flush()
       finally writer.close()
     finally output.close()
 
-  // ─── Helpers ───────────────────────────────────────────────────────
+  private def reportLinkerErrors(errors: List[PyLinkingError]): Unit =
+    errors.foreach { err =>
+      report.error(err.message, sourcePosOf(err.pos))
+    }
 
-  private def posOf(tree: Tree): PyPos =
+  private def sourcePosOf(pos: PyPosition): SourcePosition =
+    if pos.isEmpty then NoSourcePosition
+    else
+      val source = genCtx.compilationUnit.source
+      if source.path != pos.source then NoSourcePosition
+      else
+        source.lineToOffsetOpt(pos.line) match
+          case Some(lineOffset) =>
+            val offset = (lineOffset + pos.column).max(0).min(source.length)
+            source.atSpan(Span(offset))
+          case None =>
+            NoSourcePosition
+
+  // --- Helpers -------------------------------------------------------
+
+  private def posOf(tree: Tree): PyPosition =
     val pos = tree.sourcePos
-    if pos.exists then PyPos(pos.source.path, pos.line, pos.column)
-    else PyPos.No
+    if pos.exists then PyPosition(pos.source.path, pos.line, pos.column)
+    else PyPosition.NoPosition
 
   private def qualifierOf(tree: Tree): Tree = tree match
     case Select(qualifier, _) => qualifier
@@ -786,119 +901,14 @@ private class PyCodeGen()(using genCtx: Context):
   private def isStaticModule(sym: Symbol): Boolean =
     sym.is(ModuleClass) && !sym.isAnonymousClass
 
-  private def flattenToStmts(stmt: PyStmt): List[PyStmt] =
+  /** Flush `pendingLocalDefs` and flatten nested `PyBlock`s. */
+  private def flattenToStmts(tree: PyTree): List[PyTree] =
     val prefix = pendingLocalDefs.toList
     pendingLocalDefs.clear()
-    val flat = stmt match
-      case PyStmt.Block(stmts) => stmts.flatMap(flattenToStmts)
-      case other               => List(other)
+    val flat: List[PyTree] = tree match
+      case PyBlock(stats, expr) =>
+        stats.flatMap(flattenToStmts) ::: flattenToStmts(expr)
+      case _: PyUnitLit => Nil
+      case _: PySkip    => Nil
+      case other        => List(other)
     prefix ::: flat
-
-  private def nonEmpty(stmts: List[PyStmt]): List[PyStmt] =
-    if stmts.isEmpty then List(PyStmt.Pass) else stmts
-
-  /** Wrap the last expression in a list of statements with `return`.
-    * Recurses into blocks, if/elif/else branches so every exit path returns.
-    */
-  private def wrapLastReturn(stmts: List[PyStmt]): List[PyStmt] =
-    if stmts.isEmpty then stmts
-    else stmts.init :+ wrapStmtReturn(stmts.last)
-
-  private def wrapStmtReturn(stmt: PyStmt): PyStmt = stmt match
-    case PyStmt.ExprStmt(PyExpr.NoneLit) => stmt // don't return None for Unit-typed tails
-    case PyStmt.ExprStmt(expr)           => PyStmt.Return(Some(expr))
-    case PyStmt.VarDef(n, t, m, rhs)     => PyStmt.VarDef(n, t, m, rhs) // can't return a vardef
-    case PyStmt.Block(inner)             => PyStmt.Block(wrapLastReturn(inner))
-    case PyStmt.If(cond, body, elifs, elseBody) =>
-      PyStmt.If(
-        cond, wrapLastReturn(body),
-        elifs.map((c, b) => (c, wrapLastReturn(b))),
-        elseBody.map(wrapLastReturn))
-    case PyStmt.Try(body, handlers, elseBody, fin) =>
-      PyStmt.Try(
-        wrapLastReturn(body),
-        handlers.map(h => h.copy(body = wrapLastReturn(h.body))),
-        elseBody.map(wrapLastReturn),
-        fin)
-    case _: PyStmt.Return | _: PyStmt.Raise | _: PyStmt.LabelReturn => stmt // already exits
-    case _ => stmt
-
-  private def loadModule(qualName: QualName): PyExpr =
-    PyExpr.LoadModule(qualName)
-
-
-/** Hard-coded Python runtime for generated code.
-  *
-  * Naming convention:
-  *   - Compiler-invented names use the `_scpy_` prefix (e.g., `_scpy_i32`, `_scpy_mod_Foo`)
-  *   - Real Scala class/module names keep their natural encoding (e.g., `CommandLineParser_ParseError`)
-  */
-private object ScalaPyRuntime:
-  private val P = PyEmitter.Prefix
-  val content: String =
-    s"""|# Scala.py runtime — generated by the Scala 3 Python backend
-        |#
-        |# Names prefixed with ${P} are compiler-invented and don't correspond
-        |# to Scala source identifiers. All other names are real Scala classes.
-        |import struct
-        |import builtins as _builtins
-        |from typing import Any
-        |
-        |# ── Compiler-invented: numeric wrapping (Scala overflow semantics) ──
-        |
-        |def ${P}i32(x):
-        |    return ((_builtins.int(x) + 0x80000000) & 0xFFFFFFFF) - 0x80000000
-        |
-        |def ${P}i64(x):
-        |    return ((_builtins.int(x) + 0x8000000000000000) & 0xFFFFFFFFFFFFFFFF) - 0x8000000000000000
-        |
-        |def ${P}f32(x):
-        |    return struct.unpack('f', struct.pack('f', _builtins.float(x)))[0]
-        |
-        |def ${P}to_str(x):
-        |    return _builtins.str(x)
-        |
-        |# ── scala.Predef ──
-        |
-        |class _Predef:
-        |    def println(self, *args):
-        |        _builtins.print(*args)
-        |
-        |    def print_(self, *args):
-        |        _builtins.print(*args, end="")
-        |
-        |    def assert_(self, cond, msg=None):
-        |        if msg is not None:
-        |            assert cond, msg
-        |        else:
-        |            assert cond
-        |
-        |    def require(self, cond, msg=None):
-        |        if not cond:
-        |            raise ValueError(msg if msg else "requirement failed")
-        |
-        |    def identity(self, x):
-        |        return x
-        |
-        |    def locally(self, x):
-        |        return x
-        |
-        |${P}mod_Predef = _Predef()
-        |
-        |# ── scala.util.CommandLineParser (@main wrapper support) ──
-        |
-        |class CommandLineParser_ParseError(Exception):
-        |    pass
-        |
-        |class _CommandLineParser:
-        |    def showError(self, error):
-        |        _builtins.print(_builtins.str(error))
-        |
-        |${P}mod_CommandLineParser = _CommandLineParser()
-        |
-        |# ── scala.runtime.ModuleSerializationProxy ──
-        |
-        |class ModuleSerializationProxy:
-        |    def __init__(self, cls):
-        |        self.cls = cls
-        |""".stripMargin
