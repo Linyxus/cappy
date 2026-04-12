@@ -96,6 +96,8 @@ object TestConfiguration {
     defaultOptions.withClasspath(withTastyInspectorClasspath).withRunClasspath(withTastyInspectorClasspath)
   lazy val scalaJSOptions =
     defaultOptions.and("-scalajs").withClasspath(scalaJSClasspath).withRunClasspath(scalaJSClasspath)
+  lazy val scalaPyOptions =
+    defaultOptions.and("-scalapy")
   val allowDeepSubtypes = defaultOptions `without` "-Yno-deep-subtypes"
   val allowDoubleBindings = defaultOptions `without` "-Yno-double-bindings"
   val picklingOptions = defaultOptions `and` (
