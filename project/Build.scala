@@ -672,6 +672,7 @@ object Build {
     sjsSandbox,
     sjsJUnitTests,
     sjsCompilerTests,
+    pyCompilerTests,
     `community-build`,
     dist,
     `dist-mac-x86_64`,
@@ -2565,6 +2566,42 @@ object Build {
       },
       // Configure to use the non-bootstrapped compiler
       bootstrappedScalaInstanceSettings,
+      Test / forkOptions := (Test / forkOptions).value.withWorkingDirectory((ThisBuild / baseDirectory).value),
+      bspEnabled := false,
+    )
+
+  lazy val pyCompilerTests = project.in(file("py-compiler-tests")).
+    dependsOn(`scala3-compiler-bootstrapped` % "test->test").
+    settings(
+      publish / skip := true,
+      libraryDependencies += "com.github.sbt" % "junit-interface" % "0.13.3" % Test,
+      (Test / scalaSource) := baseDirectory.value / "test",
+      (Test / javaSource)  := baseDirectory.value / "test",
+      scalaVersion := (`scala3-compiler-bootstrapped` / scalaVersion).value,
+
+      Test / baseDirectory := baseDirectory.value.getParentFile,
+      sourcesInBase := false,
+
+      javaOptions ++= (`scala3-compiler-bootstrapped` / javaOptions).value,
+      javaOptions ++= {
+        val externalDeps = (`scala3-compiler-bootstrapped` / Runtime / externalDependencyClasspath).value
+        val managedSrcDir = {
+          (`scala3-compiler-bootstrapped` / Compile / managedSources).value
+          (`scala3-compiler-bootstrapped` / Compile / sourceManaged).value
+        }
+        Seq(
+          s"-Ddotty.tests.dottyCompilerManagedSources=${managedSrcDir}",
+          s"-Ddotty.tests.classes.dottyInterfaces=${(`scala3-interfaces` / Compile / packageBin).value}",
+          s"-Ddotty.tests.classes.dottyCompiler=${(`scala3-compiler-bootstrapped` / Compile / packageBin).value}",
+          s"-Ddotty.tests.classes.tastyCore=${(`tasty-core-bootstrapped` / Compile / packageBin).value}",
+          s"-Ddotty.tests.classes.compilerInterface=${findArtifactPath(externalDeps, "compiler-interface")}",
+          s"-Ddotty.tests.classes.scalaLibrary=${(`scala-library-bootstrapped` / Compile / packageBin).value}",
+          s"-Ddotty.tests.classes.scalaAsm=${findArtifactPath(externalDeps, "scala-asm")}",
+          s"-Ddotty.tools.dotc.semanticdb.test=${(ThisBuild / baseDirectory).value/"tests"/"semanticdb"}",
+        )
+      },
+      bootstrappedScalaInstanceSettings,
+      Test / fork := true,
       Test / forkOptions := (Test / forkOptions).value.withWorkingDirectory((ThisBuild / baseDirectory).value),
       bspEnabled := false,
     )
