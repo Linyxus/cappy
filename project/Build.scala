@@ -1565,6 +1565,9 @@ object Build {
       // Add the source directories for the compiler (non-boostrapped)
       Compile / unmanagedSourceDirectories   := Seq(baseDirectory.value / "src"),
       Compile / unmanagedSourceDirectories   += baseDirectory.value / "src-non-bootstrapped",
+      // Phase 0 workaround: keep `scala.python.*` available from the compiler runtime
+      // until we split it back out into its own published sidecar artifact.
+      Compile / unmanagedSourceDirectories   += (ThisBuild / baseDirectory).value / "library-py" / "src",
       Compile / unmanagedResourceDirectories += baseDirectory.value / "resources",
       // Add the test directories for the compiler (non-bootstrapped)
       Test / unmanagedSourceDirectories   := Seq(baseDirectory.value / "test"),
@@ -1698,6 +1701,9 @@ object Build {
       // Add the source directories for the compiler (boostrapped)
       Compile / unmanagedSourceDirectories   := Seq(baseDirectory.value / "src"),
       Compile / unmanagedSourceDirectories   += baseDirectory.value / "src-bootstrapped",
+      // Phase 0 workaround: keep `scala.python.*` available from the compiler runtime
+      // until we split it back out into its own published sidecar artifact.
+      Compile / unmanagedSourceDirectories   += (ThisBuild / baseDirectory).value / "library-py" / "src",
       Compile / unmanagedResourceDirectories += baseDirectory.value / "resources",
       // Add the test directories for the compiler (bootstrapped)
       Test / unmanagedSourceDirectories := Seq(baseDirectory.value / "test"),
