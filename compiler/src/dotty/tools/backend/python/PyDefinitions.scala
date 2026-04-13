@@ -7,6 +7,7 @@ import scala.compiletime.uninitialized
 import dotty.tools.dotc.core.*
 import Contexts.*
 import Symbols.*
+import SymDenotations.StubInfo
 import Types.*
 
 object PyDefinitions:
@@ -59,24 +60,45 @@ final class PyDefinitions:
   @threadUnsafe lazy val NameAnnotType: TypeRef = requiredClassRef("scala.python.name")
   def NameAnnotClass(using Context): ClassSymbol = NameAnnotType.symbol.asClass
 
-  @threadUnsafe lazy val NativeMethodRef = ScalaPythonPackageClass.requiredMethodRef("native")
-  def NativeMethod(using Context): Symbol = NativeMethodRef.symbol
+  // `scala.python.native` is defined as `inline def`: every call site is
+  // substituted at typer time and no method symbol is ever referenced at
+  // codegen. We intentionally do NOT cache a NativeMethod symbol here.
 
-  /** Force all Phase 0 symbol lookups on a path that already runs today.
-   *  This keeps the scaffolding exercised before Phase 1 starts using it. */
+  /** Force every Phase 0 symbol lookup and assert each one resolves to a
+   *  real classpath entry rather than a silently generated stub.
+   *
+   *  `requiredClass` / `requiredPackage` / `requiredMethod` return stub
+   *  symbols for missing references by default (see
+   *  `Denotations.requiredSymbol` + `Symbols.newStubSymbol`), so the mere
+   *  fact that these accessors return a non-null `Symbol` is not evidence
+   *  the library is on the classpath. We detect stubs by peeking at
+   *  `infoOrCompleter` — for missing references it is a `StubInfo`.
+   *
+   *  If any Phase 0 symbol is a stub we throw loudly. This guards against
+   *  Phase 1+ moving `scala.python.*` out of the compiler JAR (per the
+   *  packaging debt migration plan) without re-wiring the classpath, and
+   *  it prevents later phases from silently consuming stub symbols. */
   def force()(using Context): Unit =
-    val _ =
-      ScalaPythonPackageVal
-      ScalaPythonPackageClass
-      PyAnyClass
-      PyDynamicClass
-      PyDynamic_selectDynamic
-      PyDynamic_applyDynamic
-      PyDynamic_applyDynamicNamed
-      PyDynamic_updateDynamic
-      DynamicModule
-      DynamicModule_module
-      DynamicModule_attr
-      ExternAnnotClass
-      NameAnnotClass
-      NativeMethod
+    requireReal(ScalaPythonPackageVal, "scala.python")
+    requireReal(ScalaPythonPackageClass, "scala.python (package class)")
+    requireReal(PyAnyClass, "scala.python.PyAny")
+    requireReal(PyDynamicClass, "scala.python.PyDynamic")
+    requireReal(PyDynamic_selectDynamic, "scala.python.PyDynamic.selectDynamic")
+    requireReal(PyDynamic_applyDynamic, "scala.python.PyDynamic.applyDynamic")
+    requireReal(PyDynamic_applyDynamicNamed, "scala.python.PyDynamic.applyDynamicNamed")
+    requireReal(PyDynamic_updateDynamic, "scala.python.PyDynamic.updateDynamic")
+    requireReal(DynamicModule, "scala.python.Dynamic")
+    requireReal(DynamicModule_module, "scala.python.Dynamic.module")
+    requireReal(DynamicModule_attr, "scala.python.Dynamic.attr")
+    requireReal(ExternAnnotClass, "scala.python.extern")
+    requireReal(NameAnnotClass, "scala.python.name")
+
+  private def requireReal(sym: Symbol, desc: String)(using Context): Unit =
+    if !sym.exists then
+      throw AssertionError(s"PyDefinitions: $desc not found on classpath")
+    sym.denot.infoOrCompleter match
+      case _: StubInfo =>
+        throw AssertionError(
+          s"PyDefinitions: $desc resolved to a stub symbol; " +
+            s"`scala.python.*` appears to be missing from the compiler classpath")
+      case _ => ()
