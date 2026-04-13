@@ -13,6 +13,8 @@ import dotty.tools.io.File
 
 object PathResolver {
 
+  private val ScalaPyLibraryMarker = "scala/python/PyAny.class"
+
   // Imports property/environment functions which suppress
   // security exceptions.
   import AccessControl.*
@@ -134,6 +136,25 @@ object PathResolver {
       )
   }
 
+  private def containsScalaPyLibrary(entry: String): Boolean = {
+    val file = new java.io.File(entry)
+    if (file.isDirectory)
+      new java.io.File(file, ScalaPyLibraryMarker).isFile
+    else if (file.isFile && (entry.endsWith(".jar") || entry.endsWith(".zip")))
+      try {
+        val zip = new java.util.zip.ZipFile(file)
+        try zip.getEntry(ScalaPyLibraryMarker) != null
+        finally zip.close()
+      } catch {
+        case _: java.io.IOException => false
+      }
+    else
+      false
+  }
+
+  private lazy val compilerRuntimeScalaPyLibraryPath: Option[String] =
+    split(Defaults.javaUserClassPath).distinct.find(containsScalaPyLibrary)
+
   def fromPathString(path: String)(using Context): ClassPath = {
     val settings = ctx.settings.classpath.update(path)
     inContext(ctx.fresh.setSettings(settings)) {
@@ -207,11 +228,20 @@ class PathResolver(using c: Context) {
      * Because bootstrapping looks at the sourcepath and creates the package "reflect" in "<root>" it will cause the
      * typedIdentifier to pick <root>.reflect instead of the <root>.scala.reflect package.  Thus, no bootstrapping for scaladoc!
      */
-    def sourcePath: String          = cmdLineOrElse("sourcepath", Defaults.scalaSourcePath)
+    def sourcePath: String = cmdLineOrElse("sourcepath", Defaults.scalaSourcePath)
 
     def userClassPath: String =
-      if (!settings.classpath.isDefault) settings.classpath.value
-      else sys.env.getOrElse("CLASSPATH", ".")
+      val base =
+        if (!settings.classpath.isDefault) settings.classpath.value
+        else sys.env.getOrElse("CLASSPATH", ".")
+      val scalaPyLibraryPath =
+        if settings.scalapy.value then
+          PathResolver.compilerRuntimeScalaPyLibraryPath.filterNot(split(base).contains)
+        else None
+      scalaPyLibraryPath match
+        case Some(extra) if base.isEmpty => extra
+        case Some(extra)                 => base + java.io.File.pathSeparator + extra
+        case None                       => base
 
     import classPathFactory.*
 

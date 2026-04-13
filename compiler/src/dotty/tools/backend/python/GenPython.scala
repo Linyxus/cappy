@@ -53,6 +53,7 @@ object GenPython:
 private class PyCodeGen()(using genCtx: Context):
 
   private val encoding = new PyEncoding()
+  private val pyDefn = PyDefinitions.pydefn
   private val primitives = new ScalaPrimitives(genCtx)
   private val generatedClasses = mutable.ListBuffer.empty[PyClassDef]
   private var mainEntry: Option[PyIREmitter.MainEntry] = None
@@ -70,6 +71,7 @@ private class PyCodeGen()(using genCtx: Context):
   // --- Entry point ---------------------------------------------------
 
   def run(): Unit =
+    pyDefn.force()
     genCompilationUnit(genCtx.compilationUnit)
     linkAndWrite()
 
