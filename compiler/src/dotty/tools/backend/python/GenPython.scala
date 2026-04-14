@@ -89,7 +89,9 @@ private class PyCodeGen()(using genCtx: Context):
 
     for td <- allTypeDefs do
       val sym = td.symbol
-      if !sym.isPrimitiveValueClass && sym != defn.ArrayClass then
+      if encoding.hasExternAnnotation(sym) then
+        validateFacadeMemberNames(td)
+      else if !sym.isPrimitiveValueClass && sym != defn.ArrayClass then
         currentClassSym = sym
         val kind =
           if sym.is(Trait) then PyClassKind.Interface
@@ -99,6 +101,35 @@ private class PyCodeGen()(using genCtx: Context):
         generatedClasses += classDef
         if genCtx.platform.hasMainMethod(sym) then
           mainEntry = Some((classDef.name, kind))
+
+  /** For each `@extern`-annotated class/object, check that no two members
+   *  resolve to the same Python name. Python has no overloading, so
+   *  colliding facade members would silently shadow each other on calls.
+   *
+   *  Only `DefDef`s are checked: every `val` generates a synthetic
+   *  accessor `DefDef` that shares its name, so ValDefs would double-count
+   *  if included. Call sites always resolve to the accessor, so the
+   *  DefDef-only view matches runtime semantics. */
+  private def validateFacadeMemberNames(td: TypeDef): Unit =
+    val seen = mutable.Map.empty[String, Symbol]
+    for tree <- collectMemberDefs(td) do tree match
+      case dd: DefDef if !dd.symbol.isClassConstructor =>
+        checkFacadeMember(dd.symbol, seen)
+      case _ => ()
+
+  private def checkFacadeMember(sym: Symbol, seen: mutable.Map[String, Symbol]): Unit =
+    if encoding.externBindingOf(sym).isEmpty then
+      val pyName = encoding.externMemberNameOf(sym)
+      seen.get(pyName) match
+        case Some(prior) =>
+          report.error(
+            s"Facade member '${sym.name.show}' resolves to Python name '$pyName', " +
+              s"which collides with '${prior.name.show}' in the same facade. " +
+              "Python has no overloading; use `@name` to disambiguate.",
+            sym.srcPos
+          )
+        case None =>
+          seen(pyName) = sym
 
   // --- Class generation ----------------------------------------------
 
@@ -140,7 +171,7 @@ private class PyCodeGen()(using genCtx: Context):
       tree match
         case vd: ValDef =>
           val sym = vd.symbol
-          if !sym.is(Module) then
+          if !sym.is(Module) && !encoding.hasExternAnnotation(sym) then
             fields += PyFieldDef(
               flags        = PyMemberFlags.empty.withMutable(sym.is(Mutable)),
               name         = encoding.encodeFieldName(sym),
@@ -150,7 +181,7 @@ private class PyCodeGen()(using genCtx: Context):
             )
 
         case dd: DefDef =>
-          if !dd.symbol.isClassConstructor then
+          if !dd.symbol.isClassConstructor && !encoding.hasExternAnnotation(dd.symbol) then
             genMethod(dd).foreach(methods += _)
 
         case _ => ()
@@ -365,21 +396,29 @@ private class PyCodeGen()(using genCtx: Context):
           PyThis()(encoding.encodeType(tree.tpe), pos)
 
       case Select(qualifier, _) =>
-        val sym = tree.symbol
-        if sym.is(Module) then
-          PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
+        val sel = tree.asInstanceOf[Select]
+        if encoding.isFacadeOwner(sel.symbol.owner) then
+          genFacadeSelect(sel, pos)
         else
-          PySelect(
-            genExpr(qualifier),
-            encoding.encodeFieldName(sym)
-          )(encoding.encodeType(tree.tpe), pos)
+          val sym = tree.symbol
+          if sym.is(Module) then
+            PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
+          else
+            PySelect(
+              genExpr(qualifier),
+              encoding.encodeFieldName(sym)
+            )(encoding.encodeType(tree.tpe), pos)
 
       case id: Ident =>
         val sym = id.symbol
-        if sym.is(Module) then
-          PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
-        else
-          PyVarRef(encoding.encodeLocalName(sym))(encoding.encodeType(tree.tpe), pos)
+        encoding.externBindingOf(sym) match
+          case Some(binding) =>
+            genExternRef(binding, tree.tpe, pos)
+          case None =>
+            if sym.is(Module) then
+              PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
+            else
+              PyVarRef(encoding.encodeLocalName(sym))(encoding.encodeType(tree.tpe), pos)
 
       case Block(stats, expr) =>
         // Side effects become pending local defs; return the final expr.
@@ -431,19 +470,29 @@ private class PyCodeGen()(using genCtx: Context):
   // --- Apply dispatch ------------------------------------------------
 
   private def genApply(app: Apply): PyTree =
-    val sym = app.fun.symbol
     val pos = posOf(app)
 
     app.fun match
+      case id: Ident if encoding.externBindingOf(id.symbol).isDefined =>
+        genExternCall(id.symbol, app.args, pos)
+
       // super.method(args)
       case Select(_: Super, _) =>
         genSuperCall(app, pos)
 
       // new ClassName(args)
+      case Select(New(tpt), nme.CONSTRUCTOR) if encoding.externBindingOf(tpt.tpe.typeSymbol).isDefined =>
+        genFacadeNew(app, pos)
+
       case Select(New(tpt), nme.CONSTRUCTOR) =>
         genApplyNew(app, pos)
 
+      case sel @ Select(_, _) if encoding.isFacadeOwner(sel.symbol.owner) =>
+        if sel.symbol.is(Accessor) && app.args.isEmpty then genFacadeSelect(sel, pos)
+        else genFacadeCall(sel, app.args, pos)
+
       case _ =>
+        val sym = app.fun.symbol
         if primitives.isPrimitive(app) then
           genPrimitiveOp(app, pos)
         else if Erasure.Boxing.isBox(sym) || Erasure.Boxing.isUnbox(sym) then
@@ -473,52 +522,64 @@ private class PyCodeGen()(using genCtx: Context):
     val ctorName = encoding.encodeMethodName(fun.symbol)
     PyNew(className, ctorName, args.map(genExpr))(pos)
 
+  private def genFacadeNew(app: Apply, pos: PyPosition): PyTree =
+    val Apply(Select(New(tpt), _), args) = app: @unchecked
+    val classSym = tpt.tpe.typeSymbol
+    val binding = encoding.externBindingOf(classSym).get
+    PyApplyDynamic(
+      genExternRef(binding, tpt.tpe, pos),
+      args.map(genExpr),
+      Nil
+    )(encoding.encodeType(app.tpe), pos)
+
   private def genNormalApply(app: Apply, pos: PyPosition): PyTree =
     val sym = app.fun.symbol
-    val args = app.args.map(genExpr)
-    val methodName = encoding.encodeMethodName(sym)
-    val ownerName  = encoding.encodeClassName(sym.owner)
-    val resultTpe  = encoding.encodeType(sym.info.finalResultType)
-    val isStaticTarget =
-      sym.is(JavaStatic) || (sym.owner.is(ModuleClass) && !sym.isClassConstructor)
+    genDynamicApply(app, pos).getOrElse {
+      val args = app.args.map(genExpr)
+      val methodName = encoding.encodeMethodName(sym)
+      val ownerName  = encoding.encodeClassName(sym.owner)
+      val resultTpe  = encoding.encodeType(sym.info.finalResultType)
+      val isStaticTarget =
+        sym.is(JavaStatic) || (sym.owner.is(ModuleClass) && !sym.isClassConstructor)
 
-    app.fun match
-      case _ if isStaticTarget =>
-        PyApplyStatic(
-          PyApplyFlags.empty,
-          ownerName,
-          methodName,
-          args
-        )(resultTpe, pos)
-
-      case Select(receiver, _) =>
-        PyApply(
-          PyApplyFlags.empty,
-          genExpr(receiver),
-          ownerName,
-          methodName,
-          args
-        )(resultTpe, pos)
-
-      case Ident(_) =>
-        if sym.owner.is(ModuleClass) then
+      app.fun match
+        case _ if isStaticTarget =>
           PyApplyStatic(
             PyApplyFlags.empty,
             ownerName,
             methodName,
             args
           )(resultTpe, pos)
-        else
+
+        case Select(receiver, _) =>
+          PyApply(
+            PyApplyFlags.empty,
+            genExpr(receiver),
+            ownerName,
+            methodName,
+            args
+          )(resultTpe, pos)
+
+        case Ident(_) =>
+          if sym.owner.is(ModuleClass) then
+            PyApplyStatic(
+              PyApplyFlags.empty,
+              ownerName,
+              methodName,
+              args
+            )(resultTpe, pos)
+          else
+            PyApplyExternal(
+              PyExternalName(methodName.encoded),
+              args
+            )(resultTpe, pos)
+
+        case _ =>
           PyApplyExternal(
             PyExternalName(methodName.encoded),
             args
           )(resultTpe, pos)
-
-      case _ =>
-        PyApplyExternal(
-          PyExternalName(methodName.encoded),
-          args
-        )(resultTpe, pos)
+    }
 
   // --- TypeApply (isInstanceOf / asInstanceOf) -----------------------
 
@@ -889,6 +950,193 @@ private class PyCodeGen()(using genCtx: Context):
   private def qualifierOf(tree: Tree): Tree = tree match
     case Select(qualifier, _) => qualifier
     case _                    => EmptyTree
+
+  private def genExternRef(binding: ExternBinding, tp: Type, pos: PyPosition): PyExternalRef =
+    PyExternalRef(binding.module, binding.path)(encoding.encodeType(tp), pos)
+
+  private def genExternCall(sym: Symbol, args: List[Tree], pos: PyPosition): PyTree =
+    val binding = encoding.externBindingOf(sym).get
+    PyApplyDynamic(
+      genExternRef(binding, sym.info.finalResultType, pos),
+      args.map(genExpr),
+      Nil
+    )(encoding.encodeType(sym.info.finalResultType), pos)
+
+  private def genFacadeSelect(sel: Select, pos: PyPosition): PyTree =
+    val memberName = encoding.externMemberNameOf(sel.symbol)
+    genDynamicSelect(
+      genExpr(sel.qualifier),
+      PyStringLit(memberName)(pos),
+      Some(memberName),
+      encoding.encodeType(sel.tpe),
+      pos
+    )
+
+  private def genFacadeCall(sel: Select, args: List[Tree], pos: PyPosition): PyTree =
+    PyApplyDynamic(
+      genFacadeSelect(sel, pos),
+      args.map(genExpr),
+      Nil
+    )(encoding.encodeType(sel.symbol.info.finalResultType), pos)
+
+  private def genDynamicApply(app: Apply, pos: PyPosition): Option[PyTree] =
+    val sym = app.fun.symbol
+    if matchesPySymbol(sym, pyDefn.PyDynamic_selectDynamic, "scala.python.PyDynamic.selectDynamic") then
+      app.args match
+        case nameArg :: Nil =>
+          val nameExpr = genExpr(nameArg)
+          Some(genDynamicSelect(
+            genExpr(qualifierOf(app.fun)),
+            nameExpr,
+            literalString(nameArg),
+            encoding.encodeType(app.tpe),
+            pos
+          ))
+        case _ =>
+          Some(PyUnitLit()(pos))
+    else if matchesPySymbol(sym, pyDefn.PyDynamic_applyDynamic, "scala.python.PyDynamic.applyDynamic") then
+      app.args match
+        case nameArg :: dynArgs :: Nil =>
+          val callee = genDynamicSelect(
+            genExpr(qualifierOf(app.fun)),
+            genExpr(nameArg),
+            literalString(nameArg),
+            PyAnyType,
+            pos
+          )
+          Some(PyApplyDynamic(
+            callee,
+            extractRepeatedArgs(dynArgs).map(genExpr),
+            Nil
+          )(encoding.encodeType(app.tpe), pos))
+        case _ =>
+          Some(PyUnitLit()(pos))
+    else if matchesPySymbol(sym, pyDefn.PyDynamic_applyDynamicNamed, "scala.python.PyDynamic.applyDynamicNamed") then
+      report.error("scala.python.PyDynamic.applyDynamicNamed is not supported yet", app.sourcePos)
+      Some(PyUnitLit()(pos))
+    else if matchesPySymbol(sym, pyDefn.PyDynamic_updateDynamic, "scala.python.PyDynamic.updateDynamic") then
+      app.args match
+        case nameArg :: valueArg :: Nil =>
+          Some(genDynamicSetAttr(
+            genExpr(qualifierOf(app.fun)),
+            genExpr(nameArg),
+            genExpr(valueArg),
+            pos
+          ))
+        case _ =>
+          Some(PyUnitLit()(pos))
+    else if matchesPySymbol(sym, pyDefn.DynamicModule_module, "scala.python.Dynamic.module") then
+      app.args match
+        case moduleArg :: Nil =>
+          Some(genDynamicModuleRef(moduleArg, encoding.encodeType(app.tpe), pos))
+        case _ =>
+          Some(PyUnitLit()(pos))
+    else if matchesPySymbol(sym, pyDefn.DynamicModule_attr, "scala.python.Dynamic.attr") then
+      app.args match
+        case pathArg :: Nil =>
+          Some(genDynamicBuiltinsAttr(pathArg, encoding.encodeType(app.tpe), pos))
+        case _ =>
+          Some(PyUnitLit()(pos))
+    else None
+
+  private def genDynamicSelect(
+      receiver: PyTree,
+      nameExpr: PyTree,
+      literalName: Option[String],
+      resultTpe: PyType,
+      pos: PyPosition
+  ): PyTree =
+    literalName match
+      case Some(name) if encoding.isValidPyAttrName(name) =>
+        receiver match
+          case ref: PyExternalRef =>
+            PyExternalRef(ref.module, ref.path :+ name)(resultTpe, pos)
+          case _ =>
+            PyAttrAccess(receiver, name)(resultTpe, pos)
+      case _ =>
+        genGetAttr(receiver, nameExpr, resultTpe, pos)
+
+  private def genGetAttr(
+      receiver: PyTree,
+      nameExpr: PyTree,
+      resultTpe: PyType,
+      pos: PyPosition
+  ): PyTree =
+    PyApplyDynamic(
+      PyExternalRef("builtins", List("getattr"))(PyAnyType, pos),
+      List(receiver, nameExpr),
+      Nil
+    )(resultTpe, pos)
+
+  /** Emit an attribute assignment. Always lowered to `setattr(obj, name, value)`
+   *  so keyword names and non-literal names work uniformly. Phase 2 can
+   *  optimize the literal-identifier case to direct `obj.name = value` via
+   *  a dedicated IR shape if desired. */
+  private def genDynamicSetAttr(
+      receiver: PyTree,
+      nameExpr: PyTree,
+      value: PyTree,
+      pos: PyPosition
+  ): PyTree =
+    PyApplyDynamic(
+      PyExternalRef("builtins", List("setattr"))(PyAnyType, pos),
+      List(receiver, nameExpr, value),
+      Nil
+    )(PyVoidType, pos)
+
+  private def genDynamicModuleRef(moduleArg: Tree, resultTpe: PyType, pos: PyPosition): PyTree =
+    literalString(moduleArg) match
+      case Some(moduleName) =>
+        PyExternalRef(moduleName, Nil)(resultTpe, pos)
+      case None =>
+        PyApplyDynamic(
+          PyExternalRef("importlib", List("import_module"))(PyAnyType, pos),
+          List(genExpr(moduleArg)),
+          Nil
+        )(resultTpe, pos)
+
+  private def genDynamicBuiltinsAttr(pathArg: Tree, resultTpe: PyType, pos: PyPosition): PyTree =
+    literalString(pathArg) match
+      case Some(path) =>
+        PyExternalRef("builtins", path.split('.').toList.filter(_.nonEmpty))(resultTpe, pos)
+      case None =>
+        genGetAttr(
+          PyExternalRef("builtins", Nil)(PyAnyType, pos),
+          genExpr(pathArg),
+          resultTpe,
+          pos
+        )
+
+  private def extractRepeatedArgs(tree: Tree): List[Tree] =
+    tree match
+      case seq: JavaSeqLiteral =>
+        seq.elems
+      case Apply(_, List(arg)) =>
+        extractRepeatedArgs(arg)
+      case Typed(inner, _) =>
+        extractRepeatedArgs(inner)
+      case Block(Nil, expr) =>
+        extractRepeatedArgs(expr)
+      case Inlined(_, Nil, expr) =>
+        extractRepeatedArgs(expr)
+      case other =>
+        List(other)
+
+  private def matchesPySymbol(sym: Symbol, expected: Symbol, expectedFullName: String): Boolean =
+    sym == expected || sym.showFullName == expectedFullName
+
+  private def literalString(tree: Tree): Option[String] =
+    tree match
+      case Literal(Constant(value: String)) =>
+        Some(value)
+      case Typed(inner, _) =>
+        literalString(inner)
+      case Block(Nil, expr) =>
+        literalString(expr)
+      case Inlined(_, Nil, expr) =>
+        literalString(expr)
+      case _ =>
+        None
 
   private def collectMemberDefs(td: TypeDef): List[ValOrDefDef] =
     val impl = td.rhs.asInstanceOf[Template]
