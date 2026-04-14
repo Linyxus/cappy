@@ -24,16 +24,16 @@ class ScalaPyCompilationTests:
     implicit val testGroup: TestGroup = TestGroup("runScalaPy")
     cleanScalaPyOutput(testGroup)
     aggregateTests(
-      compileFilesInDir("tests-py", scalaPyOptions),
+      compileFilesInDir("tests/pos-py", scalaPyOptions),
     ).checkRuns()
 
   @Test def negScalaPy: Unit =
-    if !hasScalaPySources("tests/py-neg") then
+    if !hasScalaPySources("tests/neg-py") then
       return
     implicit val testGroup: TestGroup = TestGroup("negScalaPy")
     cleanScalaPyOutput(testGroup)
     aggregateTests(
-      compileFilesInDir("tests/py-neg", scalaPyOptions),
+      compileFilesInDir("tests/neg-py", scalaPyOptions),
     ).checkExpectedErrors()
 
 object ScalaPyCompilationTests extends ParallelTesting:
