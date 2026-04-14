@@ -301,6 +301,19 @@ object PyLinker:
           tree.args.foreach(validateTree(_, classInfos))
           validateType(tree.tpe, tree.pos, classInfos)
 
+        case tree: PyExternalRef =>
+          validateType(tree.tpe, tree.pos, classInfos)
+
+        case tree: PyApplyDynamic =>
+          validateTree(tree.callee, classInfos)
+          tree.args.foreach(validateTree(_, classInfos))
+          tree.kwargs.foreach((_, value) => validateTree(value, classInfos))
+          validateType(tree.tpe, tree.pos, classInfos)
+
+        case tree: PyAttrAccess =>
+          validateTree(tree.obj, classInfos)
+          validateType(tree.tpe, tree.pos, classInfos)
+
         case tree: PyNew =>
           tree.args.foreach(validateTree(_, classInfos))
           validateMethodName(tree.ctor, tree.pos, classInfos)

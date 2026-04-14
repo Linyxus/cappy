@@ -211,6 +211,35 @@ final case class PyApplyStatic(
 final case class PyApplyExternal(callee: PyExternalName, args: List[PyTree])
     (val tpe: PyType, val pos: PyPosition) extends PyTree
 
+/** Reference to an external Python value reached by importing `module`
+ *  and walking `path`.
+ *
+ *  Linker-opaque: the emitter renders this as an import alias followed by
+ *  attribute accesses. */
+final case class PyExternalRef(module: String, path: List[String])
+    (val tpe: PyType, val pos: PyPosition) extends PyTree
+
+/** Native Python attribute access `obj.name`.
+ *
+ *  Linker-opaque. Used for facade-owned selects whose receiver is not a
+ *  `PyExternalRef` (e.g. local variables holding facade values, `this`
+ *  expressions, or facade instances). This avoids emitting the noisier
+ *  `getattr(obj, "name")` fallback when the attribute name is known at
+ *  compile time. It also supports the LHS of `updateDynamic` attribute
+ *  assignment. */
+final case class PyAttrAccess(obj: PyTree, name: String)
+    (val tpe: PyType, val pos: PyPosition) extends PyAssignable
+
+/** Dynamic call on a Python value with positional + keyword arguments.
+ *
+ *  The `callee` can be an external reference, a `getattr(...)` result,
+ *  or any other expression producing a callable Python value. */
+final case class PyApplyDynamic(
+    callee: PyTree,
+    args:   List[PyTree],
+    kwargs: List[(String, PyTree)]
+)(val tpe: PyType, val pos: PyPosition) extends PyTree
+
 // ===================================================================
 //  Object construction
 // ===================================================================

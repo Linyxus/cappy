@@ -28,6 +28,8 @@ class ScalaPyCompilationTests:
     ).checkRuns()
 
   @Test def negScalaPy: Unit =
+    if !hasScalaPySources("tests/py-neg") then
+      return
     implicit val testGroup: TestGroup = TestGroup("negScalaPy")
     cleanScalaPyOutput(testGroup)
     aggregateTests(
@@ -53,6 +55,10 @@ object ScalaPyCompilationTests extends ParallelTesting:
         paths.sorted(Comparator.reverseOrder()).forEach(path => Files.deleteIfExists(path))
       finally
         paths.close()
+
+  private def hasScalaPySources(dir: String): Boolean =
+    val root = new File(dir)
+    root.exists && root.isDirectory && root.listFiles().exists(_.getName.endsWith(".scala"))
 
   @AfterClass def tearDown(): Unit =
     cleanup()
