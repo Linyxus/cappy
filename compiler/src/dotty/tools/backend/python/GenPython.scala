@@ -90,6 +90,11 @@ private class PyCodeGen()(using genCtx: Context):
     for td <- allTypeDefs do
       val sym = td.symbol
       if encoding.hasExternAnnotation(sym) then
+        // Force the binding read even if no call site reaches this facade -
+        // otherwise malformed `@extern` args go unreported when the class
+        // is never referenced. `externBindingOf` reports the diagnostic
+        // through a dedupe set so repeated calls are safe.
+        encoding.externBindingOf(sym)
         validateFacadeMemberNames(td)
       else if !sym.isPrimitiveValueClass && sym != defn.ArrayClass then
         currentClassSym = sym
@@ -171,7 +176,12 @@ private class PyCodeGen()(using genCtx: Context):
       tree match
         case vd: ValDef =>
           val sym = vd.symbol
-          if !sym.is(Module) && !encoding.hasExternAnnotation(sym) then
+          if sym.is(Module) then ()
+          else if encoding.hasExternAnnotation(sym) then
+            // Proactive validation: force binding read so malformed args
+            // are reported even if the val is never referenced.
+            encoding.externBindingOf(sym)
+          else
             fields += PyFieldDef(
               flags        = PyMemberFlags.empty.withMutable(sym.is(Mutable)),
               name         = encoding.encodeFieldName(sym),
@@ -181,7 +191,12 @@ private class PyCodeGen()(using genCtx: Context):
             )
 
         case dd: DefDef =>
-          if !dd.symbol.isClassConstructor && !encoding.hasExternAnnotation(dd.symbol) then
+          if dd.symbol.isClassConstructor then ()
+          else if encoding.hasExternAnnotation(dd.symbol) then
+            // Proactive validation: force binding read so malformed args
+            // are reported even if the def is never called.
+            encoding.externBindingOf(dd.symbol)
+          else
             genMethod(dd).foreach(methods += _)
 
         case _ => ()
@@ -963,14 +978,26 @@ private class PyCodeGen()(using genCtx: Context):
     )(encoding.encodeType(sym.info.finalResultType), pos)
 
   private def genFacadeSelect(sel: Select, pos: PyPosition): PyTree =
-    val memberName = encoding.externMemberNameOf(sel.symbol)
-    genDynamicSelect(
-      genExpr(sel.qualifier),
-      PyStringLit(memberName)(pos),
-      Some(memberName),
-      encoding.encodeType(sel.tpe),
-      pos
-    )
+    // Chained facade rebinding: if the selected member has its own @extern
+    // binding, produce a fresh PyExternalRef from that binding instead of
+    // extending the qualifier's path. This lets nested @extern objects
+    // resolve to their declared Python module even when accessed through
+    // an enclosing facade whose module is different (e.g. `np.linalg`
+    // where `linalg` is rebound to `scipy.linalg`). For the same-module
+    // case the rebinding is a no-op because the extension would produce
+    // the same PyExternalRef.
+    encoding.externBindingOf(sel.symbol) match
+      case Some(binding) =>
+        genExternRef(binding, sel.tpe, pos)
+      case None =>
+        val memberName = encoding.externMemberNameOf(sel.symbol)
+        genDynamicSelect(
+          genExpr(sel.qualifier),
+          PyStringLit(memberName)(pos),
+          Some(memberName),
+          encoding.encodeType(sel.tpe),
+          pos
+        )
 
   private def genFacadeCall(sel: Select, args: List[Tree], pos: PyPosition): PyTree =
     PyApplyDynamic(
@@ -1012,8 +1039,11 @@ private class PyCodeGen()(using genCtx: Context):
         case _ =>
           Some(PyUnitLit()(pos))
     else if matchesPySymbol(sym, pyDefn.PyDynamic_applyDynamicNamed, "scala.python.PyDynamic.applyDynamicNamed") then
-      report.error("scala.python.PyDynamic.applyDynamicNamed is not supported yet", app.sourcePos)
-      Some(PyUnitLit()(pos))
+      app.args match
+        case nameArg :: kwargsArg :: Nil =>
+          Some(genApplyDynamicNamedCall(app, nameArg, kwargsArg, pos))
+        case _ =>
+          Some(PyUnitLit()(pos))
     else if matchesPySymbol(sym, pyDefn.PyDynamic_updateDynamic, "scala.python.PyDynamic.updateDynamic") then
       app.args match
         case nameArg :: valueArg :: Nil =>
@@ -1083,6 +1113,77 @@ private class PyCodeGen()(using genCtx: Context):
       List(receiver, nameExpr, value),
       Nil
     )(PyVoidType, pos)
+
+  /** Lower a `d.applyDynamicNamed(methodName)(pairs*)` call where each
+   *  pair is a `(String, Any)` tuple. Scala desugars both named-argument
+   *  calls (`d.foo(k=v)`) and mixed positional+named calls
+   *  (`d.foo(x, k=v)`) to this shape, with positional arguments getting
+   *  empty-string names as the sentinel.
+   *
+   *  Pairs with an empty-string name become positional arguments of the
+   *  emitted `PyApplyDynamic`; pairs with a non-empty name become keyword
+   *  arguments. Runtime-computed keyword names and names that are not
+   *  valid Python identifiers are rejected with a compile error — Python
+   *  keyword-argument syntax requires static identifiers. */
+  private def genApplyDynamicNamedCall(
+      app: Apply,
+      nameArg: Tree,
+      kwargsArg: Tree,
+      pos: PyPosition
+  ): PyTree =
+    val rawPairs = extractRepeatedArgs(kwargsArg)
+    val parsed = rawPairs.map(extractKwargPair)
+    val firstMissing = parsed.indexWhere(_.isEmpty)
+    if firstMissing >= 0 then
+      report.error(
+        "scala.python.PyDynamic.applyDynamicNamed requires literal-string keyword " +
+          "names; runtime-computed names are not supported.",
+        rawPairs(firstMissing).sourcePos
+      )
+      PyUnitLit()(pos)
+    else
+      val resolved = parsed.flatten
+      val invalidKw = resolved.find { case (name, _) =>
+        name.nonEmpty && !encoding.isValidPyAttrName(name)
+      }
+      invalidKw match
+        case Some((name, _)) =>
+          report.error(
+            s"Python keyword-argument name '$name' is not a valid identifier. " +
+              "Python named-call syntax requires identifiers that are not reserved words.",
+            app.sourcePos
+          )
+          PyUnitLit()(pos)
+        case None =>
+          val callee = genDynamicSelect(
+            genExpr(qualifierOf(app.fun)),
+            genExpr(nameArg),
+            literalString(nameArg),
+            PyAnyType,
+            pos
+          )
+          val (positional, keyword) = resolved.partition { case (name, _) => name.isEmpty }
+          val posArgs = positional.map { case (_, valueTree) => genExpr(valueTree) }
+          val kwPairs = keyword.map { case (name, valueTree) => (name, genExpr(valueTree)) }
+          PyApplyDynamic(callee, posArgs, kwPairs)(encoding.encodeType(app.tpe), pos)
+
+  /** Unwrap a `(String, Any)` tuple construction tree to its name and value
+   *  trees. Returns `None` if the first element is not a string literal.
+   *
+   *  Post-erasure, Scala tuple constructions appear as `Tuple2.apply(k, v)`
+   *  or `new Tuple2(k, v)`. We match any 2-argument `Apply` whose first
+   *  argument resolves to a literal string — in the context of
+   *  `applyDynamicNamed`'s varargs, the only trees that can reach this
+   *  matcher are `Tuple2` constructions anyway, so the permissive form
+   *  is safe. */
+  private def extractKwargPair(tree: Tree): Option[(String, Tree)] =
+    tree match
+      case Apply(_, List(nameArg, valueArg)) =>
+        literalString(nameArg).map(_ -> valueArg)
+      case Typed(inner, _)       => extractKwargPair(inner)
+      case Inlined(_, Nil, expr) => extractKwargPair(expr)
+      case Block(Nil, expr)      => extractKwargPair(expr)
+      case _                     => None
 
   private def genDynamicModuleRef(moduleArg: Tree, resultTpe: PyType, pos: PyPosition): PyTree =
     literalString(moduleArg) match
