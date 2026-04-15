@@ -149,10 +149,13 @@ object PyIREmitter:
       dedent()
 
     private def buildBasesList(cls: PyClassDef): List[String] =
-      val superPart =
-        cls.superClass.toList.filterNot(_ == PyClassName.ObjectClass).map(classIdentifier)
-      val interfacePart = cls.interfaces.map(classIdentifier)
-      superPart ++ interfacePart
+      // Only the (single) Scala superclass becomes a Python base. Mixed
+      // traits live in `cls.interfaces` but Python is duck-typed, so we
+      // do not emit them - that would require synthesizing a Python
+      // class for every nominal Scala trait, including stdlib internals
+      // like `scala.deriving.Mirror.Product` that have no semantic
+      // meaning at the Python runtime layer.
+      cls.superClass.toList.filterNot(_ == PyClassName.ObjectClass).map(classIdentifier)
 
     private def emitSyntheticInit(cls: PyClassDef): Unit =
       line("def __init__(self) -> None:")

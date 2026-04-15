@@ -40,9 +40,25 @@ object PyIRRuntime:
     def hasConstructor(method: PyMethodName): Boolean =
       constructors.allows(method)
 
-  private val PredefClass = PyClassName("scala.Predef")
-  private val CommandLineParserClass = PyClassName("scala.util.CommandLineParser")
+  // Module classes encode with a trailing `_` (from the trailing `$` on the
+  // raw java class name) to keep them distinct from a same-named companion
+  // class. Plain (non-module) classes carry no such suffix.
+  private val PredefClass = PyClassName("scala.Predef_")
+  private val CommandLineParserClass = PyClassName("scala.util.CommandLineParser_")
   private val ExceptionClass = PyClassName("java.lang.Exception")
+  private val MatchErrorClass = PyClassName("scala.MatchError")
+  private val EqualsClass = PyClassName("scala.Equals")
+  private val ProductClass = PyClassName("scala.Product")
+  private val SerializableClass = PyClassName("java.io.Serializable")
+  // `scala.runtime.Statics` is a Java-defined module class, so the encoder
+  // re-anchors it to its companion `Statics` class — no trailing `_`.
+  private val StaticsClass = PyClassName("scala.runtime.Statics")
+  // `scala.runtime.ScalaRunTime` is a Scala object whose module class
+  // therefore picks up the `_` suffix.
+  private val ScalaRunTimeClass = PyClassName("scala.runtime.ScalaRunTime_")
+  private val ScalaReflectEnumClass = PyClassName("scala.reflect.Enum")
+  private val NoSuchElementExceptionClass = PyClassName("java.util.NoSuchElementException")
+  private val IndexOutOfBoundsExceptionClass = PyClassName("java.lang.IndexOutOfBoundsException")
   private val CommandLineParserParseErrorClass = PyClassName("scala.util.CommandLineParser_ParseError")
   private val ModuleSerializationProxyClass = PyClassName("scala.runtime.ModuleSerializationProxy")
 
@@ -70,7 +86,19 @@ object PyIRRuntime:
       ProvidedClass(
         kind = PyClassKind.Class,
         superClass = None,
-        constructors = MethodMatcher(exact = Set(ObjectCtor))
+        constructors = MethodMatcher(exact = Set(ObjectCtor)),
+        // Allow toString/hashCode/equals/etc on java.lang.Object so the
+        // synthetic methods Scala generates on case classes can call
+        // through to Object-level fallbacks (`super.toString`, etc.).
+        // Encoded names are dunders or signature-mangled so prefix matching
+        // is safe enough for the runtime contract.
+        instanceMethods = MethodMatcher(
+          simpleNamePrefixes = Set(
+            "toString", "__str__", "hashCode", "__hash__",
+            "equals", "__eq__", "getClass", "clone", "finalize",
+            "wait", "notify", "notifyAll"
+          )
+        )
       ),
     PyClassName.StringClass ->
       ProvidedClass(
@@ -138,6 +166,80 @@ object PyIRRuntime:
         kind = PyClassKind.Class,
         superClass = Some(PyClassName.ObjectClass),
         constructors = MethodMatcher(exact = Set(ModuleSerializationProxyCtor))
+      ),
+    MatchErrorClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.RuntimeExceptionClass),
+        constructors = MethodMatcher(
+          // Synthesised in pattern-match lowering with a single Object scrutinee
+          simpleNamePrefixes = Set("<init>")
+        )
+      ),
+    EqualsClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None
+      ),
+    ProductClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        instanceMethods = MethodMatcher(
+          simpleNamePrefixes = Set(
+            "productArity", "productPrefix", "productElement",
+            "productElementName", "productElementNames", "productIterator",
+            "canEqual"
+          )
+        )
+      ),
+    SerializableClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None
+      ),
+    StaticsClass ->
+      ProvidedClass(
+        // Java-defined: encodes as a regular Class (the encoder re-anchors
+        // the module class to its companion class).
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        staticMethods = MethodMatcher(
+          simpleNamePrefixes = Set(
+            "mix", "mixLast", "finalizeHash", "anyHash", "longHash",
+            "doubleHash", "floatHash", "ioobe"
+          )
+        )
+      ),
+    ScalaReflectEnumClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None
+      ),
+    NoSuchElementExceptionClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.RuntimeExceptionClass),
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
+      ),
+    IndexOutOfBoundsExceptionClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.RuntimeExceptionClass),
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
+      ),
+    ScalaRunTimeClass ->
+      ProvidedClass(
+        kind = PyClassKind.ModuleClass,
+        superClass = Some(PyClassName.ObjectClass),
+        staticMethods = MethodMatcher(
+          simpleNamePrefixes = Set(
+            "_toString", "_hashCode", "_equals", "hash", "array_apply",
+            "array_update", "array_length", "wrapRefArray", "wrapIntArray",
+            "wrapLongArray", "wrapDoubleArray", "wrapFloatArray",
+            "wrapBooleanArray", "wrapByteArray", "wrapCharArray", "wrapShortArray"
+          )
+        )
       )
   )
 
@@ -224,7 +326,8 @@ object PyIRRuntime:
        |            return lambda x: x
        |        raise AttributeError(name)
        |
-       |_scpy_mod_scala_Predef_ = _Predef()
+       |# Module-class instance for `scala.Predef$` (encoded as `Predef_`):
+       |_scpy_mod_scala_Predef__ = _Predef()
        |
        |# -- scala.util.CommandLineParser (@main wrapper support) --
        |
@@ -237,11 +340,57 @@ object PyIRRuntime:
        |            return lambda error: _builtins.print(_builtins.str(error))
        |        raise AttributeError(name)
        |
-       |_scpy_mod_scala_util_CommandLineParser_ = _CommandLineParser()
+       |_scpy_mod_scala_util_CommandLineParser__ = _CommandLineParser()
        |
        |# -- scala.runtime.ModuleSerializationProxy --
        |
        |class ModuleSerializationProxy:
        |    def __init__(self, cls):
        |        self.cls = cls
+       |
+       |# -- scala.MatchError --
+       |
+       |class MatchError(Exception):
+       |    def __init__(self, obj):
+       |        super().__init__(_scpy_to_str(obj))
+       |
+       |# -- scala.runtime.Statics (case-class hashCode helpers) --
+       |#
+       |# Java-defined: the encoder strips the `$` from the module class and
+       |# re-anchors to the companion class `Statics`, so call sites land on
+       |# `Statics.mix(...)` (via classIdentifier), not on a `_scpy_mod_*`
+       |# variable.
+       |
+       |class _Statics:
+       |    def __getattr__(self, name):
+       |        if name.startswith("mix"):
+       |            return lambda acc, value: _scpy_i32(acc * 31 + (0 if value is None else hash(value)))
+       |        if name.startswith("finalizeHash"):
+       |            return lambda hash, length: _scpy_i32(hash ^ length)
+       |        if name.startswith("anyHash"):
+       |            return lambda x: 0 if x is None else _scpy_i32(hash(x))
+       |        if name.startswith("longHash") or name.startswith("doubleHash") or name.startswith("floatHash"):
+       |            return lambda x: 0 if x is None else _scpy_i32(hash(x))
+       |        raise AttributeError(name)
+       |
+       |# The PyApplyStatic emitter always routes through `_scpy_mod_*` even
+       |# for Java static helpers, so we expose the singleton under that name.
+       |_scpy_mod_scala_runtime_Statics_ = _Statics()
+       |
+       |# -- scala.runtime.ScalaRunTime --
+       |
+       |class _ScalaRunTime:
+       |    def __getattr__(self, name):
+       |        if name.startswith("_toString"):
+       |            return lambda obj: _scpy_to_str(obj)
+       |        if name.startswith("_hashCode"):
+       |            return lambda obj: 0 if obj is None else _scpy_i32(hash(obj))
+       |        if name.startswith("_equals"):
+       |            return lambda a, b: a == b
+       |        if name.startswith("hash"):
+       |            return lambda x: 0 if x is None else _scpy_i32(hash(x))
+       |        raise AttributeError(name)
+       |
+       |ScalaRunTime_ = _ScalaRunTime()
+       |_scpy_mod_scala_runtime_ScalaRunTime__ = ScalaRunTime_
        |""".stripMargin

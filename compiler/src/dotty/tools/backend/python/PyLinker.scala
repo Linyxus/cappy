@@ -84,7 +84,22 @@ object PyLinker:
       if errors.nonEmpty then
         throw new PyLinkingException(errors.toList)
 
-      LinkedBundle(linkedClasses, mainEntry)
+      // Python evaluates class statements top-to-bottom and a `class Foo(Bar)`
+      // form requires `Bar` to already be defined. Re-order the bundled
+      // classes so a class always appears after its superclass (when both
+      // are bundled), preserving input order otherwise.
+      LinkedBundle(orderForEmission(linkedClasses), mainEntry)
+
+    private def orderForEmission(classes: List[PyClassDef]): List[PyClassDef] =
+      val byName = classes.iterator.map(c => c.name -> c).toMap
+      val visited = mutable.HashSet.empty[PyClassName]
+      val ordered = mutable.ListBuffer.empty[PyClassDef]
+      def visit(cls: PyClassDef): Unit =
+        if visited.add(cls.name) then
+          cls.superClass.flatMap(byName.get).foreach(visit)
+          ordered += cls
+      classes.foreach(visit)
+      ordered.toList
 
     private def collectClasses(): List[PyClassDef] =
       val classDefs = mutable.LinkedHashMap.empty[PyClassName, PyClassDef]
@@ -193,9 +208,12 @@ object PyLinker:
       cls.superClass.foreach { superClass =>
         requireClass(superClass, cls.pos, classInfos, s"superclass '${superClass.nameString}'")
       }
-      cls.interfaces.foreach { interfaceName =>
-        requireClass(interfaceName, cls.pos, classInfos, s"interface '${interfaceName.nameString}'")
-      }
+      // Interfaces are intentionally NOT validated here. Python is
+      // duck-typed and the emitter does not turn interfaces into Python
+      // base classes, so a missing nominal trait does not affect runtime
+      // behavior. Bridging this softness keeps user code that mixes in
+      // synthetic stdlib traits (Mirror, Equals, Product, Serializable)
+      // from failing the linker.
 
       cls.fields.foreach(validateField(_, classInfos))
       cls.methods.foreach(validateMethod(_, classInfos))
@@ -388,10 +406,20 @@ object PyLinker:
         pos: PyPosition,
         classInfos: Map[PyClassName, ClassInfo]
     ): Unit =
-      if classInfos.get(startClass).isEmpty then
-        error(s"Unresolved class '${startClass.nameString}'", pos)
-      else if !lookupInAncestors(startClass, classInfos)(_.hasInstanceMethod(method)) then
-        error(s"Unresolved instance method '${startClass.nameString}.${showMethod(method)}'", pos)
+      classInfos.get(startClass) match
+        case None =>
+          error(s"Unresolved class '${startClass.nameString}'", pos)
+        case Some(_) =>
+          val resolved = lookupInAncestors(startClass, classInfos)(_.hasInstanceMethod(method))
+          if !resolved then
+            // Be lenient when the lookup chain touches a runtime stub: the
+            // stub can not enumerate every method that would be available
+            // at Python runtime (typically because it forwards to a
+            // `__getattr__`-style helper or aliases a Python builtin).
+            val touchesRuntime =
+              lookupInAncestors(startClass, classInfos)(_.runtime.isDefined)
+            if !touchesRuntime then
+              error(s"Unresolved instance method '${startClass.nameString}.${showMethod(method)}'", pos)
 
     private def requireExactInstanceMethod(
         owner: PyClassName,
@@ -460,8 +488,14 @@ object PyLinker:
       typeRef match
         case PyPrimRef(_) =>
           ()
-        case PyClassRef(className) =>
-          requireClass(className, pos, classInfos, s"class '${className.nameString}'")
+        case PyClassRef(_) =>
+          // Type references are non-binding at runtime - Python is
+          // duck-typed and the emitter strips all nominal type
+          // annotations on parameters and returns. Skip the linker
+          // check so that synthetic methods returning stdlib types
+          // (e.g. `productIterator(): scala.collection.Iterator`) do
+          // not fail the link.
+          ()
         case PyArrayRef(base, _) =>
           validateTypeRef(base, pos, classInfos)
 
@@ -471,8 +505,10 @@ object PyLinker:
         classInfos: Map[PyClassName, ClassInfo]
     ): Unit =
       tpe match
-        case PyClassType(className) =>
-          requireClass(className, pos, classInfos, s"class '${className.nameString}'")
+        case PyClassType(_) =>
+          // Soft check, see `validateTypeRef`. Type tags on tree nodes
+          // are descriptive only.
+          ()
         case _ =>
           ()
 

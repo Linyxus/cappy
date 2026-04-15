@@ -35,11 +35,13 @@ class PyEncoding(using Context):
       if sym.isAllOf(ModuleClass | JavaDefined) && sym.linkedClass.exists then
         sym.linkedClass
       else sym
+    // Preserve any trailing `$` on a Scala module class so a companion
+    // object and its companion class do not collide (the case class and
+    // its companion module otherwise both encode to the same name and
+    // the linker reports `Duplicate class`). `sanitizeName` later turns
+    // each `$` into `_`.
     val raw = rewired.javaClassName.toString
-    val clean =
-      if rewired.is(ModuleClass) && raw.endsWith("$") then raw.dropRight(1)
-      else raw
-    val segments = clean.split('.').toList.map(sanitizeName)
+    val segments = raw.split('.').toList.map(sanitizeName)
     PyClassName(segments.mkString("."))
 
   // --- Method names --------------------------------------------------
