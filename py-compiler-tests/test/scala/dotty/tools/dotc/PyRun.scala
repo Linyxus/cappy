@@ -13,8 +13,11 @@ object PyRun:
 
   def runPyCode(classPath: String): Status =
     // The classPath is a colon-separated list; the first entry is the output directory
-    val outDir = new File(classPath.split(File.pathSeparator).head)
-    val pyFiles = Option(outDir.listFiles()).getOrElse(Array.empty).filter(_.getName.endsWith(".py"))
+    val outDir = new File(classPath.split(File.pathSeparator).nn.head.nn)
+    val rawListing: Array[File] = outDir.listFiles() match
+      case null => Array.empty[File]
+      case arr  => arr.asInstanceOf[Array[File]]
+    val pyFiles = rawListing.filter(_.getName.nn.endsWith(".py"))
 
     if pyFiles.isEmpty then
       return Status.Failure("No .py files found in output directory: " + outDir)

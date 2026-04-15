@@ -127,6 +127,7 @@ trait CommonScalaSettings:
   val encoding: Setting[String] = StringSetting(RootSetting, "encoding", "encoding", "Specify character encoding used by source files.", Properties.sourceEncoding, aliases = List("--encoding"))
   val scalajs: Setting[Boolean] = BooleanSetting(RootSetting, "scalajs", "Compile in Scala.js mode (requires scalajs-library.jar on the classpath).", aliases = List("--scalajs"))
   val scalapy: Setting[Boolean] = BooleanSetting(RootSetting, "scalapy", "Compile to Python source files.", aliases = List("--scalapy"))
+  val XpythonEmitIr: Setting[Boolean] = BooleanSetting(RootSetting, "Xpython-emit-ir", "Also emit a .pyir binary artifact next to each .py file when -scalapy is set.", initialValue = true, aliases = List("--Xpython-emit-ir"))
   val replInitScript: Setting[String] = StringSetting(RootSetting, "repl-init-script", "code", "The code will be run on REPL startup.", "", aliases = List("--repl-init-script"))
   val replQuitAfterInit: Setting[Boolean] = BooleanSetting(RootSetting, "repl-quit-after-init", "Quit REPL after evaluating the init script.", aliases = List("--repl-quit-after-init"))
 
