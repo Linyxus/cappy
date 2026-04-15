@@ -487,6 +487,13 @@ private class PyCodeGen()(using genCtx: Context):
   private def genApply(app: Apply): PyTree =
     val pos = posOf(app)
 
+    // `throw <expr>` is encoded as `Apply(<special-ops>.throw, [expr])`
+    // by `tpd.Throw`. The owner `<special-ops>` is a synthetic package
+    // class with no Python representation, so we lower the call to a
+    // PyIR Throw unary op.
+    if app.fun.symbol == defn.throwMethod then
+      return PyUnaryOp(PyUnaryCode.Throw, genExpr(app.args.head))(pos)
+
     app.fun match
       case id: Ident if encoding.externBindingOf(id.symbol).isDefined =>
         genExternCall(id.symbol, app.args, pos)
