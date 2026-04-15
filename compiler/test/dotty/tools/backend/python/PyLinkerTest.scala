@@ -57,7 +57,9 @@ class PyLinkerTest:
 
   @Test def acceptsRuntimeProvidedObjectCtorAndPredefMethods(): Unit =
     val childName = className("example.Child")
-    val predefClass = className("scala.Predef")
+    // Module classes encode with a trailing `_` (from the trailing `$`
+    // on the raw java class name).
+    val predefClass = className("scala.Predef_")
 
     val child = classDef(
       name = childName,
@@ -250,23 +252,28 @@ class PyLinkerTest:
     }
 
   @Test def rejectsUnprovidedRuntimeMembers(): Unit =
+    // Instance dispatch is intentionally lenient when the lookup chain
+    // touches a runtime stub (the stub forwards via `__getattr__`-style
+    // helpers and cannot enumerate every method). Static dispatch
+    // however is strict against the runtime contract: calling a name
+    // not in the matcher must fail.
+    val predefClass = className("scala.Predef_")
     val host = classDef(
       name = className("example.RuntimeMismatch"),
       methods = List(
         method(
           name = methodName("badRuntimeCall"),
-          body = PyApply(
+          body = PyApplyStatic(
             PyApplyFlags.empty,
-            PyStringLit("abc")(NoPos),
-            PyClassName.StringClass,
-            methodName("length", resultRef = PyPrimRef.IntRef),
+            predefClass,
+            methodName("totallyMissingHelper"),
             Nil
-          )(PyIntType, NoPos)
+          )(PyVoidType, NoPos)
         )
       )
     )
 
-    assertLinkError("Unresolved instance method 'java.lang.String.length():I'") {
+    assertLinkError("Unresolved static method 'scala.Predef_.totallyMissingHelper():V'") {
       PyLinker.link(List(PyLinker.Input(List(host), None)))
     }
 

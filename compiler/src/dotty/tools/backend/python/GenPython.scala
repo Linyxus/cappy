@@ -24,6 +24,7 @@ import dotty.tools.backend.ScalaPrimitives
 import dotty.tools.backend.ScalaPrimitivesOps.*
 
 import dotty.tools.backend.python.ir.pyir.*
+import dotty.tools.backend.python.ir.pyir.serialization.{PyIRFormat, PyIRSerializer}
 
 import scala.collection.mutable
 
@@ -943,6 +944,12 @@ private class PyCodeGen()(using genCtx: Context):
         writer.flush()
       finally writer.close()
     finally output.close()
+
+    if genCtx.settings.XpythonEmitIr.value then
+      val irFile = outputDirectory.fileNamed(sourceName + PyIRFormat.FileExtension)
+      val irOut  = irFile.bufferedOutput
+      try PyIRSerializer.serialize(linkedBundle.classes, linkedBundle.mainEntry, irOut)
+      finally irOut.close()
 
   private def reportLinkerErrors(errors: List[PyLinkingError]): Unit =
     errors.foreach { err =>

@@ -46,9 +46,15 @@ class PyRunTest:
 
   private def projectPythonMajorMinor: String =
     val cfg = repoRoot.toPath.resolve(".venv").resolve("pyvenv.cfg")
-    val versionInfo = Files.readAllLines(cfg, StandardCharsets.UTF_8).asScala.collectFirst {
-      case line if line.startsWith("version_info = ") => line.stripPrefix("version_info = ").trim
-    }.getOrElse(fail(s"Could not read version_info from ${cfg.toAbsolutePath}"))
+    val versionInfoOpt = Files.readAllLines(cfg, StandardCharsets.UTF_8).nn.asScala.collectFirst {
+      case line if line.startsWith("version_info = ") =>
+        line.stripPrefix("version_info = ").trim
+    }
+    val versionInfo: String = versionInfoOpt match
+      case Some(v) => v
+      case None =>
+        fail(s"Could not read version_info from ${cfg.toAbsolutePath}")
+        throw new AssertionError("unreachable")
     versionInfo.split('.').take(2).mkString(".")
 
   private def withTempOutDir[A](prefix: String)(body: File => A): A =
