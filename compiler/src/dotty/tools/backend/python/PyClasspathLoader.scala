@@ -34,18 +34,29 @@ object PyClasspathLoader:
     val visitedFiles = mutable.HashSet.empty[String]
 
     // Scan the output directory first so its fresh `.pyir` wins over
-    // any overlapping classpath entry.
+    // any overlapping classpath entry. Output-directory entries are
+    // tagged `User` (the CU's own freshly-emitted classes, always kept
+    // by the linker), classpath entries are tagged `Support` (DCE
+    // candidates).
+    //
+    // The output-dir scan is NON-RECURSIVE: emission writes
+    // `<sourceName>.pyir` directly at the top of the output dir, so
+    // subtrees (e.g. `library-py/target/.../classes/*.pyir` when
+    // `-d .` happens to equal cwd) are not our output. They will be
+    // picked up by the classpath scan below (as `Support`), so nothing
+    // is lost.
     outDir.foreach { dir =>
       val f = new File(dir)
-      if f.isDirectory then loadFromDir(f, visitedFiles, inputs)
+      if f.isDirectory then
+        loadFromDirTopLevel(f, PyLinker.InputSource.User, visitedFiles, inputs)
     }
 
     for entry <- cp.split(File.pathSeparator) do
       val f = new File(entry)
       if f.isFile && f.getName.endsWith(".jar") then
-        loadFromJar(f, visitedFiles, inputs)
+        loadFromJar(f, PyLinker.InputSource.Support, visitedFiles, inputs)
       else if f.isDirectory then
-        loadFromDir(f, visitedFiles, inputs)
+        loadFromDir(f, PyLinker.InputSource.Support, visitedFiles, inputs)
 
     inputs.toList
 
@@ -57,6 +68,7 @@ object PyClasspathLoader:
 
   private def loadFromJar(
       jarFile: File,
+      source: PyLinker.InputSource,
       visitedFiles: mutable.HashSet[String],
       inputs: mutable.ListBuffer[PyLinker.Input]
   ): Unit =
@@ -75,7 +87,7 @@ object PyClasspathLoader:
               val bytes = is.readAllBytes()
               val cu = PyIRDeserializer.deserialize(bytes)
               if cu.classes.nonEmpty then
-                inputs += PyLinker.Input(cu.classes, cu.mainEntry)
+                inputs += PyLinker.Input(cu.classes, cu.mainEntry, source)
             finally is.close()
       finally jar.close()
     catch
@@ -86,6 +98,7 @@ object PyClasspathLoader:
 
   private def loadFromDir(
       dir: File,
+      source: PyLinker.InputSource,
       visitedFiles: mutable.HashSet[String],
       inputs: mutable.ListBuffer[PyLinker.Input]
   ): Unit =
@@ -95,17 +108,41 @@ object PyClasspathLoader:
         for child <- children do
           if child.isDirectory then walk(child)
           else if child.getName.endsWith(".pyir") then
-            val canon =
-              try child.getCanonicalPath.nn catch case _: java.io.IOException => child.getAbsolutePath.nn
-            if visitedFiles.add(canon) then
-              try
-                val bytes = java.nio.file.Files.readAllBytes(child.toPath)
-                val cu = PyIRDeserializer.deserialize(bytes)
-                if cu.classes.nonEmpty then
-                  inputs += PyLinker.Input(cu.classes, cu.mainEntry)
-              catch
-                case e: PyIRException =>
-                  System.err.println(s"[scalapy] warning: skipping ${child.getName}: ${e.getMessage}")
-                case e: java.io.IOException =>
-                  System.err.println(s"[scalapy] warning: cannot read ${child.getName}: ${e.getMessage}")
+            ingest(child, source, visitedFiles, inputs)
     walk(dir)
+
+  /** Scan only the direct contents of `dir`, not subdirectories.
+   *  Used for the output-directory scan: emitted `.pyir` files live
+   *  flat at the top of the output dir, and recursing would pick up
+   *  unrelated trees when the output dir overlaps the classpath. */
+  private def loadFromDirTopLevel(
+      dir: File,
+      source: PyLinker.InputSource,
+      visitedFiles: mutable.HashSet[String],
+      inputs: mutable.ListBuffer[PyLinker.Input]
+  ): Unit =
+    val children = dir.listFiles()
+    if children != null then
+      for child <- children do
+        if !child.isDirectory && child.getName.endsWith(".pyir") then
+          ingest(child, source, visitedFiles, inputs)
+
+  private def ingest(
+      child: File,
+      source: PyLinker.InputSource,
+      visitedFiles: mutable.HashSet[String],
+      inputs: mutable.ListBuffer[PyLinker.Input]
+  ): Unit =
+    val canon =
+      try child.getCanonicalPath.nn catch case _: java.io.IOException => child.getAbsolutePath.nn
+    if visitedFiles.add(canon) then
+      try
+        val bytes = java.nio.file.Files.readAllBytes(child.toPath)
+        val cu = PyIRDeserializer.deserialize(bytes)
+        if cu.classes.nonEmpty then
+          inputs += PyLinker.Input(cu.classes, cu.mainEntry, source)
+      catch
+        case e: PyIRException =>
+          System.err.println(s"[scalapy] warning: skipping ${child.getName}: ${e.getMessage}")
+        case e: java.io.IOException =>
+          System.err.println(s"[scalapy] warning: cannot read ${child.getName}: ${e.getMessage}")
