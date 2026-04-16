@@ -2637,7 +2637,7 @@ object Build {
       // Compile to PyIR without linking or emitting .py bundles.
       // The linker is skipped because stdlib CUs have cross-references that
       // only resolve at final user-code link time.
-      Compile / scalacOptions ++= Seq("-scalapy", "-Xpython-emit-ir", "-Xpython-emit-bundle:false"),
+      Compile / scalacOptions ++= Seq("-scalapy", "-scpy-ir-only"),
       target := target.value / "scala-library-py",
       autoScalaLibrary := false,
       bootstrappedScalaInstanceSettings,
