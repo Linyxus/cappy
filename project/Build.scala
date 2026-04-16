@@ -661,6 +661,7 @@ object Build {
     sjsJUnitTests,
     sjsCompilerTests,
     pyCompilerTests,
+    `scala-library-py`,
     `community-build`,
     dist,
     `dist-mac-x86_64`,
@@ -1259,6 +1260,11 @@ object Build {
       // Add the source directories for the stdlib (non-boostrapped)
       Compile / unmanagedSourceDirectories   := Seq(baseDirectory.value / "src"),
       Compile / unmanagedSourceDirectories   += baseDirectory.value / "src-bootstrapped",
+      // Make `scala.python.*` facades (PyAny, @extern, @name, etc.) part of the
+      // standard library so downstream code (including the compiler) can typecheck
+      // against them without a separate sidecar merge. Only the facades subtree
+      // is included — the override files in library-py/src/ are for scala-library-py.
+      Compile / unmanagedSourceDirectories   += (ThisBuild / baseDirectory).value / "library-py" / "facades",
       Compile / unmanagedResourceDirectories := Seq(baseDirectory.value / "resources"),
       Compile / compile / scalacOptions ++= Seq(
         "-opt", "-opt-inline:**,!java.**",
@@ -1567,9 +1573,6 @@ object Build {
       // Add the source directories for the compiler (non-boostrapped)
       Compile / unmanagedSourceDirectories   := Seq(baseDirectory.value / "src"),
       Compile / unmanagedSourceDirectories   += baseDirectory.value / "src-non-bootstrapped",
-      // Phase 0 workaround: keep `scala.python.*` available from the compiler runtime
-      // until we split it back out into its own published sidecar artifact.
-      Compile / unmanagedSourceDirectories   += (ThisBuild / baseDirectory).value / "library-py" / "src",
       Compile / unmanagedResourceDirectories += baseDirectory.value / "resources",
       // Add the test directories for the compiler (non-bootstrapped)
       Test / unmanagedSourceDirectories   := Seq(baseDirectory.value / "test"),
@@ -1706,9 +1709,6 @@ object Build {
       // Add the source directories for the compiler (boostrapped)
       Compile / unmanagedSourceDirectories   := Seq(baseDirectory.value / "src"),
       Compile / unmanagedSourceDirectories   += baseDirectory.value / "src-bootstrapped",
-      // Phase 0 workaround: keep `scala.python.*` available from the compiler runtime
-      // until we split it back out into its own published sidecar artifact.
-      Compile / unmanagedSourceDirectories   += (ThisBuild / baseDirectory).value / "library-py" / "src",
       Compile / unmanagedResourceDirectories += baseDirectory.value / "resources",
       // Add the test directories for the compiler (bootstrapped)
       Test / unmanagedSourceDirectories := Seq(baseDirectory.value / "test"),
@@ -2610,11 +2610,38 @@ object Build {
           s"-Ddotty.tests.classes.scalaLibrary=${(`scala-library-bootstrapped` / Compile / packageBin).value}",
           s"-Ddotty.tests.classes.scalaAsm=${findArtifactPath(externalDeps, "scala-asm")}",
           s"-Ddotty.tools.dotc.semanticdb.test=${(ThisBuild / baseDirectory).value/"tests"/"semanticdb"}",
+          s"-Ddotty.tests.classes.scalaLibraryPy=${(`scala-library-py` / Compile / packageBin).value}",
         )
       },
       bootstrappedScalaInstanceSettings,
       Test / fork := true,
       Test / forkOptions := (Test / forkOptions).value.withWorkingDirectory((ThisBuild / baseDirectory).value),
+      bspEnabled := false,
+    )
+
+  /** Scala standard library compiled for the Python backend.
+   *
+   *  Produces a jar containing `.class`/`.tasty` (for downstream typechecking)
+   *  and `.pyir` (for the Python linker). Modeled on `scala-library-sjs`.
+   */
+  lazy val `scala-library-py` = project.in(file("library-py"))
+    .dependsOn(`scala3-library-bootstrapped`)
+    .settings(
+      name          := "scala-library-py",
+      scalaVersion  := dottyNonBootstrappedVersion,
+      // Hand-written stdlib overrides in src/ plus the scala.python.* facades
+      Compile / unmanagedSourceDirectories := Seq(
+        baseDirectory.value / "src",
+        baseDirectory.value / "facades",
+      ),
+      // Compile to PyIR without linking or emitting .py bundles.
+      // The linker is skipped because stdlib CUs have cross-references that
+      // only resolve at final user-code link time.
+      Compile / scalacOptions ++= Seq("-scalapy", "-Xpython-emit-ir", "-Xpython-emit-bundle:false"),
+      target := target.value / "scala-library-py",
+      autoScalaLibrary := false,
+      bootstrappedScalaInstanceSettings,
+      publish / skip := true,
       bspEnabled := false,
     )
 

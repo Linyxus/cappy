@@ -49,14 +49,17 @@ val sjsSandbox = Build.sjsSandbox
 val sjsJUnitTests = Build.sjsJUnitTests
 val sjsCompilerTests = Build.sjsCompilerTests
 val pyCompilerTests = Build.pyCompilerTests
+val `scala-library-py` = Build.`scala-library-py`
 
 inThisBuild(Build.thisBuildSettings)
 inScope(Global)(Build.globalSettings)
 
-// Run every test for Python backend
+// Run every test for Python backend. Builds scala-library-py jar first
+// so that the test classpath includes .pyir artifacts.
 addCommandAlias(
   "testPyCompilation",
-  "; pyCompilerTests/Test/compile" +
+  "; scala-library-py/Compile/packageBin" +
+  " ; pyCompilerTests/Test/compile" +
   " ; scala3-compiler-bootstrapped/testOnly dotty.tools.backend.python.PyLinkerTest dotty.tools.backend.python.ir.pyir.serialization.PyIRSerializationTests" +
   " ; pyCompilerTests/test"
 )

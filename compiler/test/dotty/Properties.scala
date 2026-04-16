@@ -81,6 +81,9 @@ object Properties {
   /** scala-library jar */
   def scalaLibrary: String = sys.props("dotty.tests.classes.scalaLibrary")
 
+  /** scala-library-py jar (Python backend stdlib with .pyir artifacts) */
+  def scalaLibraryPy: String = sys.props("dotty.tests.classes.scalaLibraryPy")
+
   // TODO: Remove this once we migrate the test suite
   def usingScalaLibraryCCTasty: Boolean = true
 

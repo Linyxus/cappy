@@ -26,7 +26,11 @@ object PyIRRuntime:
       fields:          Set[PyFieldName] = Set.empty,
       instanceMethods: MethodMatcher = MethodMatcher.empty,
       staticMethods:   MethodMatcher = MethodMatcher.empty,
-      constructors:    MethodMatcher = MethodMatcher.empty
+      constructors:    MethodMatcher = MethodMatcher.empty,
+      /** When true, the linker allows unknown instance methods against
+       *  this class (it's backed by Python builtins, not compiled PyIR).
+       *  Only Java-provided types should set this. */
+      javaProvided:    Boolean = false
   ):
     def hasField(field: PyFieldName): Boolean =
       fields.contains(field)
@@ -40,27 +44,23 @@ object PyIRRuntime:
     def hasConstructor(method: PyMethodName): Boolean =
       constructors.allows(method)
 
-  // Module classes encode with a trailing `_` (from the trailing `$` on the
-  // raw java class name) to keep them distinct from a same-named companion
-  // class. Plain (non-module) classes carry no such suffix.
-  private val PredefClass = PyClassName("scala.Predef_")
-  private val CommandLineParserClass = PyClassName("scala.util.CommandLineParser_")
+  // Java-only class names. These have no Scala source and are backed by
+  // Python builtins (object, str, type, Exception hierarchy).
   private val ExceptionClass = PyClassName("java.lang.Exception")
-  private val MatchErrorClass = PyClassName("scala.MatchError")
-  private val EqualsClass = PyClassName("scala.Equals")
-  private val ProductClass = PyClassName("scala.Product")
   private val SerializableClass = PyClassName("java.io.Serializable")
-  // `scala.runtime.Statics` is a Java-defined module class, so the encoder
-  // re-anchors it to its companion `Statics` class — no trailing `_`.
-  private val StaticsClass = PyClassName("scala.runtime.Statics")
-  // `scala.runtime.ScalaRunTime` is a Scala object whose module class
-  // therefore picks up the `_` suffix.
-  private val ScalaRunTimeClass = PyClassName("scala.runtime.ScalaRunTime_")
-  private val ScalaReflectEnumClass = PyClassName("scala.reflect.Enum")
   private val NoSuchElementExceptionClass = PyClassName("java.util.NoSuchElementException")
   private val IndexOutOfBoundsExceptionClass = PyClassName("java.lang.IndexOutOfBoundsException")
-  private val CommandLineParserParseErrorClass = PyClassName("scala.util.CommandLineParser_ParseError")
-  private val ModuleSerializationProxyClass = PyClassName("scala.runtime.ModuleSerializationProxy")
+  private val IllegalArgumentExceptionClass = PyClassName("java.lang.IllegalArgumentException")
+  private val AssertionErrorClass = PyClassName("java.lang.AssertionError")
+  private val NumberClass = PyClassName("java.lang.Number")
+  private val IntegerClass = PyClassName("java.lang.Integer")
+  private val CharacterClass = PyClassName("java.lang.Character")
+  private val NotImplementedErrorClass = PyClassName("scala.NotImplementedError")
+  private val Function0Class = PyClassName("scala.Function0")
+  private val Function1Class = PyClassName("scala.Function1")
+  private val Function2Class = PyClassName("scala.Function2")
+  private val AnnotationClass = PyClassName("scala.annotation.Annotation")
+  private val StaticAnnotationClass = PyClassName("scala.annotation.StaticAnnotation")
 
   private val ObjectCtor =
     PyMethodName(
@@ -69,29 +69,24 @@ object PyIRRuntime:
       PyPrimRef.VoidRef
     )
 
-  private val ModuleSerializationProxyCtor =
-    PyMethodName(
-      PySimpleMethodName.Constructor,
-      List(PyClassRef(PyClassName.ClassClass)),
-      PyPrimRef.VoidRef
-    )
-
-  /** Runtime-provided nominal classes and their explicit member surface.
+  /** Java-provided nominal classes.
    *
-   *  Keep this small and deliberate. Anything not listed here must be
-   *  emitted by the input `PyIR` bundle or the linker rejects it.
+   *  These are the irreducible core: types with no Scala source that are
+   *  backed by Python builtins. Everything else (Predef, Statics,
+   *  ScalaRunTime, Product, Equals, MatchError, etc.) is now compiled
+   *  from `scala-library-py` into `.pyir` artifacts and loaded from the
+   *  classpath at link time.
+   *
+   *  All entries set `javaProvided = true` so the linker allows unknown
+   *  instance methods (Python builtins expose methods via `__getattr__`).
    */
   private[python] val providedClasses: Map[PyClassName, ProvidedClass] = Map(
     PyClassName.ObjectClass ->
       ProvidedClass(
         kind = PyClassKind.Class,
         superClass = None,
+        javaProvided = true,
         constructors = MethodMatcher(exact = Set(ObjectCtor)),
-        // Allow toString/hashCode/equals/etc on java.lang.Object so the
-        // synthetic methods Scala generates on case classes can call
-        // through to Object-level fallbacks (`super.toString`, etc.).
-        // Encoded names are dunders or signature-mangled so prefix matching
-        // is safe enough for the runtime contract.
         instanceMethods = MethodMatcher(
           simpleNamePrefixes = Set(
             "toString", "__str__", "hashCode", "__hash__",
@@ -103,144 +98,152 @@ object PyIRRuntime:
     PyClassName.StringClass ->
       ProvidedClass(
         kind = PyClassKind.Class,
-        superClass = Some(PyClassName.ObjectClass)
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true
       ),
     PyClassName.ClassClass ->
       ProvidedClass(
         kind = PyClassKind.Class,
-        superClass = Some(PyClassName.ObjectClass)
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true
       ),
     PyClassName.ThrowableClass ->
       ProvidedClass(
         kind = PyClassKind.Class,
-        superClass = Some(PyClassName.ObjectClass)
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
       ),
     ExceptionClass ->
       ProvidedClass(
         kind = PyClassKind.Class,
-        superClass = Some(PyClassName.ThrowableClass)
+        superClass = Some(PyClassName.ThrowableClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
       ),
     PyClassName.RuntimeExceptionClass ->
       ProvidedClass(
         kind = PyClassKind.Class,
-        superClass = Some(ExceptionClass)
+        superClass = Some(ExceptionClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
       ),
     PyClassName.NullPointerExceptionClass ->
       ProvidedClass(
         kind = PyClassKind.Class,
-        superClass = Some(PyClassName.RuntimeExceptionClass)
+        superClass = Some(PyClassName.RuntimeExceptionClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
       ),
     PyClassName.ArithmeticExceptionClass ->
       ProvidedClass(
         kind = PyClassKind.Class,
-        superClass = Some(PyClassName.RuntimeExceptionClass)
+        superClass = Some(PyClassName.RuntimeExceptionClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
       ),
     PyClassName.ClassCastExceptionClass ->
       ProvidedClass(
         kind = PyClassKind.Class,
-        superClass = Some(PyClassName.RuntimeExceptionClass)
-      ),
-    PredefClass ->
-      ProvidedClass(
-        kind = PyClassKind.ModuleClass,
-        superClass = Some(PyClassName.ObjectClass),
-        staticMethods = MethodMatcher(
-          simpleNamePrefixes = Set("println", "print", "assert", "require", "identity", "locally")
-        )
-      ),
-    CommandLineParserClass ->
-      ProvidedClass(
-        kind = PyClassKind.ModuleClass,
-        superClass = Some(PyClassName.ObjectClass),
-        staticMethods = MethodMatcher(
-          simpleNamePrefixes = Set("showError")
-        )
-      ),
-    CommandLineParserParseErrorClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(ExceptionClass)
-      ),
-    ModuleSerializationProxyClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.ObjectClass),
-        constructors = MethodMatcher(exact = Set(ModuleSerializationProxyCtor))
-      ),
-    MatchErrorClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
         superClass = Some(PyClassName.RuntimeExceptionClass),
-        constructors = MethodMatcher(
-          // Synthesised in pattern-match lowering with a single Object scrutinee
-          simpleNamePrefixes = Set("<init>")
-        )
-      ),
-    EqualsClass ->
-      ProvidedClass(
-        kind = PyClassKind.Interface,
-        superClass = None
-      ),
-    ProductClass ->
-      ProvidedClass(
-        kind = PyClassKind.Interface,
-        superClass = None,
-        instanceMethods = MethodMatcher(
-          simpleNamePrefixes = Set(
-            "productArity", "productPrefix", "productElement",
-            "productElementName", "productElementNames", "productIterator",
-            "canEqual"
-          )
-        )
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
       ),
     SerializableClass ->
       ProvidedClass(
         kind = PyClassKind.Interface,
-        superClass = None
-      ),
-    StaticsClass ->
-      ProvidedClass(
-        // Java-defined: encodes as a regular Class (the encoder re-anchors
-        // the module class to its companion class).
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.ObjectClass),
-        staticMethods = MethodMatcher(
-          simpleNamePrefixes = Set(
-            "mix", "mixLast", "finalizeHash", "anyHash", "longHash",
-            "doubleHash", "floatHash", "ioobe"
-          )
-        )
-      ),
-    ScalaReflectEnumClass ->
-      ProvidedClass(
-        kind = PyClassKind.Interface,
-        superClass = None
+        superClass = None,
+        javaProvided = true
       ),
     NoSuchElementExceptionClass ->
       ProvidedClass(
         kind = PyClassKind.Class,
         superClass = Some(PyClassName.RuntimeExceptionClass),
+        javaProvided = true,
         constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
       ),
     IndexOutOfBoundsExceptionClass ->
       ProvidedClass(
         kind = PyClassKind.Class,
         superClass = Some(PyClassName.RuntimeExceptionClass),
+        javaProvided = true,
         constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
       ),
-    ScalaRunTimeClass ->
+    IllegalArgumentExceptionClass ->
       ProvidedClass(
-        kind = PyClassKind.ModuleClass,
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.RuntimeExceptionClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
+      ),
+    AssertionErrorClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(ExceptionClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
+      ),
+    NumberClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
         superClass = Some(PyClassName.ObjectClass),
-        staticMethods = MethodMatcher(
-          simpleNamePrefixes = Set(
-            "_toString", "_hashCode", "_equals", "hash", "array_apply",
-            "array_update", "array_length", "wrapRefArray", "wrapIntArray",
-            "wrapLongArray", "wrapDoubleArray", "wrapFloatArray",
-            "wrapBooleanArray", "wrapByteArray", "wrapCharArray", "wrapShortArray"
-          )
-        )
-      )
+        javaProvided = true
+      ),
+    IntegerClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(NumberClass),
+        javaProvided = true,
+        staticMethods = MethodMatcher(simpleNamePrefixes = Set("rotateLeft", "parseInt"))
+      ),
+    CharacterClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true
+      ),
+    NotImplementedErrorClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(ExceptionClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
+      ),
+    Function0Class ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("apply"))
+      ),
+    Function1Class ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("apply"))
+      ),
+    Function2Class ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("apply"))
+      ),
+    AnnotationClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
+      ),
+    StaticAnnotationClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(AnnotationClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
+      ),
   )
 
   private[python] def providedClass(className: PyClassName): Option[ProvidedClass] =
@@ -272,9 +275,42 @@ object PyIRRuntime:
        |#
        |# Names prefixed with _scpy_ are compiler-invented and don't
        |# correspond to Scala source identifiers.
+       |#
+       |# This preamble contains compiler-intrinsic helpers plus thin stubs
+       |# for Java-only types (the exception hierarchy, annotation base
+       |# classes, etc.) that compiled Scala code extends.
        |import struct
        |import builtins as _builtins
        |from typing import Any
+       |
+       |# -- Java exception hierarchy stubs --
+       |# Python only has Exception; Scala's JVM-rooted hierarchy needs
+       |# nominal Python classes so `class MatchError(RuntimeException):`
+       |# resolves at Python runtime.
+       |class Throwable(Exception):
+       |    pass
+       |class RuntimeException(Throwable):
+       |    pass
+       |class NullPointerException(RuntimeException):
+       |    pass
+       |class ArithmeticException(RuntimeException):
+       |    pass
+       |class ClassCastException(RuntimeException):
+       |    pass
+       |class IndexOutOfBoundsException(RuntimeException):
+       |    pass
+       |class IllegalArgumentException(RuntimeException):
+       |    pass
+       |class AssertionError(Throwable):
+       |    pass
+       |class NotImplementedError(Throwable):
+       |    pass
+       |class NoSuchElementException(RuntimeException):
+       |    pass
+       |class Annotation:
+       |    pass
+       |class StaticAnnotation(Annotation):
+       |    pass
        |
        |# -- Compiler-invented: numeric wrapping (Scala overflow semantics) --
        |
@@ -296,101 +332,4 @@ object PyIRRuntime:
        |    if x is False:
        |        return "false"
        |    return _builtins.str(x)
-       |
-       |# -- scala.Predef --
-       |#
-       |# The compiler emits signature-encoded method names like
-       |# `println__Ljava_lang_Object__V`. We route them through
-       |# `__getattr__` prefix dispatch so the runtime doesn't need
-       |# to enumerate every overload.
-       |
-       |class _Predef:
-       |    def __getattr__(self, name):
-       |        if name.startswith("println"):
-       |            return lambda *args: _builtins.print(*args)
-       |        if name.startswith("print"):
-       |            return lambda *args: _builtins.print(*args, end="")
-       |        if name.startswith("assert"):
-       |            def _assert(cond, msg=None):
-       |                if msg is not None:
-       |                    assert cond, msg
-       |                else:
-       |                    assert cond
-       |            return _assert
-       |        if name.startswith("require"):
-       |            def _require(cond, msg=None):
-       |                if not cond:
-       |                    raise ValueError(msg if msg else "requirement failed")
-       |            return _require
-       |        if name.startswith("identity") or name.startswith("locally"):
-       |            return lambda x: x
-       |        raise AttributeError(name)
-       |
-       |# Module-class instance for `scala.Predef$` (encoded as `Predef_`):
-       |_scpy_mod_scala_Predef__ = _Predef()
-       |
-       |# -- scala.util.CommandLineParser (@main wrapper support) --
-       |
-       |class CommandLineParser_ParseError(Exception):
-       |    pass
-       |
-       |class _CommandLineParser:
-       |    def __getattr__(self, name):
-       |        if name.startswith("showError"):
-       |            return lambda error: _builtins.print(_builtins.str(error))
-       |        raise AttributeError(name)
-       |
-       |_scpy_mod_scala_util_CommandLineParser__ = _CommandLineParser()
-       |
-       |# -- scala.runtime.ModuleSerializationProxy --
-       |
-       |class ModuleSerializationProxy:
-       |    def __init__(self, cls):
-       |        self.cls = cls
-       |
-       |# -- scala.MatchError --
-       |
-       |class MatchError(Exception):
-       |    def __init__(self, obj):
-       |        super().__init__(_scpy_to_str(obj))
-       |
-       |# -- scala.runtime.Statics (case-class hashCode helpers) --
-       |#
-       |# Java-defined: the encoder strips the `$` from the module class and
-       |# re-anchors to the companion class `Statics`, so call sites land on
-       |# `Statics.mix(...)` (via classIdentifier), not on a `_scpy_mod_*`
-       |# variable.
-       |
-       |class _Statics:
-       |    def __getattr__(self, name):
-       |        if name.startswith("mix"):
-       |            return lambda acc, value: _scpy_i32(acc * 31 + (0 if value is None else hash(value)))
-       |        if name.startswith("finalizeHash"):
-       |            return lambda hash, length: _scpy_i32(hash ^ length)
-       |        if name.startswith("anyHash"):
-       |            return lambda x: 0 if x is None else _scpy_i32(hash(x))
-       |        if name.startswith("longHash") or name.startswith("doubleHash") or name.startswith("floatHash"):
-       |            return lambda x: 0 if x is None else _scpy_i32(hash(x))
-       |        raise AttributeError(name)
-       |
-       |# The PyApplyStatic emitter always routes through `_scpy_mod_*` even
-       |# for Java static helpers, so we expose the singleton under that name.
-       |_scpy_mod_scala_runtime_Statics_ = _Statics()
-       |
-       |# -- scala.runtime.ScalaRunTime --
-       |
-       |class _ScalaRunTime:
-       |    def __getattr__(self, name):
-       |        if name.startswith("_toString"):
-       |            return lambda obj: _scpy_to_str(obj)
-       |        if name.startswith("_hashCode"):
-       |            return lambda obj: 0 if obj is None else _scpy_i32(hash(obj))
-       |        if name.startswith("_equals"):
-       |            return lambda a, b: a == b
-       |        if name.startswith("hash"):
-       |            return lambda x: 0 if x is None else _scpy_i32(hash(x))
-       |        raise AttributeError(name)
-       |
-       |ScalaRunTime_ = _ScalaRunTime()
-       |_scpy_mod_scala_runtime_ScalaRunTime__ = ScalaRunTime_
        |""".stripMargin
