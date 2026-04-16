@@ -55,11 +55,8 @@ class PyLinkerTest:
     assertTrue(emitted.contains("class Main"))
     assertTrue(emitted.contains("if __name__ == \"__main__\":"))
 
-  @Test def acceptsRuntimeProvidedObjectCtorAndPredefMethods(): Unit =
+  @Test def acceptsJavaProvidedObjectCtorAndMethods(): Unit =
     val childName = className("example.Child")
-    // Module classes encode with a trailing `_` (from the trailing `$`
-    // on the raw java class name).
-    val predefClass = className("scala.Predef_")
 
     val child = classDef(
       name = childName,
@@ -75,12 +72,14 @@ class PyLinkerTest:
                 Nil
               )(PyVoidType, NoPos)
             ),
-            PyApplyStatic(
+            // Call toString on Object — java-provided, lenient lookup
+            PyApply(
               PyApplyFlags.empty,
-              predefClass,
-              methodName("println", List(PyClassRef(PyClassName.StringClass))),
-              List(PyStringLit("ok")(NoPos))
-            )(PyVoidType, NoPos)
+              PyThis()(PyClassType(childName), NoPos),
+              PyClassName.ObjectClass,
+              methodName("toString", resultRef = PyClassRef(PyClassName.StringClass)),
+              Nil
+            )(PyClassType(PyClassName.StringClass), NoPos)
           )(NoPos)
         )
       )
@@ -252,12 +251,10 @@ class PyLinkerTest:
     }
 
   @Test def rejectsUnprovidedRuntimeMembers(): Unit =
-    // Instance dispatch is intentionally lenient when the lookup chain
-    // touches a runtime stub (the stub forwards via `__getattr__`-style
-    // helpers and cannot enumerate every method). Static dispatch
-    // however is strict against the runtime contract: calling a name
-    // not in the matcher must fail.
-    val predefClass = className("scala.Predef_")
+    // Static dispatch against Java-provided classes is strict: the
+    // method must match the whitelist. Calling a name not in the
+    // matcher must fail.
+    val integerClass = className("java.lang.Integer")
     val host = classDef(
       name = className("example.RuntimeMismatch"),
       methods = List(
@@ -265,7 +262,7 @@ class PyLinkerTest:
           name = methodName("badRuntimeCall"),
           body = PyApplyStatic(
             PyApplyFlags.empty,
-            predefClass,
+            integerClass,
             methodName("totallyMissingHelper"),
             Nil
           )(PyVoidType, NoPos)
@@ -273,7 +270,7 @@ class PyLinkerTest:
       )
     )
 
-    assertLinkError("Unresolved static method 'scala.Predef_.totallyMissingHelper():V'") {
+    assertLinkError("Unresolved static method 'java.lang.Integer.totallyMissingHelper():V'") {
       PyLinker.link(List(PyLinker.Input(List(host), None)))
     }
 

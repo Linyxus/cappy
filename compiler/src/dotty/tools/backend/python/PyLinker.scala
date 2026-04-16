@@ -412,13 +412,14 @@ object PyLinker:
         case Some(_) =>
           val resolved = lookupInAncestors(startClass, classInfos)(_.hasInstanceMethod(method))
           if !resolved then
-            // Be lenient when the lookup chain touches a runtime stub: the
-            // stub can not enumerate every method that would be available
-            // at Python runtime (typically because it forwards to a
-            // `__getattr__`-style helper or aliases a Python builtin).
-            val touchesRuntime =
-              lookupInAncestors(startClass, classInfos)(_.runtime.isDefined)
-            if !touchesRuntime then
+            // Be lenient when the lookup chain touches a Java-provided
+            // class: these are backed by Python builtins and expose methods
+            // via `__getattr__`-style dispatch that can't be enumerated.
+            // Compiled stdlib classes (Predef, Product, etc.) are NOT lenient
+            // — missing methods on them are real errors.
+            val touchesJavaProvided =
+              lookupInAncestors(startClass, classInfos)(_.runtime.exists(_.javaProvided))
+            if !touchesJavaProvided then
               error(s"Unresolved instance method '${startClass.nameString}.${showMethod(method)}'", pos)
 
     private def requireExactInstanceMethod(
