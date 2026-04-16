@@ -12,6 +12,9 @@ This branch (`scala-py`) develops an experimental **Python backend** for the Sca
 # Run the full ScalaPy test suite (positive + negative).
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests"
 
+# Convenience command for running all ScalaPy related tests
+sbt --client "testPyCompilation"
+
 # Run a single method of the suite.
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests -- --tests=runScalaPy"
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests -- --tests=negScalaPy"
