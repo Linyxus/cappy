@@ -925,10 +925,18 @@ private class PyCodeGen()(using genCtx: Context):
   // --- File output ---------------------------------------------------
 
   private def linkAndWrite(): Unit =
-    val emitBundle = genCtx.settings.XpythonEmitBundle.value
+    val irOnly = genCtx.settings.scpyIrOnly.value
+    val outputDirectory = genCtx.settings.outputDir.value
+    val sourceName = genCtx.compilationUnit.source.file.name.stripSuffix(".scala")
 
-    if emitBundle then
-      // Full pipeline: link → emit .py → optionally emit .pyir.
+    def writeIr(classes: List[PyClassDef], mainEntry: Option[PyIREmitter.MainEntry]): Unit =
+      val irFile = outputDirectory.fileNamed(sourceName + PyIRFormat.FileExtension)
+      val irOut  = irFile.bufferedOutput
+      try PyIRSerializer.serialize(classes, mainEntry, irOut)
+      finally irOut.close()
+
+    if !irOnly then
+      // Full pipeline: link → emit .py + .pyir.
       // Prepend stdlib .pyir inputs from the classpath so the bundle
       // is self-contained.
       val stdlibInputs = PyClasspathLoader.loadInputs
@@ -941,8 +949,6 @@ private class PyCodeGen()(using genCtx: Context):
             reportLinkerErrors(err.errors)
             return
 
-      val outputDirectory = genCtx.settings.outputDir.value
-      val sourceName = genCtx.compilationUnit.source.file.name.stripSuffix(".scala")
       val outfile = outputDirectory.fileNamed(sourceName + ".py")
       val output = outfile.bufferedOutput
       try
@@ -953,22 +959,12 @@ private class PyCodeGen()(using genCtx: Context):
         finally writer.close()
       finally output.close()
 
-      if genCtx.settings.XpythonEmitIr.value then
-        val irFile = outputDirectory.fileNamed(sourceName + PyIRFormat.FileExtension)
-        val irOut  = irFile.bufferedOutput
-        try PyIRSerializer.serialize(linkedBundle.classes, linkedBundle.mainEntry, irOut)
-        finally irOut.close()
+      writeIr(linkedBundle.classes, linkedBundle.mainEntry)
     else
       // .pyir-only mode: skip linking and .py emission. Used for stdlib
       // compilation where cross-CU references are unresolved until final
       // link time.
-      if genCtx.settings.XpythonEmitIr.value then
-        val outputDirectory = genCtx.settings.outputDir.value
-        val sourceName = genCtx.compilationUnit.source.file.name.stripSuffix(".scala")
-        val irFile = outputDirectory.fileNamed(sourceName + PyIRFormat.FileExtension)
-        val irOut  = irFile.bufferedOutput
-        try PyIRSerializer.serialize(generatedClasses.toList, mainEntry, irOut)
-        finally irOut.close()
+      writeIr(generatedClasses.toList, mainEntry)
 
   private def reportLinkerErrors(errors: List[PyLinkingError]): Unit =
     errors.foreach { err =>

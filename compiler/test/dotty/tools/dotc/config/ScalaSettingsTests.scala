@@ -91,6 +91,23 @@ class ScalaSettingsTests:
     val nowr = new Diagnostic.Warning("This is a problem.".toMessage, util.NoSourcePosition)
     assertEquals(Action.Silent, sut.action(nowr))
 
+  @Test def `ScalaPy IR-only flag is parsed`: Unit =
+    val settings = ScalaSettings
+
+    val defaults = ArgsSummary(settings.defaultState, Nil, errors = Nil, warnings = Nil)
+    val defaultConf = settings.processArguments(defaults, processAll = true, skipped = Nil)
+    assertFalse(settings.scpyIrOnly.valueIn(defaultConf.sstate))
+
+    val enabledArgs = ArgsSummary(settings.defaultState, List("-scpy-ir-only"), errors = Nil, warnings = Nil)
+    val enabledConf = settings.processArguments(enabledArgs, processAll = true, skipped = Nil)
+    assertTrue(enabledConf.errors.isEmpty)
+    assertTrue(settings.scpyIrOnly.valueIn(enabledConf.sstate))
+
+    val disabledArgs = ArgsSummary(settings.defaultState, List("--scpy-ir-only:false"), errors = Nil, warnings = Nil)
+    val disabledConf = settings.processArguments(disabledArgs, processAll = true, skipped = Nil)
+    assertTrue(disabledConf.errors.isEmpty)
+    assertFalse(settings.scpyIrOnly.valueIn(disabledConf.sstate))
+
   @nowarn("cat=deprecation")
   @Test def `Deprecated options are correctly mapped to their replacements`: Unit =
     def createTestCase(oldSetting: Setting[?], newSetting: Setting[?], value: String = "") =
