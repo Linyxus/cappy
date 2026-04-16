@@ -929,42 +929,39 @@ private class PyCodeGen()(using genCtx: Context):
     val outputDirectory = genCtx.settings.outputDir.value
     val sourceName = genCtx.compilationUnit.source.file.name.stripSuffix(".scala")
 
-    def writeIr(classes: List[PyClassDef], mainEntry: Option[PyIREmitter.MainEntry]): Unit =
-      val irFile = outputDirectory.fileNamed(sourceName + PyIRFormat.FileExtension)
-      val irOut  = irFile.bufferedOutput
-      try PyIRSerializer.serialize(classes, mainEntry, irOut)
-      finally irOut.close()
+    // Write this CU's `.pyir` first, containing only its own classes.
+    // Mirrors Scala.js `JSCodeGen.genIRFile`: the filesystem is the
+    // source of truth for IR. The linker below reads back from the
+    // output directory (via PyClasspathLoader) rather than reusing the
+    // in-memory `generatedClasses`, so a repeat compile sees exactly one
+    // copy of each class regardless of classpath/output-dir overlap.
+    val irFile = outputDirectory.fileNamed(sourceName + PyIRFormat.FileExtension)
+    val irOut  = irFile.bufferedOutput
+    try PyIRSerializer.serialize(generatedClasses.toList, mainEntry, irOut)
+    finally irOut.close()
 
-    if !irOnly then
-      // Full pipeline: link → emit .py + .pyir.
-      // Prepend stdlib .pyir inputs from the classpath so the bundle
-      // is self-contained.
-      val stdlibInputs = PyClasspathLoader.loadInputs
-      val userInput = PyLinker.Input(generatedClasses.toList, mainEntry)
-      val linkedBundle =
-        try
-          PyLinker.link(userInput :: stdlibInputs)
-        catch
-          case err: PyLinkingException =>
-            reportLinkerErrors(err.errors)
-            return
+    if irOnly then return
 
-      val outfile = outputDirectory.fileNamed(sourceName + ".py")
-      val output = outfile.bufferedOutput
+    // Pick up the fresh `.pyir` (just written) plus any library `.pyir`
+    // reachable via `-classpath`, and hand the combined bundle to the
+    // linker.
+    val inputs = PyClasspathLoader.loadInputs
+    val linkedBundle =
+      try PyLinker.link(inputs)
+      catch
+        case err: PyLinkingException =>
+          reportLinkerErrors(err.errors)
+          return
+
+    val outfile = outputDirectory.fileNamed(sourceName + ".py")
+    val output = outfile.bufferedOutput
+    try
+      val writer = new java.io.PrintWriter(output)
       try
-        val writer = new java.io.PrintWriter(output)
-        try
-          PyIREmitter.emit(linkedBundle.classes, linkedBundle.mainEntry, writer)
-          writer.flush()
-        finally writer.close()
-      finally output.close()
-
-      writeIr(linkedBundle.classes, linkedBundle.mainEntry)
-    else
-      // .pyir-only mode: skip linking and .py emission. Used for stdlib
-      // compilation where cross-CU references are unresolved until final
-      // link time.
-      writeIr(generatedClasses.toList, mainEntry)
+        PyIREmitter.emit(linkedBundle.classes, linkedBundle.mainEntry, writer)
+        writer.flush()
+      finally writer.close()
+    finally output.close()
 
   private def reportLinkerErrors(errors: List[PyLinkingError]): Unit =
     errors.foreach { err =>
