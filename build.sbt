@@ -52,3 +52,11 @@ val pyCompilerTests = Build.pyCompilerTests
 
 inThisBuild(Build.thisBuildSettings)
 inScope(Global)(Build.globalSettings)
+
+// Run every test for Python backend
+addCommandAlias(
+  "testPyCompilation",
+  "; pyCompilerTests/Test/compile" +
+  " ; scala3-compiler-bootstrapped/testOnly dotty.tools.backend.python.PyLinkerTest dotty.tools.backend.python.ir.pyir.serialization.PyIRSerializationTests" +
+  " ; pyCompilerTests/test"
+)
