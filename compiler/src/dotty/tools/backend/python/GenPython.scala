@@ -943,11 +943,13 @@ private class PyCodeGen()(using genCtx: Context):
     if irOnly then return
 
     // Pick up the fresh `.pyir` (just written) plus any library `.pyir`
-    // reachable via `-classpath`, and hand the combined bundle to the
-    // linker.
+    // reachable via `-classpath`. User inputs (output-dir) are kept in
+    // full; support inputs (classpath) are subject to link-time DCE.
     val inputs = PyClasspathLoader.loadInputs
+    val (userInputs, supportInputs) =
+      inputs.partition(_.source == PyLinker.InputSource.User)
     val linkedBundle =
-      try PyLinker.link(inputs)
+      try PyLinker.link(userInputs, supportInputs)
       catch
         case err: PyLinkingException =>
           reportLinkerErrors(err.errors)

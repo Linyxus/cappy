@@ -27,9 +27,23 @@ final class PyLinkingException(val errors: List[PyLinkingError])
  */
 object PyLinker:
 
+  /** Provenance of a link input.
+   *
+   *  `User` — a `.pyir` produced by the compilation unit(s) currently
+   *  being compiled (written to the output directory). These classes are
+   *  unconditionally preserved in the emitted bundle.
+   *
+   *  `Support` — a `.pyir` sourced from the classpath (stdlib/library
+   *  jars or directories). These classes are subject to link-time
+   *  reachability filtering (V1: class-level DCE).
+   */
+  enum InputSource:
+    case User, Support
+
   final case class Input(
-      classes: List[PyClassDef],
-      mainEntry: Option[PyIREmitter.MainEntry]
+      classes:   List[PyClassDef],
+      mainEntry: Option[PyIREmitter.MainEntry],
+      source:    InputSource = InputSource.User
   )
 
   final case class LinkedBundle(
@@ -37,14 +51,25 @@ object PyLinker:
       mainEntry: Option[PyIREmitter.MainEntry]
   )
 
+  def link(userInputs: List[Input], supportInputs: List[Input]): LinkedBundle =
+    new Linker(userInputs, supportInputs).link()
+
+  /** Convenience overload for callers that don't distinguish sources
+   *  (e.g. unit tests). Inputs are partitioned by their `source` field. */
   def link(inputs: List[Input]): LinkedBundle =
-    new Linker(inputs).link()
+    val (userInputs, supportInputs) = inputs.partition(_.source == InputSource.User)
+    link(userInputs, supportInputs)
+
+  def linkAndEmit(userInputs: List[Input], supportInputs: List[Input], out: PrintWriter): Unit =
+    val bundle = link(userInputs, supportInputs)
+    PyIREmitter.emit(bundle.classes, bundle.mainEntry, out)
 
   def linkAndEmit(inputs: List[Input], out: PrintWriter): Unit =
     val bundle = link(inputs)
     PyIREmitter.emit(bundle.classes, bundle.mainEntry, out)
 
-  private final class Linker(inputs: List[Input]):
+  private final class Linker(userInputs: List[Input], supportInputs: List[Input]):
+    private val inputs = userInputs ++ supportInputs
     private val errors = mutable.ListBuffer.empty[PyLinkingError]
 
     private final case class ClassInfo(
@@ -74,11 +99,22 @@ object PyLinker:
           runtime.exists(_.hasConstructor(method))
 
     def link(): LinkedBundle =
-      val linkedClasses = collectClasses()
-      val classInfos = buildClassInfos(linkedClasses)
-      val mainEntry = collectMainEntry()
+      val allClasses = collectClasses()
+      val mainEntry  = collectMainEntry()
 
-      linkedClasses.foreach(validateClass(_, classInfos))
+      // Class-level reachability DCE. User classes (CU-local `.pyir`) are
+      // preserved verbatim; support classes (classpath `.pyir`) are
+      // kept only if transitively referenced from a user class, the main
+      // entry, or another kept class. See `PyReachability`.
+      val userClassNames =
+        userInputs.iterator.flatMap(_.classes).map(_.name).toSet
+      val (userClasses, supportClasses) =
+        allClasses.partition(c => userClassNames.contains(c.name))
+      val reach = PyReachability.analyze(userClasses, supportClasses, mainEntry)
+      val keptClasses = applyReachability(allClasses, reach)
+
+      val classInfos = buildClassInfos(keptClasses)
+      keptClasses.foreach(validateClass(_, classInfos))
       mainEntry.foreach(validateMainEntry(_, classInfos))
 
       if errors.nonEmpty then
@@ -88,7 +124,15 @@ object PyLinker:
       // form requires `Bar` to already be defined. Re-order the bundled
       // classes so a class always appears after its superclass (when both
       // are bundled), preserving input order otherwise.
-      LinkedBundle(orderForEmission(linkedClasses), mainEntry)
+      LinkedBundle(orderForEmission(keptClasses), mainEntry)
+
+    // V1 filter hook: class-level only. V2 will also map over each
+    // kept class to prune unreachable methods/fields.
+    private def applyReachability(
+        classes: List[PyClassDef],
+        reach:   PyReachability.Result
+    ): List[PyClassDef] =
+      classes.filter(c => reach.isReachable(c.name))
 
     private def orderForEmission(classes: List[PyClassDef]): List[PyClassDef] =
       val byName = classes.iterator.map(c => c.name -> c).toMap
