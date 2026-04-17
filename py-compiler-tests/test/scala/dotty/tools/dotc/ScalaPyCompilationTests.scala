@@ -25,8 +25,6 @@ class ScalaPyCompilationTests:
     cleanScalaPyOutput(testGroup)
     aggregateTests(
       compileFilesInDir("tests/pos-py", scalaPyOptions),
-      compileFilesInDir("tests/pos-py/javalib/markers", scalaPyOptions),
-      compileFilesInDir("tests/pos-py/javalib/function", scalaPyOptions),
     ).checkRuns()
 
   @Test def negScalaPy: Unit =
