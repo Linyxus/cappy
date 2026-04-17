@@ -455,6 +455,16 @@ private class PyCodeGen()(using genCtx: Context):
           case None =>
             if sym.is(Module) then
               PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
+            else if sym.owner.isClass && !sym.is(Method) && !sym.is(Module)
+                && !sym.is(Package)
+            then
+              // Bare-name read of an instance field — emit `self.field`.
+              // Matches the assign-LHS branch in `genAssignableLhs`.
+              val classTpe = PyClassType(encoding.encodeClassName(currentClassSym))
+              PySelect(
+                PyThis()(classTpe, pos),
+                encoding.encodeFieldName(sym)
+              )(encoding.encodeType(tree.tpe), pos)
             else
               PyVarRef(encoding.encodeLocalName(sym))(encoding.encodeType(tree.tpe), pos)
 
@@ -629,6 +639,15 @@ private class PyCodeGen()(using genCtx: Context):
       val isStaticTarget =
         sym.is(JavaStatic) || (sym.owner.is(ModuleClass) && !sym.isClassConstructor)
 
+      // Intercept `java.lang.String` instance methods — the runtime
+      // receiver is a Python `str` which has no `length__I`/`substring__I_I__…`
+      // etc. Map the most common calls to Python-native equivalents.
+      if !isStaticTarget && sym.owner == defn.StringClass then
+        app.fun match
+          case Select(qual, _) =>
+            return genStringCall(sym, genExpr(qual), args, resultTpe, pos)
+          case _ => ()
+
       app.fun match
         case _ if isStaticTarget =>
           PyApplyStatic(
@@ -655,6 +674,20 @@ private class PyCodeGen()(using genCtx: Context):
               methodName,
               args
             )(resultTpe, pos)
+          else if sym.owner.isClass then
+            // Bare-name call on an instance member — the implicit receiver
+            // is `this`. Scala 3's tree form elides `this.` on own-class
+            // members inside instance methods (and for val-accessors
+            // generated from `val x = ...`). Emit `self.method(...)` to
+            // reach the right storage at Python runtime.
+            val classTpe = PyClassType(encoding.encodeClassName(currentClassSym))
+            PyApply(
+              PyApplyFlags.empty,
+              PyThis()(classTpe, pos),
+              ownerName,
+              methodName,
+              args
+            )(resultTpe, pos)
           else
             PyApplyExternal(
               PyExternalName(methodName.encoded),
@@ -667,6 +700,61 @@ private class PyCodeGen()(using genCtx: Context):
             args
           )(resultTpe, pos)
     }
+
+  /** Map `java.lang.String` instance method calls onto Python-native
+   *  equivalents — the runtime receiver is a Python `str`, not a ported
+   *  Scala class, so encoded Scala method names like `length__I` don't
+   *  resolve. Unmapped methods fall back to attribute access which will
+   *  surface as a clean `AttributeError` rather than a silent miscompile.
+   */
+  private def genStringCall(
+      sym: Symbol,
+      recv: PyTree,
+      args: List[PyTree],
+      resultTpe: PyType,
+      pos: PyPosition
+  ): PyTree =
+    val name = sym.name.mangledString
+    def attr(attrName: String, callArgs: List[PyTree] = args): PyTree =
+      PyApplyDynamic(
+        PyAttrAccess(recv, attrName)(PyAnyType, pos),
+        callArgs, Nil
+      )(resultTpe, pos)
+    def external(helperName: String, callArgs: List[PyTree] = args): PyTree =
+      PyApplyExternal(PyExternalName(helperName), recv :: callArgs)(resultTpe, pos)
+    name match
+      case "length" =>
+        PyApplyExternal(PyExternalName("len"), List(recv))(resultTpe, pos)
+      case "charAt" =>
+        // Scala returns a Char (0-65535). `ord(s[i])` matches semantics.
+        PyApplyExternal(
+          PyExternalName("ord"),
+          List(PyArraySelect(recv, args.head)(PyCharType, pos))
+        )(resultTpe, pos)
+      case "substring" =>
+        // Dispatch to a runtime helper that handles both 1-arg and 2-arg
+        // slicing cleanly.
+        external("_scpy_str_substring")
+      case "startsWith"      => attr("startswith")
+      case "endsWith"        => attr("endswith")
+      case "indexOf"         => attr("find")
+      case "lastIndexOf"     => attr("rfind")
+      case "contains"        => external("_scpy_str_contains")
+      case "isEmpty"         => external("_scpy_str_isempty", Nil)
+      case "toLowerCase"     => attr("lower", Nil)
+      case "toUpperCase"     => attr("upper", Nil)
+      case "trim" | "strip"  => attr("strip", Nil)
+      case "replace"         => attr("replace")
+      case "equals"          => external("_scpy_str_equals")
+      case "equalsIgnoreCase" => external("_scpy_str_equals_ci")
+      case "hashCode"        =>
+        PyApplyExternal(PyExternalName("hash"), List(recv))(resultTpe, pos)
+      case "toString"        => recv
+      case "concat"          => external("_scpy_str_concat")
+      case _ =>
+        // Unmapped: emit attribute access + dynamic call so Python
+        // surfaces an AttributeError naming the method precisely.
+        attr(name)
 
   // --- TypeApply (isInstanceOf / asInstanceOf) -----------------------
 
@@ -734,6 +822,23 @@ private class PyCodeGen()(using genCtx: Context):
       // Binary operations
       case List(rhs) =>
         val rhsExpr = genExpr(rhs)
+        // For arithmetic and comparison, Scala/JVM promotes Int→Long→Float→Double
+        // based on the widest operand. Using only the receiver type produces
+        // `int / 2.0 → int // int = int`, so derive a dominant type from both sides.
+        val rhsType = rhs.tpe
+        val domType: Type =
+          if encoding.isDoubleType(receiverType) || encoding.isDoubleType(rhsType) then
+            defn.DoubleType
+          else if encoding.isFloatType(receiverType) || encoding.isFloatType(rhsType) then
+            defn.FloatType
+          else if encoding.isLongType(receiverType) || encoding.isLongType(rhsType) then
+            defn.LongType
+          else
+            receiverType
+        val arithType: Type =
+          code match
+            case ADD | SUB | MUL | DIV | MOD | LT | LE | GT | GE => domType
+            case _ => receiverType
         val op: PyBinaryCode = code match
           // Short-circuit booleans
           case ZOR  => BoolOr
@@ -758,50 +863,50 @@ private class PyCodeGen()(using genCtx: Context):
             else if encoding.isBooleanType(receiverType) then BoolNe
             else RefNe
           case LT =>
-            if encoding.isIntType(receiverType) then IntLt
-            else if encoding.isLongType(receiverType) then LongLt
-            else if encoding.isFloatType(receiverType) then FloatLt
+            if encoding.isIntType(domType) then IntLt
+            else if encoding.isLongType(domType) then LongLt
+            else if encoding.isFloatType(domType) then FloatLt
             else DoubleLt
           case LE =>
-            if encoding.isIntType(receiverType) then IntLe
-            else if encoding.isLongType(receiverType) then LongLe
-            else if encoding.isFloatType(receiverType) then FloatLe
+            if encoding.isIntType(domType) then IntLe
+            else if encoding.isLongType(domType) then LongLe
+            else if encoding.isFloatType(domType) then FloatLe
             else DoubleLe
           case GT =>
-            if encoding.isIntType(receiverType) then IntGt
-            else if encoding.isLongType(receiverType) then LongGt
-            else if encoding.isFloatType(receiverType) then FloatGt
+            if encoding.isIntType(domType) then IntGt
+            else if encoding.isLongType(domType) then LongGt
+            else if encoding.isFloatType(domType) then FloatGt
             else DoubleGt
           case GE =>
-            if encoding.isIntType(receiverType) then IntGe
-            else if encoding.isLongType(receiverType) then LongGe
-            else if encoding.isFloatType(receiverType) then FloatGe
+            if encoding.isIntType(domType) then IntGe
+            else if encoding.isLongType(domType) then LongGe
+            else if encoding.isFloatType(domType) then FloatGe
             else DoubleGe
-          // Arithmetic
+          // Arithmetic (widened to the dominant operand type)
           case ADD =>
-            if encoding.isIntType(receiverType) then IntAdd
-            else if encoding.isLongType(receiverType) then LongAdd
-            else if encoding.isFloatType(receiverType) then FloatAdd
+            if encoding.isIntType(domType) then IntAdd
+            else if encoding.isLongType(domType) then LongAdd
+            else if encoding.isFloatType(domType) then FloatAdd
             else DoubleAdd
           case SUB =>
-            if encoding.isIntType(receiverType) then IntSub
-            else if encoding.isLongType(receiverType) then LongSub
-            else if encoding.isFloatType(receiverType) then FloatSub
+            if encoding.isIntType(domType) then IntSub
+            else if encoding.isLongType(domType) then LongSub
+            else if encoding.isFloatType(domType) then FloatSub
             else DoubleSub
           case MUL =>
-            if encoding.isIntType(receiverType) then IntMul
-            else if encoding.isLongType(receiverType) then LongMul
-            else if encoding.isFloatType(receiverType) then FloatMul
+            if encoding.isIntType(domType) then IntMul
+            else if encoding.isLongType(domType) then LongMul
+            else if encoding.isFloatType(domType) then FloatMul
             else DoubleMul
           case DIV =>
-            if encoding.isIntType(receiverType) then IntDiv
-            else if encoding.isLongType(receiverType) then LongDiv
-            else if encoding.isFloatType(receiverType) then FloatDiv
+            if encoding.isIntType(domType) then IntDiv
+            else if encoding.isLongType(domType) then LongDiv
+            else if encoding.isFloatType(domType) then FloatDiv
             else DoubleDiv
           case MOD =>
-            if encoding.isIntType(receiverType) then IntMod
-            else if encoding.isLongType(receiverType) then LongMod
-            else if encoding.isFloatType(receiverType) then FloatMod
+            if encoding.isIntType(domType) then IntMod
+            else if encoding.isLongType(domType) then LongMod
+            else if encoding.isFloatType(domType) then FloatMod
             else DoubleMod
           // Bitwise
           case OR  => if encoding.isIntType(receiverType) then IntOr  else LongOr
@@ -817,12 +922,18 @@ private class PyCodeGen()(using genCtx: Context):
       case _ => PyUnitLit()(pos)
 
   /** String concatenation. The receiver is always String (post-erasure);
-   *  wrap any non-String operand in `_scpy_to_str` so Python `+` succeeds. */
+   *  wrap any non-String operand in `_scpy_to_str` so Python `+` succeeds.
+   *  `Char` operands get `chr(…)` instead — our encoding stores Chars as
+   *  ints, and Scala's `String + Char` semantics require the 1-character
+   *  rendering, not the numeric one. */
   private def genStringConcat(receiver: Tree, args: List[Tree], pos: PyPosition): PyTree =
     def asString(t: Tree): PyTree =
       val e = genExpr(t)
       if e.tpe == PyStringType then e
-      else PyApplyExternal(PyExternalName("_scpy_to_str"), List(e))(PyStringType, pos)
+      else if encoding.isCharType(t.tpe) then
+        PyApplyExternal(PyExternalName("chr"), List(e))(PyStringType, pos)
+      else
+        PyApplyExternal(PyExternalName("_scpy_to_str"), List(e))(PyStringType, pos)
     PyBinaryOp(PyBinaryCode.StringConcat, asString(receiver), asString(args.head))(pos)
 
   private def genArrayOp(
