@@ -264,9 +264,10 @@ private class PyCodeGen()(using genCtx: Context):
   private def genMethod(dd: DefDef): Option[PyMethodDef] =
     val sym = dd.symbol
 
-    // Skip primitives and bridges
+    // Skip primitives. Bridge methods are kept: erased Closures
+    // sometimes point at a synthetic `$anonfun$adapted$N` bridge that
+    // adapts boxed `Object` args to a specialised primitive lambda body.
     if primitives.isPrimitive(sym) then return None
-    if sym.is(Bridge) then return None
 
     currentMethodSym = sym
     val pos = posOf(dd)
@@ -384,7 +385,25 @@ private class PyCodeGen()(using genCtx: Context):
     val pos = posOf(tree)
     tree match
       case id: Ident =>
-        PyVarRef(encoding.encodeLocalName(id.symbol))(encoding.encodeType(tree.tpe), pos)
+        val sym = id.symbol
+        // A bare `Ident` inside a class body can resolve to an
+        // instance field (e.g. the `_outer` param-accessor) rather than
+        // a local. Treat it as `this.field = rhs` so the generated
+        // Python touches the right storage. We detect "instance field"
+        // as: owner is a class + not a Method + not a static (Module
+        // singleton) member. `Param` alone is not disqualifying — a
+        // constructor param-accessor can keep both `Param` and `ParamAccessor`
+        // flags while still representing a field on the class.
+        if sym.owner.isClass && !sym.is(Method) && !sym.is(Module)
+            && !sym.is(Package)
+        then
+          val classTpe = PyClassType(encoding.encodeClassName(currentClassSym))
+          PySelect(
+            PyThis()(classTpe, pos),
+            encoding.encodeFieldName(sym)
+          )(encoding.encodeType(tree.tpe), pos)
+        else
+          PyVarRef(encoding.encodeLocalName(sym))(encoding.encodeType(tree.tpe), pos)
       case sel @ Select(qual, _) =>
         PySelect(
           genExpr(qual),
@@ -401,6 +420,9 @@ private class PyCodeGen()(using genCtx: Context):
     tree match
       case Literal(value) =>
         genLiteral(value, pos)
+
+      case seq: JavaSeqLiteral =>
+        genArrayLiteral(seq.tpe, seq.elems, pos)
 
       case If(cond, thenp, elsep) =>
         PyIf(genExpr(cond), genExpr(thenp), genExpr(elsep))(encoding.encodeType(tree.tpe), pos)
@@ -495,6 +517,15 @@ private class PyCodeGen()(using genCtx: Context):
     if app.fun.symbol == defn.throwMethod then
       return PyUnaryOp(PyUnaryCode.Throw, genExpr(app.args.head))(pos)
 
+    genArrayFactoryApply(app, pos) match
+      case Some(arrayValue) =>
+        return arrayValue
+      case None =>
+        ()
+
+    if app.fun.symbol == defn.newArrayMethod then
+      return genRuntimeNewArray(app, pos)
+
     app.fun match
       case id: Ident if encoding.externBindingOf(id.symbol).isDefined =>
         genExternCall(id.symbol, app.args, pos)
@@ -510,7 +541,7 @@ private class PyCodeGen()(using genCtx: Context):
       case Select(New(tpt), nme.CONSTRUCTOR) =>
         genApplyNew(app, pos)
 
-      case sel @ Select(_, _) if encoding.isFacadeOwner(sel.symbol.owner) =>
+      case sel @ Select(_, _) if sel.symbol.exists && encoding.isFacadeOwner(sel.symbol.owner) =>
         if sel.symbol.is(Accessor) && app.args.isEmpty then genFacadeSelect(sel, pos)
         else genFacadeCall(sel, app.args, pos)
 
@@ -544,6 +575,39 @@ private class PyCodeGen()(using genCtx: Context):
     val className = encoding.encodeClassName(classSym)
     val ctorName = encoding.encodeMethodName(fun.symbol)
     PyNew(className, ctorName, args.map(genExpr))(pos)
+
+  private def genArrayFactoryApply(app: Apply, pos: PyPosition): Option[PyTree] =
+    val sym = app.fun.symbol
+    if sym.exists && sym.owner == defn.ArrayModuleClass && sym.name == nme.apply then
+      app.args match
+        case List(seq: JavaSeqLiteral) =>
+          Some(genArrayLiteral(app.tpe, seq.elems, pos))
+        case _ =>
+          None
+    else
+      None
+
+  private def genRuntimeNewArray(app: Apply, pos: PyPosition): PyTree =
+    val Apply(_, args) = app
+    args match
+      case List(_, Literal(arrayClassConstant), dimsArray: JavaSeqLiteral) =>
+        dimsArray.elems match
+          case singleDim :: Nil =>
+            PyNewArray(arrayElemTypeRef(arrayClassConstant.typeValue), genExpr(singleDim))(pos)
+          case _ =>
+            genNormalApply(app, pos)
+      case _ =>
+        genNormalApply(app, pos)
+
+  private def genArrayLiteral(arrayTp: Type, elems: List[Tree], pos: PyPosition): PyTree =
+    PyArrayValue(arrayElemTypeRef(arrayTp), elems.map(genExpr))(pos)
+
+  private def arrayElemTypeRef(arrayTp: Type): PyTypeRef =
+    arrayTp match
+      case JavaArrayType(elemTp) =>
+        encoding.encodeTypeRef(elemTp)
+      case _ =>
+        PyClassRef(PyClassName.ObjectClass)
 
   private def genFacadeNew(app: Apply, pos: PyPosition): PyTree =
     val Apply(Select(New(tpt), _), args) = app: @unchecked
@@ -908,19 +972,89 @@ private class PyCodeGen()(using genCtx: Context):
 
   // --- Closure generation --------------------------------------------
 
-  /** Emit a Scala closure. Known limitation: captures are silently
-   *  dropped (same broken behavior as the legacy backend). We emit a
-   *  `self.<method>` Python bound-method reference which at least
-   *  syntactically typechecks. */
+  /** Emit a Scala closure as a Python lambda that forwards to the
+   *  erasure-synthesised target method.
+   *
+   *  A `Closure(env, meth, tpt)` node produced by the erasure phase says:
+   *  "build an instance of the SAM type `tpt.tpe` whose abstract method,
+   *  when invoked, calls `meth(env..., args...)`."
+   *
+   *  We model this as:
+   *    PyClosure(
+   *      params = <one PyParamDef per SAM-method parameter>,
+   *      body   = <static call to `meth` with env + the SAM params>,
+   *      captureValues = <evaluated env>)
+   *
+   *  The emitter renders this as `(lambda p0, p1, ...: owner.meth(e0, e1, ..., p0, p1, ...))`;
+   *  Python's lexical scoping handles capture of `env` values.
+   */
   private def genClosure(tree: Closure): PyTree =
     val pos = posOf(tree)
     val targetSym = tree.meth.symbol
     val methodName = encoding.encodeMethodName(targetSym)
-    val owner = encoding.encodeClassName(currentClassSym)
-    PySelect(
-      PyThis()(PyClassType(owner), pos),
-      PyFieldName(owner, PySimpleFieldName(methodName.encoded))
-    )(PyAnyType, pos)
+    val ownerClass = encoding.encodeClassName(targetSym.owner)
+    val resultTpe = encoding.encodeType(targetSym.info.finalResultType)
+
+    val isStaticTarget =
+      targetSym.is(JavaStatic) || (targetSym.owner.is(ModuleClass) && !targetSym.isClassConstructor)
+
+    val targetParamTypes = targetSym.info.paramInfoss.flatten
+    val envValues = tree.env.map(genExpr)
+    val samParamCount = targetParamTypes.length - envValues.length
+    val samParamInfos = targetParamTypes.drop(envValues.length)
+
+    val samParams: List[PyParamDef] = samParamInfos.zipWithIndex.map { case (tpe, i) =>
+      PyParamDef(
+        name         = PyLocalName(s"_scpy_samarg_$i"),
+        originalName = PyOriginalName.NoOriginalName,
+        ptpe         = encoding.encodeType(tpe),
+        mutable      = false,
+        pos          = pos
+      )
+    }
+
+    val samArgRefs: List[PyTree] = samParams.map { p =>
+      PyVarRef(p.name)(p.ptpe, pos)
+    }
+    val callArgs: List[PyTree] = envValues ++ samArgRefs
+
+    val body: PyTree =
+      if isStaticTarget then
+        PyApplyStatic(
+          PyApplyFlags.empty,
+          ownerClass,
+          methodName,
+          callArgs
+        )(resultTpe, pos)
+      else
+        // Instance-method target: the first env value is the receiver.
+        envValues match
+          case receiver :: rest =>
+            val instanceCallArgs = rest ++ samArgRefs
+            PyApply(
+              PyApplyFlags.empty,
+              receiver,
+              ownerClass,
+              methodName,
+              instanceCallArgs
+            )(resultTpe, pos)
+          case Nil =>
+            // Instance method with no receiver env — fall back to `this`.
+            PyApply(
+              PyApplyFlags.empty,
+              PyThis()(PyClassType(encoding.encodeClassName(currentClassSym)), pos),
+              ownerClass,
+              methodName,
+              samArgRefs
+            )(resultTpe, pos)
+
+    PyClosure(
+      captureParams = Nil,
+      params        = samParams,
+      resultType    = resultTpe,
+      body          = body,
+      captureValues = Nil
+    )(pos)
 
   // --- File output ---------------------------------------------------
 

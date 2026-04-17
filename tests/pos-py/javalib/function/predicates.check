@@ -1,0 +1,5 @@
+predicate:true
+bipredicate:true
+int-predicate:true
+long-predicate:true
+double-predicate:true

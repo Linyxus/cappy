@@ -1,0 +1,7 @@
+supplier:sup
+boolean:true
+consumer:22
+biconsumer:11
+obj-int:age7
+obj-long:id9
+obj-double:pi3.5

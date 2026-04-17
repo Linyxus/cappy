@@ -1,0 +1,9 @@
+int-consumer:22
+int-function:n5
+int-supplier:17
+int-to-double:2.5
+int-to-long:9
+int-unary:6
+int-binary:7
+to-int:3
+to-int-bi:5
