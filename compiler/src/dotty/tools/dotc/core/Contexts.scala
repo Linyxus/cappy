@@ -26,7 +26,7 @@ import io.{AbstractFile, NoAbstractFile, PlainFile, Path}
 import scala.io.Codec
 import collection.mutable
 import printing.*
-import config.{JavaPlatform, SJSPlatform, Platform, ScalaSettings}
+import config.{JavaPlatform, SJSPlatform, ScalaPyPlatform, Platform, ScalaSettings}
 import classfile.ReusableDataReader
 import StdNames.nme
 import compiletime.uninitialized
@@ -927,6 +927,7 @@ object Contexts {
 
     protected def newPlatform(using Context): Platform =
       if (settings.scalajs.value) new SJSPlatform
+      else if (settings.scalapy.value) new ScalaPyPlatform
       else new JavaPlatform
 
     /** The loader that loads the members of _root_ */

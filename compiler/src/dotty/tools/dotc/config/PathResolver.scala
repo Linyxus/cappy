@@ -249,14 +249,26 @@ class PathResolver(using c: Context) {
     def basis: List[Iterable[ClassPath]] =
       val release = Option(ctx.settings.javaOutputVersion.value).filter(_.nonEmpty)
 
+      // Under -scalapy, the user classpath (which carries the ported javalib
+      // inside scala-library-py) must shadow the JVM's jrt:/ classes so that
+      // our `java.lang.CharSequence`, `java.util.Iterator`, etc. ports take
+      // precedence over the JDK definitions. Classes we haven't ported still
+      // fall through to JrtClassPath.
+      val userCp = classesInExpandedPath(userClassPath)
+      val jrtCp = JrtClassPath(release)
+      val (firstCp, lastCp) =
+        if settings.scalapy.value then (Some(userCp), None)
+        else (None, Some(userCp))
+
       List(
-        JrtClassPath(release),                        // 1. The Java 9+ classpath (backed by the jrt:/ virtual system, if available)
+        firstCp.getOrElse(Iterable.empty),            // 0. -scalapy: user classpath (javalib shadow) before JDK.
+        jrtCp,                                        // 1. The Java 9+ classpath (backed by the jrt:/ virtual system, if available)
         classesInPath(javaBootClassPath),             // 2. The Java bootstrap class path.
         contentsOfDirsInPath(javaExtDirs),            // 3. The Java extension class path.
         classesInExpandedPath(javaUserClassPath),     // 4. The Java application class path.
         classesInPath(scalaBootClassPath),            // 5. The Scala boot class path.
         contentsOfDirsInPath(scalaExtDirs),           // 6. The Scala extension class path.
-        classesInExpandedPath(userClassPath),         // 7. The Scala application class path.
+        lastCp.getOrElse(Iterable.empty),             // 7. The Scala application class path (default position).
         sourcesInPath(sourcePath)                     // 8. The Scala source path.
       )
 

@@ -51,6 +51,7 @@ object PyIRRuntime:
   private val NoSuchElementExceptionClass = PyClassName("java.util.NoSuchElementException")
   private val IndexOutOfBoundsExceptionClass = PyClassName("java.lang.IndexOutOfBoundsException")
   private val IllegalArgumentExceptionClass = PyClassName("java.lang.IllegalArgumentException")
+  private val UnsupportedOperationExceptionClass = PyClassName("java.lang.UnsupportedOperationException")
   private val AssertionErrorClass = PyClassName("java.lang.AssertionError")
   private val NumberClass = PyClassName("java.lang.Number")
   private val IntegerClass = PyClassName("java.lang.Integer")
@@ -61,6 +62,30 @@ object PyIRRuntime:
   private val Function2Class = PyClassName("scala.Function2")
   private val AnnotationClass = PyClassName("scala.annotation.Annotation")
   private val StaticAnnotationClass = PyClassName("scala.annotation.StaticAnnotation")
+  private val ComparableClass = PyClassName("java.lang.Comparable")
+
+  // Scala's by-ref closure-capture wrappers. The JVM lowers
+  // `var x = 0; ... = { () => x += 1 }` into `val x$1 = new IntRef(0)`
+  // plus `x$1.elem += 1`; we mirror that at Python runtime so the
+  // capture semantics match without needing a per-call-site facade.
+  private val IntRefClass       = PyClassName("scala.runtime.IntRef")
+  private val LongRefClass      = PyClassName("scala.runtime.LongRef")
+  private val DoubleRefClass    = PyClassName("scala.runtime.DoubleRef")
+  private val FloatRefClass     = PyClassName("scala.runtime.FloatRef")
+  private val BooleanRefClass   = PyClassName("scala.runtime.BooleanRef")
+  private val ByteRefClass      = PyClassName("scala.runtime.ByteRef")
+  private val CharRefClass      = PyClassName("scala.runtime.CharRef")
+  private val ShortRefClass     = PyClassName("scala.runtime.ShortRef")
+  private val ObjectRefClass    = PyClassName("scala.runtime.ObjectRef")
+  private val VolatileIntRefClass     = PyClassName("scala.runtime.VolatileIntRef")
+  private val VolatileLongRefClass    = PyClassName("scala.runtime.VolatileLongRef")
+  private val VolatileDoubleRefClass  = PyClassName("scala.runtime.VolatileDoubleRef")
+  private val VolatileFloatRefClass   = PyClassName("scala.runtime.VolatileFloatRef")
+  private val VolatileBooleanRefClass = PyClassName("scala.runtime.VolatileBooleanRef")
+  private val VolatileByteRefClass    = PyClassName("scala.runtime.VolatileByteRef")
+  private val VolatileCharRefClass    = PyClassName("scala.runtime.VolatileCharRef")
+  private val VolatileShortRefClass   = PyClassName("scala.runtime.VolatileShortRef")
+  private val VolatileObjectRefClass  = PyClassName("scala.runtime.VolatileObjectRef")
 
   private val ObjectCtor =
     PyMethodName(
@@ -176,6 +201,13 @@ object PyIRRuntime:
         javaProvided = true,
         constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
       ),
+    UnsupportedOperationExceptionClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.RuntimeExceptionClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
+      ),
     AssertionErrorClass ->
       ProvidedClass(
         kind = PyClassKind.Class,
@@ -244,7 +276,33 @@ object PyIRRuntime:
         javaProvided = true,
         constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
       ),
-  )
+    ComparableClass ->
+      // No source port — keeping our own would clash with dotc's
+      // JDK-derived view (StaleSymbolException during typer). The linker
+      // is lenient because javaProvided = true, and at Python runtime
+      // `compareTo` is called via normal attribute dispatch.
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        javaProvided = true
+      ),
+  ) ++ Seq(
+    IntRefClass, LongRefClass, DoubleRefClass, FloatRefClass,
+    BooleanRefClass, ByteRefClass, CharRefClass, ShortRefClass,
+    ObjectRefClass,
+    VolatileIntRefClass, VolatileLongRefClass, VolatileDoubleRefClass,
+    VolatileFloatRefClass, VolatileBooleanRefClass, VolatileByteRefClass,
+    VolatileCharRefClass, VolatileShortRefClass, VolatileObjectRefClass,
+  ).map { name =>
+    name -> ProvidedClass(
+      kind = PyClassKind.Class,
+      superClass = Some(PyClassName.ObjectClass),
+      javaProvided = true,
+      constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+      staticMethods = MethodMatcher(simpleNamePrefixes = Set("create")),
+      fields = Set(PyFieldName(name, PySimpleFieldName("elem")))
+    )
+  }.toMap
 
   private[python] def providedClass(className: PyClassName): Option[ProvidedClass] =
     providedClasses.get(className)
@@ -301,6 +359,8 @@ object PyIRRuntime:
        |    pass
        |class IllegalArgumentException(RuntimeException):
        |    pass
+       |class UnsupportedOperationException(RuntimeException):
+       |    pass
        |class AssertionError(Throwable):
        |    pass
        |class NotImplementedError(Throwable):
@@ -311,6 +371,80 @@ object PyIRRuntime:
        |    pass
        |class StaticAnnotation(Annotation):
        |    pass
+       |class Comparable:
+       |    pass
+       |
+       |# -- scala.runtime.*Ref --
+       |# By-ref capture wrappers. Scala's JVM target lowers mutable-var
+       |# closure captures into `new IntRef(0)` + `.elem` reads/writes.
+       |# Python's lexical closure doesn't need them, but PyIR still
+       |# emits the code that constructs them, so the names must resolve.
+       |def _scpy_mk_ref(default):
+       |    class _Ref:
+       |        def __init__(self, elem=default):
+       |            self.elem = elem
+       |        @staticmethod
+       |        def create__I__Lscala_runtime_IntRef(v): return _Ref(v)
+       |        @staticmethod
+       |        def create__J__Lscala_runtime_LongRef(v): return _Ref(v)
+       |        @staticmethod
+       |        def create__D__Lscala_runtime_DoubleRef(v): return _Ref(v)
+       |        @staticmethod
+       |        def create__F__Lscala_runtime_FloatRef(v): return _Ref(v)
+       |        @staticmethod
+       |        def create__Z__Lscala_runtime_BooleanRef(v): return _Ref(v)
+       |        @staticmethod
+       |        def create__B__Lscala_runtime_ByteRef(v): return _Ref(v)
+       |        @staticmethod
+       |        def create__C__Lscala_runtime_CharRef(v): return _Ref(v)
+       |        @staticmethod
+       |        def create__S__Lscala_runtime_ShortRef(v): return _Ref(v)
+       |        @staticmethod
+       |        def create__Ljava_lang_Object__Lscala_runtime_ObjectRef(v): return _Ref(v)
+       |    return _Ref
+       |IntRef = _scpy_mk_ref(0)
+       |LongRef = _scpy_mk_ref(0)
+       |DoubleRef = _scpy_mk_ref(0.0)
+       |FloatRef = _scpy_mk_ref(0.0)
+       |BooleanRef = _scpy_mk_ref(False)
+       |ByteRef = _scpy_mk_ref(0)
+       |CharRef = _scpy_mk_ref('\\x00')
+       |ShortRef = _scpy_mk_ref(0)
+       |ObjectRef = _scpy_mk_ref(None)
+       |# Module-object aliases. `IntRef.create(...)` in Scala lowers to
+       |# a static call `IntRef$.create(...)` which the Python backend
+       |# emits as `_scpy_mod_scala_runtime_IntRef_.create...(...)`.
+       |# Point those names at the class itself so the `@staticmethod`
+       |# factories resolve.
+       |_scpy_mod_scala_runtime_IntRef_     = IntRef
+       |_scpy_mod_scala_runtime_LongRef_    = LongRef
+       |_scpy_mod_scala_runtime_DoubleRef_  = DoubleRef
+       |_scpy_mod_scala_runtime_FloatRef_   = FloatRef
+       |_scpy_mod_scala_runtime_BooleanRef_ = BooleanRef
+       |_scpy_mod_scala_runtime_ByteRef_    = ByteRef
+       |_scpy_mod_scala_runtime_CharRef_    = CharRef
+       |_scpy_mod_scala_runtime_ShortRef_   = ShortRef
+       |_scpy_mod_scala_runtime_ObjectRef_  = ObjectRef
+       |_scpy_mod_scala_runtime_VolatileIntRef_     = IntRef
+       |_scpy_mod_scala_runtime_VolatileLongRef_    = LongRef
+       |_scpy_mod_scala_runtime_VolatileDoubleRef_  = DoubleRef
+       |_scpy_mod_scala_runtime_VolatileFloatRef_   = FloatRef
+       |_scpy_mod_scala_runtime_VolatileBooleanRef_ = BooleanRef
+       |_scpy_mod_scala_runtime_VolatileByteRef_    = ByteRef
+       |_scpy_mod_scala_runtime_VolatileCharRef_    = CharRef
+       |_scpy_mod_scala_runtime_VolatileShortRef_   = ShortRef
+       |_scpy_mod_scala_runtime_VolatileObjectRef_  = ObjectRef
+       |# Volatile variants collapse to the same class under single-threaded
+       |# Python; the distinction is only meaningful on the JVM.
+       |VolatileIntRef = IntRef
+       |VolatileLongRef = LongRef
+       |VolatileDoubleRef = DoubleRef
+       |VolatileFloatRef = FloatRef
+       |VolatileBooleanRef = BooleanRef
+       |VolatileByteRef = ByteRef
+       |VolatileCharRef = CharRef
+       |VolatileShortRef = ShortRef
+       |VolatileObjectRef = ObjectRef
        |
        |# -- Compiler-invented: numeric wrapping (Scala overflow semantics) --
        |
