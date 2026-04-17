@@ -1,0 +1,10 @@
+int-consumer-chain:222
+int-function:n5
+int-supplier:17
+int-to-double:2.5
+int-to-long:9
+int-unary-chain:36
+int-unary-identity:8
+int-binary:304
+to-int:5
+to-int-bi:23

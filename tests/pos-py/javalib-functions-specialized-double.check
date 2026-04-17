@@ -1,0 +1,10 @@
+double-consumer-chain:9.0
+double-function:d2.5
+double-supplier:2.25
+double-to-int:7
+double-to-long:11
+double-unary-chain:2.75
+double-unary-identity:8.25
+double-binary:14.75
+to-double:3.5
+to-double-bi:24.25

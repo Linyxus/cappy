@@ -1,9 +1,0 @@
-double-consumer:4.5
-double-function:d2.5
-double-supplier:2.25
-double-to-int:7
-double-to-long:11
-double-unary:4.0
-double-binary:3.5
-to-double:3.5
-to-double-bi:5.0

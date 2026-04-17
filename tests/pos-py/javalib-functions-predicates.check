@@ -1,0 +1,10 @@
+predicate-and:true
+predicate-or:true
+predicate-negate:true
+predicate-isEqual:true:true
+bipredicate-and:true
+bipredicate-or:true
+bipredicate-negate:true
+int-predicate:true:true:true
+long-predicate:true:true:true
+double-predicate:true:true:true

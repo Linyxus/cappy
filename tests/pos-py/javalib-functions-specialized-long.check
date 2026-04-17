@@ -1,0 +1,10 @@
+long-consumer-chain:333
+long-function:l8
+long-supplier:23
+long-to-double:4.5
+long-to-int:8
+long-unary-chain:20
+long-unary-identity:12
+long-binary:3004
+to-long:4
+to-long-bi:25
