@@ -1,0 +1,12 @@
+supplier:alpha
+boolean-supplier:true
+consumer-andThen:go:2
+biconsumer-andThen:n4:8
+function-chain:40
+function-identity:id
+bifunction-andThen:18
+unary-identity:echo
+binary-ops:light:heavy
+obj-int:age:7
+obj-long:id:9
+obj-double:pi:3.5

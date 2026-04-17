@@ -275,8 +275,10 @@ private class PyCodeGen()(using genCtx: Context):
     val params = dd.termParamss.flatten.map(genParamDef)
     val resultType = encoding.encodeType(sym.info.finalResultType)
 
-    val isStatic =
-      sym.is(JavaStatic) || (sym.owner.is(ModuleClass) && !sym.isClassConstructor)
+    // A Scala `object` is a singleton instance, not a true static namespace.
+    // Keep module-class methods as instance methods in PyIR so inherited
+    // trait defaults can use normal receiver semantics (`super()`, `self`, ...).
+    val isStatic = sym.is(JavaStatic)
     val namespace = (isStatic, sym.is(Private)) match
       case (true,  true)  => PyMemberNamespace.PrivateStatic
       case (true,  false) => PyMemberNamespace.PublicStatic
@@ -636,8 +638,7 @@ private class PyCodeGen()(using genCtx: Context):
       val methodName = encoding.encodeMethodName(sym)
       val ownerName  = encoding.encodeClassName(sym.owner)
       val resultTpe  = encoding.encodeType(sym.info.finalResultType)
-      val isStaticTarget =
-        sym.is(JavaStatic) || (sym.owner.is(ModuleClass) && !sym.isClassConstructor)
+      val isStaticTarget = sym.is(JavaStatic)
 
       // Intercept `java.lang.String` instance methods — the runtime
       // receiver is a Python `str` which has no `length__I`/`substring__I_I__…`
@@ -668,8 +669,9 @@ private class PyCodeGen()(using genCtx: Context):
 
         case Ident(_) =>
           if sym.owner.is(ModuleClass) then
-            PyApplyStatic(
+            PyApply(
               PyApplyFlags.empty,
+              moduleReceiver(sym.owner, pos),
               ownerName,
               methodName,
               args
@@ -1106,8 +1108,7 @@ private class PyCodeGen()(using genCtx: Context):
     val ownerClass = encoding.encodeClassName(targetSym.owner)
     val resultTpe = encoding.encodeType(targetSym.info.finalResultType)
 
-    val isStaticTarget =
-      targetSym.is(JavaStatic) || (targetSym.owner.is(ModuleClass) && !targetSym.isClassConstructor)
+    val isStaticTarget = targetSym.is(JavaStatic)
 
     val targetParamTypes = targetSym.info.paramInfoss.flatten
     val envValues = tree.env.map(genExpr)
@@ -1133,6 +1134,14 @@ private class PyCodeGen()(using genCtx: Context):
       if isStaticTarget then
         PyApplyStatic(
           PyApplyFlags.empty,
+          ownerClass,
+          methodName,
+          callArgs
+        )(resultTpe, pos)
+      else if targetSym.owner.is(ModuleClass) then
+        PyApply(
+          PyApplyFlags.empty,
+          moduleReceiver(targetSym.owner, pos),
           ownerClass,
           methodName,
           callArgs
@@ -1166,6 +1175,12 @@ private class PyCodeGen()(using genCtx: Context):
       body          = body,
       captureValues = Nil
     )(pos)
+
+  private def moduleReceiver(moduleClass: Symbol, pos: PyPosition): PyTree =
+    if moduleClass == currentClassSym then
+      PyThis()(PyClassType(encoding.encodeClassName(currentClassSym)), pos)
+    else
+      PyLoadModule(encoding.encodeClassName(moduleClass))(pos)
 
   // --- File output ---------------------------------------------------
 

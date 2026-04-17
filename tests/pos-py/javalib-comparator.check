@@ -1,1 +1,15 @@
-comparator:1
+compare-to:-1
+natural-order:1
+reverse-order:1
+reversed:1
+then-comparing:-1
+then-comparing-int:-1
+then-comparing-long:-1
+then-comparing-double:-1
+nulls-first:-1:0
+nulls-last:-1:0
+comparing:-1
+comparing-with:1
+comparing-int:-1
+comparing-long:-1
+comparing-double:-1
