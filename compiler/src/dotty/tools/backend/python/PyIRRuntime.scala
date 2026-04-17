@@ -373,6 +373,8 @@ object PyIRRuntime:
        |    pass
        |class Comparable:
        |    pass
+       |class Serializable:
+       |    pass
        |
        |# -- scala.runtime.*Ref --
        |# By-ref capture wrappers. Scala's JVM target lowers mutable-var
@@ -466,4 +468,23 @@ object PyIRRuntime:
        |    if x is False:
        |        return "false"
        |    return _builtins.str(x)
+       |
+       |# -- java.lang.String helpers --
+       |# The compiler lowers `s.method(...)` on `java.lang.String` to
+       |# Python-native ops (len, ord, .startswith, etc.). A few calls
+       |# don't map 1:1, so these helpers carry the semantics.
+       |def _scpy_str_substring(s, *bounds):
+       |    if len(bounds) == 1:
+       |        return s[bounds[0]:]
+       |    return s[bounds[0]:bounds[1]]
+       |def _scpy_str_contains(s, t):
+       |    return t in s
+       |def _scpy_str_isempty(s):
+       |    return len(s) == 0
+       |def _scpy_str_equals(s, t):
+       |    return s == t
+       |def _scpy_str_equals_ci(s, t):
+       |    return s.lower() == t.lower() if isinstance(t, str) else False
+       |def _scpy_str_concat(s, t):
+       |    return s + t
        |""".stripMargin

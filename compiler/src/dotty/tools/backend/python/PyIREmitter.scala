@@ -75,6 +75,7 @@ object PyIREmitter:
     private val indentStr: String = "    "
     private val externAliases = mutable.LinkedHashMap.empty[ExternImport, String]
     private var knownClasses: Set[PyClassName] = Set.empty
+    private var classByName: Map[PyClassName, PyClassDef] = Map.empty
 
     private def indent(): Unit = indentLevel += 1
     private def dedent(): Unit = indentLevel -= 1
@@ -97,6 +98,7 @@ object PyIREmitter:
       // Python representation.
       knownClasses =
         classes.iterator.map(_.name).toSet ++ PyIRRuntime.providedClasses.keySet
+      classByName = classes.iterator.map(c => c.name -> c).toMap
 
       val orderedClasses = topoSortClasses(classes)
 
@@ -204,7 +206,34 @@ object PyIREmitter:
       // implementations.
       val directSuper = cls.superClass.toList.filterNot(_ == PyClassName.ObjectClass)
       val ifaceBases  = cls.interfaces.filter(knownClasses.contains)
-      (directSuper ::: ifaceBases).distinct.map(classIdentifier)
+      val rawBases    = (directSuper ::: ifaceBases).distinct
+
+      // Drop bases that are already transitive ancestors of another base.
+      // Python's C3 linearization rejects `class C(A, B)` when `B extends A`
+      // (e.g. our `MarkerCloseable extends java.io.Closeable`: Scala reports
+      // `AutoCloseable + Closeable` as direct parents, but Python needs just
+      // `Closeable` because it already inherits `AutoCloseable`).
+      val redundant = rawBases.flatMap(other => transitiveAncestors(other) - other).toSet
+      rawBases.filterNot(redundant.contains).map(classIdentifier)
+
+    /** All transitive ancestors of `name` reachable through classes in the
+     *  bundle (`classInfos`) or the runtime-provided whitelist. Includes
+     *  `name` itself so callers can detect the diagonal. */
+    private def transitiveAncestors(name: PyClassName): Set[PyClassName] =
+      val seen = mutable.Set.empty[PyClassName]
+      def walk(n: PyClassName): Unit =
+        if seen.add(n) then
+          classByName.get(n) match
+            case Some(cls) =>
+              cls.superClass.foreach(walk)
+              cls.interfaces.foreach(walk)
+            case None =>
+              PyIRRuntime.providedClass(n).foreach { pc =>
+                pc.superClass.foreach(walk)
+                pc.interfaces.foreach(walk)
+              }
+      walk(name)
+      seen.toSet
 
     private def emitSyntheticInit(cls: PyClassDef): Unit =
       line("def __init__(self) -> None:")

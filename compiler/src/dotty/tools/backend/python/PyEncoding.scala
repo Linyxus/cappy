@@ -216,6 +216,11 @@ class PyEncoding(using Context):
   def isDoubleType(tp: Type): Boolean = tp.typeSymbol == defn.DoubleClass
   def isBooleanType(tp: Type): Boolean = tp.typeSymbol == defn.BooleanClass
   def isStringType(tp: Type): Boolean = tp.typeSymbol == defn.StringClass
+  def isCharType(tp: Type): Boolean =
+    // Matches both primitive `scala.Char` and boxed `java.lang.Character`
+    // (the latter is common in post-erasure `String + Char` trees).
+    val sym = tp.typeSymbol
+    sym == defn.CharClass || sym == defn.BoxedCharClass
 
   // --- Utilities -----------------------------------------------------
 
