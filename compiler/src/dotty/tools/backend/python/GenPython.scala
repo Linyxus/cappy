@@ -68,7 +68,7 @@ private class PyCodeGen()(using genCtx: Context):
   /** Side-channel for statements produced during expression generation
     * (Block-in-expression-position). Drained by `flattenToStmts` at the
     * enclosing statement. */
-  private val pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
+  private var pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
 
   // --- Entry point ---------------------------------------------------
 
@@ -302,14 +302,13 @@ private class PyCodeGen()(using genCtx: Context):
    *  scrambles side-effect ordering (e.g. an assignment inside a
    *  `Block`-in-expression would execute before an earlier statement). */
   private def genStat(tree: Tree): PyTree =
-    val savedPendings = pendingLocalDefs.toList
-    pendingLocalDefs.clear()
+    val saved = pendingLocalDefs
+    pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
     val result = doGenStat(tree)
-    val localPendings = pendingLocalDefs.toList
-    pendingLocalDefs.clear()
-    pendingLocalDefs ++= savedPendings
-    if localPendings.isEmpty then result
-    else PyBlock(localPendings, result)(posOf(tree))
+    val locals = pendingLocalDefs
+    pendingLocalDefs = saved
+    if locals.isEmpty then result
+    else PyBlock(locals.toList, result)(posOf(tree))
 
   private def doGenStat(tree: Tree): PyTree =
     val pos = posOf(tree)
@@ -1104,15 +1103,14 @@ private class PyCodeGen()(using genCtx: Context):
    *  during `genExpr(expr)` into a local `PyBlock` so they cannot leak
    *  outside the surrounding try-arm. */
   private def genAssignFromExpr(lhs: PyAssignable, expr: Tree, pos: PyPosition): PyTree =
-    val saved = pendingLocalDefs.toList
-    pendingLocalDefs.clear()
+    val saved = pendingLocalDefs
+    pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
     val value = genExpr(expr)
-    val localStats = pendingLocalDefs.toList
-    pendingLocalDefs.clear()
-    pendingLocalDefs ++= saved
+    val locals = pendingLocalDefs
+    pendingLocalDefs = saved
     val assign = PyAssign(lhs, value)(pos)
-    if localStats.isEmpty then assign
-    else PyBlock(localStats, assign)(pos)
+    if locals.isEmpty then assign
+    else PyBlock(locals.toList, assign)(pos)
 
   private var tryResultCounter = 0
   private def freshTryResultName(): PyLocalName =
