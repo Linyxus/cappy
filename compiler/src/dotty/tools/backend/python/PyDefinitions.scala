@@ -74,10 +74,10 @@ final class PyDefinitions:
    *  the library is on the classpath. We detect stubs by peeking at
    *  `infoOrCompleter` — for missing references it is a `StubInfo`.
    *
-   *  If any Phase 0 symbol is a stub we throw loudly. This guards against
-   *  Phase 1+ moving `scala.python.*` out of the compiler JAR (per the
-   *  packaging debt migration plan) without re-wiring the classpath, and
-   *  it prevents later phases from silently consuming stub symbols. */
+   *  If any symbol is a stub we throw loudly. `scala.python.*` lives only
+   *  in the `scala-library-py` sidecar jar — if the user classpath omits
+   *  it while compiling with `-scalapy` we want a clear error, not a stub
+   *  symbol silently threaded into later phases. */
   def force()(using Context): Unit =
     requireReal(ScalaPythonPackageVal, "scala.python")
     requireReal(ScalaPythonPackageClass, "scala.python (package class)")
