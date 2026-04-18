@@ -55,7 +55,7 @@ PyIR nodes live in `ir/pyir/` (`PyIR.scala`, `PyNames.scala`, `PyOps.scala`, `Py
 
 ### 2. Sidecar library `library-py/src/scala/python/`
 
-`PyAny`, `PyDynamic`, `Dynamic`, `@extern`/`@name`, `def native`. These sources are merged into `scala-library-bootstrapped` and `scala3-compiler-bootstrapped` via `unmanagedSourceDirectories` in `project/Build.scala` (~lines 1570 and 1706). No separate sbt project today — the sidecar packaging is deferred work.
+`PyAny`, `PyDynamic`, `Dynamic`, `@extern`/`@name`, `def native`. These live only in the `scala-library-py` sidecar project (see `project/Build.scala` ~line 2621), not in `scala-library-bootstrapped`. The Python backend's compiler code resolves them by string lookup at `-scalapy` time (`PyDefinitions.requiredClassRef("scala.python.PyAny")`), so the main compiler JAR never needs them on its compile classpath. Mirrors how Scala.js keeps `scala.scalajs.*` in `scala-library-sjs`.
 
 Facades declare bindings like:
 

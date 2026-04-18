@@ -1260,11 +1260,12 @@ object Build {
       // Add the source directories for the stdlib (non-boostrapped)
       Compile / unmanagedSourceDirectories   := Seq(baseDirectory.value / "src"),
       Compile / unmanagedSourceDirectories   += baseDirectory.value / "src-bootstrapped",
-      // Make `scala.python.*` facades (PyAny, @extern, @name, etc.) part of the
-      // standard library so downstream code (including the compiler) can typecheck
-      // against them without a separate sidecar merge. Only the facades subtree
-      // is included — the override files in library-py/src/ are for scala-library-py.
-      Compile / unmanagedSourceDirectories   += (ThisBuild / baseDirectory).value / "library-py" / "facades",
+      // `scala.python.*` facades (PyAny, @extern, @name, etc.) live in the
+      // sidecar project `scala-library-py`, not here. The Python backend's
+      // compiler code resolves them by string (`requiredClassRef("scala.python.PyAny")`,
+      // see PyDefinitions.scala) and only under `-scalapy`, so the main stdlib
+      // classpath needn't contain them. Mirrors how scala.js keeps
+      // `scala.scalajs.*` in `scala-library-sjs`, not in `scala-library-bootstrapped`.
       Compile / unmanagedResourceDirectories := Seq(baseDirectory.value / "resources"),
       Compile / compile / scalacOptions ++= Seq(
         "-opt", "-opt-inline:**,!java.**",
@@ -2629,10 +2630,12 @@ object Build {
     .settings(
       name          := "scala-library-py",
       scalaVersion  := dottyNonBootstrappedVersion,
-      // Hand-written stdlib overrides in src/ plus the scala.python.* facades
+      // Everything lives under src/: stdlib overrides at src/scala/*.scala
+      // and src/java/** plus scala.python.* facades at src/scala/python/.
+      // scala-library-bootstrapped selectively pulls in just the facades via
+      // the `unmanagedSources` setting on that project (see above).
       Compile / unmanagedSourceDirectories := Seq(
         baseDirectory.value / "src",
-        baseDirectory.value / "facades",
       ),
       // Compile to PyIR without linking or emitting .py bundles.
       // The linker is skipped because stdlib CUs have cross-references that
