@@ -254,7 +254,10 @@ class PyLinkerTest:
     // Static dispatch against Java-provided classes is strict: the
     // method must match the whitelist. Calling a name not in the
     // matcher must fail.
-    val integerClass = className("java.lang.Integer")
+    //
+    // `java.lang.Character` is runtime-provided with no static-method
+    // matcher, so any static call on it must fail at link time.
+    val runtimeClass = className("java.lang.Character")
     val host = classDef(
       name = className("example.RuntimeMismatch"),
       methods = List(
@@ -262,7 +265,7 @@ class PyLinkerTest:
           name = methodName("badRuntimeCall"),
           body = PyApplyStatic(
             PyApplyFlags.empty,
-            integerClass,
+            runtimeClass,
             methodName("totallyMissingHelper"),
             Nil
           )(PyVoidType, NoPos)
@@ -270,7 +273,7 @@ class PyLinkerTest:
       )
     )
 
-    assertLinkError("Unresolved static method 'java.lang.Integer.totallyMissingHelper():V'") {
+    assertLinkError("Unresolved static method 'java.lang.Character.totallyMissingHelper():V'") {
       PyLinker.link(List(PyLinker.Input(List(host), None)))
     }
 
