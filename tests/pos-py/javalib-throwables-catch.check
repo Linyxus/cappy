@@ -1,0 +1,8 @@
+exact:bad-arg
+subclass:eof
+as-throwable:rt
+fallthrough:picked:picked-by-second
+cause:outer/inner
+custom:MyErr:boom
+finally:inner-finally-ran
+finally:propagates

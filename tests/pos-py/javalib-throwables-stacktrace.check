@@ -1,0 +1,6 @@
+auto-size:6
+auto-top:leafThrowable:javalib-throwables-stacktrace.py
+auto-next:middleThrowable:javalib-throwables-stacktrace.py
+auto-third:topThrowable:javalib-throwables-stacktrace.py
+manual:demo.Owner.manual(Demo.scala:42)
+refill-top:javalibThrowablesStacktrace:javalib-throwables-stacktrace.py

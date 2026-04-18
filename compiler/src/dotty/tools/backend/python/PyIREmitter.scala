@@ -30,6 +30,22 @@ object PyIREmitter:
   /** Reserved prefix for compiler-invented Python identifiers. */
   val Prefix: String = "_scpy_"
 
+  /** Scala FQCNs whose simple name collides with a Python builtin and
+   *  must be remapped at emission time (see `Emitter.classIdentifier`).
+   *
+   *  Only `java.lang.Exception` is problematic today: we emit
+   *  `class Throwable(Exception):` against Python's builtin, so the
+   *  Scala `class Exception(Throwable):` definition would rebind
+   *  `Exception` in module scope. Keep this narrow — a user-defined
+   *  Scala class named `Exception` in a different package stays free to
+   *  emit `class Exception(...)` normally. Other potential collisions
+   *  like `java.lang.Error` are not Python builtins, so they pass
+   *  through.
+   */
+  private val PythonReservedShortNames: Map[String, String] = Map(
+    "java.lang.Exception" -> "_scpy_java_Exception"
+  )
+
   /** Entry point for a "main" method: the class where it lives plus
    *  that class's kind (Class vs ModuleClass - determines whether the
    *  guard calls `Name.main(...)` or `_scpy_mod_Name.main(...)`). */
@@ -137,30 +153,50 @@ object PyIREmitter:
       line(s"class ${classIdentifier(cls.name)}$basesStr:")
       indent()
 
-      val hasConstructor = cls.methods.exists(_.flags.namespace == PyMemberNamespace.Constructor)
-      val needsSyntheticInit = !hasConstructor && cls.fields.nonEmpty
+      val ctorMethods = cls.methods.filter(_.flags.namespace == PyMemberNamespace.Constructor)
+      val nonCtorMethods = cls.methods.filter(_.flags.namespace != PyMemberNamespace.Constructor)
+      val needsSyntheticInit = ctorMethods.isEmpty && cls.fields.nonEmpty
 
       var first = true
       def spacer(): Unit =
         if first then first = false else emptyLine()
 
-      // Emit constructor (if any) or synthesize a field-init __init__
-      if hasConstructor then
-        val ctor = cls.methods.find(_.flags.namespace == PyMemberNamespace.Constructor).get
+      // `_scpy_full_name` + `getClass__...` are only needed by classes in
+      // the `java.lang.Throwable` hierarchy, because `Throwable.toString`
+      // lowers to `getClass().getName()`. Emitting the metadata for every
+      // class would lock in a `Class`-intrinsic layout that properly
+      // belongs to L3.3 (see notes/l03-audit-2026-04-18.md C1). Gate on
+      // "transitively extends Throwable" to contain the blast radius.
+      if isThrowableDescendant(cls) then
         spacer()
-        emitMethodDef(cls, ctor)
+        emitClassMetadata(cls)
+
+      // Emit constructor dispatcher (if any) or synthesize a field-init __init__
+      if ctorMethods.nonEmpty then
+        spacer()
+        emitConstructorDispatcher(cls, ctorMethods)
+        for ctor <- ctorMethods do
+          spacer()
+          emitMethodDef(cls, ctor)
       else if needsSyntheticInit then
         spacer()
         emitSyntheticInit(cls)
 
       // Emit the remaining (non-constructor) methods
-      for m <- cls.methods if m.flags.namespace != PyMemberNamespace.Constructor do
+      for m <- nonCtorMethods do
         spacer()
         emitMethodDef(cls, m)
 
       // If the class has no members at all, emit `pass`
       if first then line("pass")
 
+      dedent()
+
+    private def emitClassMetadata(cls: PyClassDef): Unit =
+      line("_scpy_full_name = \"" + escapeString(cls.name.nameString) + "\"")
+      line("def getClass__Ljava_lang_Class(self):")
+      indent()
+      line("return _scpy_Class(self.__class__._scpy_full_name)")
       dedent()
 
     /** Topologically sort `classes` so that any class whose Python bases
@@ -195,6 +231,11 @@ object PyIREmitter:
       order.values().asScala.toList
 
     private def buildBasesList(cls: PyClassDef): List[String] =
+      if cls.name == PyClassName.ThrowableClass then
+        // A source-ported `java.lang.Throwable` must remain a real Python
+        // exception or `raise` / `except Exception` stop working.
+        return List("Exception")
+
       // Scala superclass plus any interface whose Python class actually
       // exists in the bundle (or is runtime-provided). Traits without a
       // Python representation — scala stdlib internals like
@@ -215,6 +256,13 @@ object PyIREmitter:
       // `Closeable` because it already inherits `AutoCloseable`).
       val redundant = rawBases.flatMap(other => transitiveAncestors(other) - other).toSet
       rawBases.filterNot(redundant.contains).map(classIdentifier)
+
+    /** True if `cls` is `java.lang.Throwable` or transitively extends it,
+     *  following both in-bundle super/interface links and the
+     *  runtime-provided whitelist. Used to gate `emitClassMetadata`
+     *  (see the call site). */
+    private def isThrowableDescendant(cls: PyClassDef): Boolean =
+      transitiveAncestors(cls.name).contains(PyClassName.ThrowableClass)
 
     /** All transitive ancestors of `name` reachable through classes in the
      *  bundle (`classInfos`) or the runtime-provided whitelist. Includes
@@ -242,8 +290,84 @@ object PyIREmitter:
         line("pass")
       else
         for f <- cls.fields do
-          line(s"self.${f.name.simple.name} = None")
+          line(s"self.${f.name.simple.name} = ${fieldDefaultExpr(f.ftpe)}")
       dedent()
+
+    private def emitConstructorDispatcher(cls: PyClassDef, ctors: List[PyMethodDef]): Unit =
+      line("def __init__(self, *args) -> None:")
+      indent()
+      // M3: a field that matches any ctor parameter name is always
+      // overwritten by the primary (or, for a param-only-of-secondary,
+      // by the secondary helper) before the ctor body runs. Emitting a
+      // zero-init for those fields would be a redundant double-write
+      // paired with the `this(...)` delegation rewrite in C7. Retain
+      // zero-init only for fields that no ctor parameter names — those
+      // are genuinely uninitialized until the ctor body touches them.
+      val ctorParamNames = ctors.iterator
+        .flatMap(_.args.iterator.map(_.name.name))
+        .toSet
+      for f <- cls.fields if !ctorParamNames.contains(f.name.simple.name) do
+        line(s"self.${f.name.simple.name} = ${fieldDefaultExpr(f.ftpe)}")
+
+      val orderedCtors =
+        ctors.sortBy(ctor => (-constructorSpecificity(ctor), ctor.args.length))
+
+      for (ctor, index) <- orderedCtors.zipWithIndex do
+        val keyword = if index == 0 then "if" else "elif"
+        line(s"$keyword ${constructorDispatchCondition(ctor)}:")
+        indent()
+        val forwardedArgs =
+          (0 until ctor.args.length).map(i => s"args[$i]").mkString(", ")
+        line(s"self.${constructorHelperName(cls.name, ctor.name)}($forwardedArgs)")
+        line("return None")
+        dedent()
+
+      line("else:")
+      indent()
+      line(s"""raise TypeError("No matching constructor for ${classIdentifier(cls.name)}")""")
+      dedent()
+      dedent()
+
+    private def fieldDefaultExpr(tpe: PyType): String = tpe match
+      case PyBooleanType => "False"
+      case PyByteType | PyShortType | PyCharType | PyIntType | PyLongType => "0"
+      case PyFloatType | PyDoubleType => "0.0"
+      case _ => "None"
+
+    private def constructorHelperName(owner: PyClassName, name: PyMethodName): String =
+      val paramPart =
+        if name.paramTypeRefs.isEmpty then "void"
+        else name.paramTypeRefs.map(_.encoded).mkString("_")
+      s"_scpy_ctor_${classIdentifier(owner)}__${paramPart}__${name.resultTypeRef.encoded}"
+
+    private def constructorSpecificity(ctor: PyMethodDef): Int =
+      ctor.args.count(arg => constructorArgGuard(arg.ptpe, "arg").nonEmpty)
+
+    private def constructorDispatchCondition(ctor: PyMethodDef): String =
+      val arityGuard = s"len(args) == ${ctor.args.length}"
+      val argGuards = ctor.args.zipWithIndex.flatMap { case (arg, index) =>
+        constructorArgGuard(arg.ptpe, s"args[$index]")
+      }
+      (arityGuard :: argGuards).mkString(" and ")
+
+    private def constructorArgGuard(tpe: PyType, argRef: String): Option[String] = tpe match
+      case PyBooleanType =>
+        Some(s"isinstance($argRef, bool)")
+      case PyByteType | PyShortType | PyCharType | PyIntType | PyLongType =>
+        Some(s"isinstance($argRef, int) and not isinstance($argRef, bool)")
+      case PyFloatType | PyDoubleType =>
+        Some(s"isinstance($argRef, float)")
+      case PyStringType =>
+        Some(s"($argRef is None or isinstance($argRef, str))")
+      case PyArrayType =>
+        Some(s"($argRef is None or isinstance($argRef, list))")
+      case PyClassType(className) if className == PyClassName.ObjectClass =>
+        None
+      case PyClassType(className) =>
+        Some(s"($argRef is None or ${emitIsInstanceCheck(argRef, className)})")
+      case PyAnyType | PyUndefinedType | PyVoidType | PyNothingType | PyNullType =>
+        None
+    // Python doesn't distinguish Array[?] from list at runtime.
 
     // -- Method definition ---------------------------------------
 
@@ -253,7 +377,11 @@ object PyIREmitter:
          || method.flags.namespace == PyMemberNamespace.PrivateStatic then
         line("@staticmethod")
 
-      val methodPyName = method.name.encoded
+      val methodPyName =
+        if method.flags.namespace == PyMemberNamespace.Constructor then
+          constructorHelperName(cls.name, method.name)
+        else
+          method.name.encoded
       val paramsList   = buildParamList(method)
       val retAnnot     = pythonReturnAnnot(method.resultType)
       line(s"def $methodPyName($paramsList)$retAnnot:")
@@ -601,9 +729,20 @@ object PyIREmitter:
         s"${classIdentifier(field.owner)}.${field.simple.name}"
 
       // Calls
-      case PyApply(_, receiver, _, method, args) =>
+      case PyApply(_, receiver, className, method, args) =>
         val argsStr = args.map(exprToStr).mkString(", ")
-        s"${parenthesize(receiver)}.${method.encoded}($argsStr)"
+        // C7: a `this(...)` self-delegation inside a secondary ctor
+        // body reaches us as `PyApply(this, OwnerClass, <init>, args)`.
+        // Emitting `self.__init__(args)` would re-enter the dynamic
+        // type's dispatcher — re-zero fields, re-run type guards — and
+        // subclasses' dispatcher-shape changes could misdispatch. Skip
+        // the dispatcher entirely and call the specific primary helper
+        // directly. Use the SAME helper-name function the definition
+        // uses (`constructorHelperName`) so names stay in lockstep.
+        if method.simple.isConstructor && receiver.isInstanceOf[PyThis] then
+          s"self.${constructorHelperName(className, method)}($argsStr)"
+        else
+          s"${parenthesize(receiver)}.${method.encoded}($argsStr)"
 
       case PyApplyStatically(_, receiver, className, method, args) =>
         val argsStr = args.map(exprToStr).mkString(", ")
@@ -647,11 +786,10 @@ object PyIREmitter:
 
       // Type tests / casts
       case PyIsInstanceOf(expr, testType) =>
-        val cls = testType match
-          case PyClassRef(cn) => classIdentifier(cn)
-          case PyArrayRef(_, _) => "list"
-          case _ => "object"
-        s"isinstance(${exprToStr(expr)}, $cls)"
+        testType match
+          case PyClassRef(cn) => emitIsInstanceCheck(exprToStr(expr), cn)
+          case PyArrayRef(_, _) => s"isinstance(${exprToStr(expr)}, list)"
+          case _ => s"isinstance(${exprToStr(expr)}, object)"
 
       case PyAsInstanceOf(expr, _) =>
         exprToStr(expr)  // Python is duck-typed, cast is a no-op
@@ -896,9 +1034,58 @@ object PyIREmitter:
 
     // -- Name helpers --------------------------------------------
 
-    /** Python identifier used for a Scala class (simple name, sanitized). */
+    /** Python identifier used for a Scala class (simple name, sanitized).
+     *
+     *  A handful of Scala FQCNs collide with Python builtins when reduced
+     *  to their simple name. `java.lang.Exception` is the load-bearing
+     *  case: we emit `class Throwable(Exception):` where `Exception` is
+     *  Python's builtin (see `buildBasesList`), then the topological
+     *  emission later produces the Scala `class Exception(Throwable):`,
+     *  which would REBIND `Exception` in module scope and shadow the
+     *  builtin for any subsequent `except Exception:` in generated
+     *  Python. Remap the FQCN (not the simple name — a user class literally
+     *  named `Exception` in a different package would legitimately emit
+     *  `class Exception(...)`) to a mangled identifier.
+     */
     private def classIdentifier(cn: PyClassName): String =
-      sanitizeIdent(cn.simpleName)
+      PyIREmitter.PythonReservedShortNames.get(cn.nameString) match
+        case Some(alias) => alias
+        case None        => sanitizeIdent(cn.simpleName)
+
+    /** Emit a Python expression implementing `isinstance(expr, cn)`.
+     *
+     *  Boxed-primitive Java classes don't have Python class
+     *  counterparts — `java.lang.Integer` isn't a real class, it's
+     *  Python's `int` builtin. Map those here so the runtime preamble
+     *  doesn't need to expose `Integer = int` aliases (which don't work
+     *  as base classes anyway).
+     *
+     *  For integer-valued boxes, Java semantics forbid `bool` from
+     *  matching `Integer`, but Python has `bool <: int` — so emit the
+     *  stricter `isinstance(x, int) and not isinstance(x, bool)` guard
+     *  to match Java's `Integer.class.isInstance(...)` semantics.
+     *
+     *  This helper is only for test-type positions (isinstance).
+     *  Base-class positions still go through `classIdentifier`.
+     */
+    private def emitIsInstanceCheck(exprStr: String, cn: PyClassName): String =
+      cn.nameString match
+        case "java.lang.Integer"
+           | "java.lang.Long"
+           | "java.lang.Byte"
+           | "java.lang.Short"
+           | "java.lang.Character" =>
+          s"(isinstance($exprStr, int) and not isinstance($exprStr, bool))"
+        case "java.lang.Float" | "java.lang.Double" =>
+          s"isinstance($exprStr, float)"
+        case "java.lang.Boolean" =>
+          s"isinstance($exprStr, bool)"
+        case "java.lang.Number" =>
+          // Python bools are ints; Java Number is Integer/Long/Float/Double
+          // (not Boolean), so exclude bool explicitly.
+          s"(isinstance($exprStr, (int, float)) and not isinstance($exprStr, bool))"
+        case _ =>
+          s"isinstance($exprStr, ${classIdentifier(cn)})"
 
     /** Python variable holding the singleton of a Scala `object`.
      *  Uses the full qualified path so two modules with the same

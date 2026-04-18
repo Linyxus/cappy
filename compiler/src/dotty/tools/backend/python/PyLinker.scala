@@ -343,7 +343,10 @@ object PyLinker:
           validateTree(tree.receiver, classInfos)
           tree.args.foreach(validateTree(_, classInfos))
           validateMethodName(tree.method, tree.pos, classInfos)
-          requireInstanceMethod(tree.className, tree.method, tree.pos, classInfos)
+          if tree.method.simple.isConstructor then
+            requireConstructor(tree.className, tree.method, tree.pos, classInfos)
+          else
+            requireInstanceMethod(tree.className, tree.method, tree.pos, classInfos)
 
         case tree: PyApplyStatically =>
           validateTree(tree.receiver, classInfos)

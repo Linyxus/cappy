@@ -87,3 +87,7 @@ When adding a test: run it standalone via `sbt … runMain dotty.tools.dotc.Main
 - The `scala-py` branch accumulates scratch files at the repo root (e.g. `hello*.scala`, `test*.scala`, `cc-fluid-*`, `inbox/`, `notes/`, `mkissue.sh`). These are in-progress exploration — **do not clean up** without being asked.
 - Other active notes live in `notes/` (phase reports, interop plan, issue write-ups). They're historical but useful context for ongoing work.
 - This branch also contains the unrelated `compiler-js/` Scala.js-compiler experiment. Don't confuse the two: Python backend work never touches `compiler-js/`.
+
+## Important Instructions
+
+- When asked to make a issue note, always follow the template in notes/issue-template.md

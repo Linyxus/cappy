@@ -45,18 +45,11 @@ object PyIRRuntime:
       constructors.allows(method)
 
   // Java-only class names. These have no Scala source and are backed by
-  // Python builtins (object, str, type, Exception hierarchy).
-  private val ExceptionClass = PyClassName("java.lang.Exception")
+  // Python builtins (object, str, type, annotation base classes).
   private val SerializableClass = PyClassName("java.io.Serializable")
-  private val NoSuchElementExceptionClass = PyClassName("java.util.NoSuchElementException")
-  private val IndexOutOfBoundsExceptionClass = PyClassName("java.lang.IndexOutOfBoundsException")
-  private val IllegalArgumentExceptionClass = PyClassName("java.lang.IllegalArgumentException")
-  private val UnsupportedOperationExceptionClass = PyClassName("java.lang.UnsupportedOperationException")
-  private val AssertionErrorClass = PyClassName("java.lang.AssertionError")
   private val NumberClass = PyClassName("java.lang.Number")
   private val IntegerClass = PyClassName("java.lang.Integer")
   private val CharacterClass = PyClassName("java.lang.Character")
-  private val NotImplementedErrorClass = PyClassName("scala.NotImplementedError")
   private val Function0Class = PyClassName("scala.Function0")
   private val Function1Class = PyClassName("scala.Function1")
   private val Function2Class = PyClassName("scala.Function2")
@@ -132,88 +125,11 @@ object PyIRRuntime:
         superClass = Some(PyClassName.ObjectClass),
         javaProvided = true
       ),
-    PyClassName.ThrowableClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.ObjectClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
-      ),
-    ExceptionClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.ThrowableClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
-      ),
-    PyClassName.RuntimeExceptionClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(ExceptionClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
-      ),
-    PyClassName.NullPointerExceptionClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.RuntimeExceptionClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
-      ),
-    PyClassName.ArithmeticExceptionClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.RuntimeExceptionClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
-      ),
-    PyClassName.ClassCastExceptionClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.RuntimeExceptionClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
-      ),
     SerializableClass ->
       ProvidedClass(
         kind = PyClassKind.Interface,
         superClass = None,
         javaProvided = true
-      ),
-    NoSuchElementExceptionClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.RuntimeExceptionClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
-      ),
-    IndexOutOfBoundsExceptionClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.RuntimeExceptionClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
-      ),
-    IllegalArgumentExceptionClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.RuntimeExceptionClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
-      ),
-    UnsupportedOperationExceptionClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.RuntimeExceptionClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
-      ),
-    AssertionErrorClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(ExceptionClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
       ),
     NumberClass ->
       ProvidedClass(
@@ -233,13 +149,6 @@ object PyIRRuntime:
         kind = PyClassKind.Class,
         superClass = Some(PyClassName.ObjectClass),
         javaProvided = true
-      ),
-    NotImplementedErrorClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(ExceptionClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
       ),
     Function0Class ->
       ProvidedClass(
@@ -341,32 +250,6 @@ object PyIRRuntime:
        |import builtins as _builtins
        |from typing import Any
        |
-       |# -- Java exception hierarchy stubs --
-       |# Python only has Exception; Scala's JVM-rooted hierarchy needs
-       |# nominal Python classes so `class MatchError(RuntimeException):`
-       |# resolves at Python runtime.
-       |class Throwable(Exception):
-       |    pass
-       |class RuntimeException(Throwable):
-       |    pass
-       |class NullPointerException(RuntimeException):
-       |    pass
-       |class ArithmeticException(RuntimeException):
-       |    pass
-       |class ClassCastException(RuntimeException):
-       |    pass
-       |class IndexOutOfBoundsException(RuntimeException):
-       |    pass
-       |class IllegalArgumentException(RuntimeException):
-       |    pass
-       |class UnsupportedOperationException(RuntimeException):
-       |    pass
-       |class AssertionError(Throwable):
-       |    pass
-       |class NotImplementedError(Throwable):
-       |    pass
-       |class NoSuchElementException(RuntimeException):
-       |    pass
        |class Annotation:
        |    pass
        |class StaticAnnotation(Annotation):
@@ -375,6 +258,13 @@ object PyIRRuntime:
        |    pass
        |class Serializable:
        |    pass
+       |class _scpy_Class:
+       |    def __init__(self, name):
+       |        self._scpy_name = name
+       |
+       |    def getName__Ljava_lang_String(self):
+       |        return self._scpy_name
+       |Class = _scpy_Class
        |
        |# -- scala.runtime.*Ref --
        |# By-ref capture wrappers. Scala's JVM target lowers mutable-var
