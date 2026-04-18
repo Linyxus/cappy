@@ -295,7 +295,23 @@ private class PyCodeGen()(using genCtx: Context):
 
   // --- Statement generation ------------------------------------------
 
+  /** Wrap `doGenStat` so any `pendingLocalDefs` produced during this
+   *  statement are drained here and emitted as a prefix of the returned
+   *  tree. Otherwise pendings accumulate across sibling statements and
+   *  all end up hoisted to the method root by `flattenToStmts`, which
+   *  scrambles side-effect ordering (e.g. an assignment inside a
+   *  `Block`-in-expression would execute before an earlier statement). */
   private def genStat(tree: Tree): PyTree =
+    val savedPendings = pendingLocalDefs.toList
+    pendingLocalDefs.clear()
+    val result = doGenStat(tree)
+    val localPendings = pendingLocalDefs.toList
+    pendingLocalDefs.clear()
+    pendingLocalDefs ++= savedPendings
+    if localPendings.isEmpty then result
+    else PyBlock(localPendings, result)(posOf(tree))
+
+  private def doGenStat(tree: Tree): PyTree =
     val pos = posOf(tree)
     tree match
       case vd: ValDef =>
@@ -469,11 +485,17 @@ private class PyCodeGen()(using genCtx: Context):
       case Match(selector, cases) =>
         genMatchExpr(selector, cases, pos, encoding.encodeType(tree.tpe))
 
+      case t: Try =>
+        genTryExpr(t)
+
       case EmptyTree =>
         PyUnitLit()(pos)
 
       case _ =>
-        // Unhandled - silent fallback matching legacy behavior.
+        report.error(
+          s"Python backend: unhandled expression form ${tree.getClass.getSimpleName}: ${tree.show}",
+          tree.sourcePos
+        )
         PyUnitLit()(pos)
 
   // --- Literal generation --------------------------------------------
@@ -981,10 +1003,20 @@ private class PyCodeGen()(using genCtx: Context):
 
   // --- Exception handling --------------------------------------------
 
-  private def genTry(tree: Try): PyTree =
+  /** Lower a `Try` tree given an arm lowerer.
+   *
+   *  `lowerArm` transforms each arm's body tree (the `try` block and every
+   *  catch body) into the PyTree that arm runs. For statement-position
+   *  `try/catch`, pass `genStat`. For expression-position, pass a lowerer
+   *  that assigns the arm's value to a synthesised temp (see `genTryExpr`).
+   *
+   *  `lowerArm` is responsible for scoping any side-effect pendings
+   *  produced during generation so they stay within the arm (otherwise an
+   *  exception thrown by a body-level pending would escape the try). */
+  private def genTryShared(tree: Try, lowerArm: Tree => PyTree): PyTree =
     val Try(block, catches, finalizer) = tree
     val pos = posOf(tree)
-    val bodyTree = genStat(block)
+    val bodyTree = lowerArm(block)
 
     val tryCatch: PyTree =
       if catches.isEmpty then bodyTree
@@ -1015,9 +1047,9 @@ private class PyCodeGen()(using genCtx: Context):
                 encoding.originalNameOf(bindSym),
                 PyAnyType, false, exVarRef
               )(pos)
-              PyBlock(List(bindDef), genStat(body))(pos)
+              PyBlock(List(bindDef), lowerArm(body))(pos)
             case None =>
-              genStat(body)
+              lowerArm(body)
 
           exnTypeRef match
             case Some(ref) =>
@@ -1036,6 +1068,56 @@ private class PyCodeGen()(using genCtx: Context):
 
     if finalizer.isEmpty then tryCatch
     else PyTryFinally(tryCatch, genStat(finalizer))(pos)
+
+  private def genTry(tree: Try): PyTree =
+    genTryShared(tree, genStat)
+
+  /** Lower an expression-position `Try` to a `PyVarRef` that reads from a
+   *  synthesised `_scpy_try_result_N` temp. The temp is declared (with the
+   *  type's default) and the try-statement (which assigns the temp in every
+   *  arm) are pushed to `pendingLocalDefs` so they execute before the
+   *  surrounding statement consumes the returned ref.
+   *
+   *  PyIR `PyTryCatch` / `PyTryFinally` remain statement-shaped; the
+   *  expression-ness is encoded by the surrounding temp-assign machinery. */
+  private def genTryExpr(tree: Try): PyTree =
+    val pos = posOf(tree)
+    val resultTpe = encoding.encodeType(tree.tpe)
+    val tempName = freshTryResultName()
+    val tempLhs = PyVarRef(tempName)(resultTpe, pos)
+
+    val tempDef = PyVarDef(
+      name         = tempName,
+      originalName = PyOriginalName.NoOriginalName,
+      vtpe         = resultTpe,
+      mutable      = true,
+      rhs          = defaultValueFor(resultTpe, pos)
+    )(pos)
+
+    val tryStmt = genTryShared(tree, body => genAssignFromExpr(tempLhs, body, pos))
+
+    pendingLocalDefs += tempDef
+    pendingLocalDefs += tryStmt
+    tempLhs
+
+  /** Build `<lhs> = <expr>` as a statement, scoping any pendings produced
+   *  during `genExpr(expr)` into a local `PyBlock` so they cannot leak
+   *  outside the surrounding try-arm. */
+  private def genAssignFromExpr(lhs: PyAssignable, expr: Tree, pos: PyPosition): PyTree =
+    val saved = pendingLocalDefs.toList
+    pendingLocalDefs.clear()
+    val value = genExpr(expr)
+    val localStats = pendingLocalDefs.toList
+    pendingLocalDefs.clear()
+    pendingLocalDefs ++= saved
+    val assign = PyAssign(lhs, value)(pos)
+    if localStats.isEmpty then assign
+    else PyBlock(localStats, assign)(pos)
+
+  private var tryResultCounter = 0
+  private def freshTryResultName(): PyLocalName =
+    tryResultCounter += 1
+    PyLocalName(s"_scpy_try_result_$tryResultCounter")
 
   // --- Match generation ----------------------------------------------
 
