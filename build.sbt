@@ -48,12 +48,13 @@ val `scala3-presentation-compiler-testcases` = Build.`scala3-presentation-compil
 val sjsSandbox = Build.sjsSandbox
 val sjsJUnitTests = Build.sjsJUnitTests
 val sjsCompilerTests = Build.sjsCompilerTests
-val pyCompilerTests = Build.pyCompilerTests
-val `scala-library-py` = Build.`scala-library-py`
 
 inThisBuild(Build.thisBuildSettings)
 inScope(Global)(Build.globalSettings)
 
+// The Scala.py backend
+val pyCompilerTests = Build.pyCompilerTests
+val `scala-library-py` = Build.`scala-library-py`
 // Run every test for Python backend. Builds scala-library-py jar first
 // so that the test classpath includes .pyir artifacts.
 addCommandAlias(
