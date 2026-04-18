@@ -1,5 +1,7 @@
 package scala.runtime
 
+import scala.collection.immutable.ArraySeq
+
 /** Minimal ScalaRunTime for the Python backend.
  *
  *  Case-class synthesis and other compiler-generated code calls
@@ -18,3 +20,16 @@ object ScalaRunTime:
 
   def hash(x: Any): Int =
     if x == null then 0 else x.hashCode
+
+  /** Needed for dynamic-call varargs lowering inside `library-py`.
+   *
+   *  Scala rewrites `foo(a, b)` for an `Any*` parameter to
+   *  `foo(ScalaRunTime.genericWrapArray(Array(a, b)))`.
+   */
+  def genericWrapArray[T](xs: Array[T]): ArraySeq[T] =
+    if xs == null then null.asInstanceOf[ArraySeq[T]]
+    else ArraySeq.unsafeWrapArray(xs)
+
+  def wrapRefArray[T <: AnyRef | Null](xs: Array[T]): ArraySeq[T] =
+    if xs == null then null.asInstanceOf[ArraySeq[T]]
+    else new ArraySeq.ofRef[T](xs)
