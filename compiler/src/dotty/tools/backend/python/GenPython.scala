@@ -144,8 +144,6 @@ private class PyCodeGen()(using genCtx: Context):
     val className = encoding.encodeClassName(sym)
     val (superClass, interfaces) = genBases(sym)
     val (fields, methodDefs) = genClassMembers(td)
-    val initMethod = genInitMethod(sym, td, fields)
-    val allMethods = initMethod.toList ::: methodDefs
 
     PyClassDef(
       name         = className,
@@ -154,7 +152,7 @@ private class PyCodeGen()(using genCtx: Context):
       superClass   = superClass,
       interfaces   = interfaces,
       fields       = fields,
-      methods      = allMethods,
+      methods      = methodDefs,
       pos          = posOf(td)
     )
 
@@ -192,7 +190,8 @@ private class PyCodeGen()(using genCtx: Context):
             )
 
         case dd: DefDef =>
-          if dd.symbol.isClassConstructor then ()
+          if dd.symbol.isClassConstructor then
+            genConstructor(dd).foreach(methods += _)
           else if encoding.hasExternAnnotation(dd.symbol) then
             // Proactive validation: force binding read so malformed args
             // are reported even if the def is never called.
@@ -204,49 +203,26 @@ private class PyCodeGen()(using genCtx: Context):
 
     (fields.toList, methods.toList)
 
-  // --- __init__ synthesis --------------------------------------------
+  // --- Constructor generation ----------------------------------------
 
-  private def genInitMethod(
-      sym: ClassSymbol, td: TypeDef, fields: List[PyFieldDef]
-  ): Option[PyMethodDef] =
-    val ctorOpt = collectMemberDefs(td).collectFirst {
-      case dd: DefDef if dd.symbol.isClassConstructor => dd
-    }
+  private def genConstructor(dd: DefDef): Option[PyMethodDef] =
+    val ctorSym = dd.symbol
+    currentMethodSym = ctorSym
+    val ctorPos = posOf(dd)
+    val params = dd.termParamss.flatten.map(genParamDef)
+    val body =
+      if dd.rhs.isEmpty then Some(PySkip()(ctorPos))
+      else Some(stmtsToBody(flattenToStmts(genStat(dd.rhs)), ctorPos))
 
-    ctorOpt.map { ctorDef =>
-      val ctorSym = ctorDef.symbol
-      currentMethodSym = ctorSym
-      val ctorPos = posOf(ctorDef)
-      val classTpe = PyClassType(encoding.encodeClassName(sym))
-
-      val params = ctorDef.termParamss.flatten.map(genParamDef)
-
-      val fieldInits: List[PyTree] = fields.map { f =>
-        PyAssign(
-          PySelect(
-            PyThis()(classTpe, ctorPos),
-            f.name
-          )(f.ftpe, ctorPos),
-          defaultValueFor(f.ftpe, ctorPos)
-        )(ctorPos)
-      }
-
-      val bodyStmts =
-        if ctorDef.rhs.isEmpty then fieldInits
-        else fieldInits ::: flattenToStmts(genStat(ctorDef.rhs))
-
-      val body = stmtsToBody(bodyStmts, ctorPos)
-
-      PyMethodDef(
-        flags        = PyMemberFlags.empty.withNamespace(PyMemberNamespace.Constructor),
-        name         = encoding.encodeMethodName(ctorSym),
-        originalName = encoding.originalNameOf(ctorSym),
-        args         = params,
-        resultType   = PyVoidType,
-        body         = Some(body),
-        pos          = ctorPos
-      )
-    }
+    Some(PyMethodDef(
+      flags        = PyMemberFlags.empty.withNamespace(PyMemberNamespace.Constructor),
+      name         = encoding.encodeMethodName(ctorSym),
+      originalName = encoding.originalNameOf(ctorSym),
+      args         = params,
+      resultType   = PyVoidType,
+      body         = body,
+      pos          = ctorPos
+    ))
 
   private def defaultValueFor(tpe: PyType, pos: PyPosition): PyTree = tpe match
     case PyBooleanType => PyBooleanLit(false)(pos)
@@ -1188,6 +1164,7 @@ private class PyCodeGen()(using genCtx: Context):
     val irOnly = genCtx.settings.scpyIrOnly.value
     val outputDirectory = genCtx.settings.outputDir.value
     val sourceName = genCtx.compilationUnit.source.file.name.stripSuffix(".scala")
+    val irFileName = deriveIrFileName(sourceName)
 
     // Write this CU's `.pyir` first, containing only its own classes.
     // Mirrors Scala.js `JSCodeGen.genIRFile`: the filesystem is the
@@ -1195,7 +1172,7 @@ private class PyCodeGen()(using genCtx: Context):
     // output directory (via PyClasspathLoader) rather than reusing the
     // in-memory `generatedClasses`, so a repeat compile sees exactly one
     // copy of each class regardless of classpath/output-dir overlap.
-    val irFile = outputDirectory.fileNamed(sourceName + PyIRFormat.FileExtension)
+    val irFile = outputDirectory.fileNamed(irFileName)
     val irOut  = irFile.bufferedOutput
     try PyIRSerializer.serialize(generatedClasses.toList, mainEntry, irOut)
     finally irOut.close()
@@ -1224,6 +1201,51 @@ private class PyCodeGen()(using genCtx: Context):
         writer.flush()
       finally writer.close()
     finally output.close()
+
+  /** Compute the `.pyir` filename for this CU.
+    *
+    *  Format: `<package>.<sourceName>.pyir` when all generated classes share
+    *  a package; `<sourceName>.pyir` when there are no generated classes or
+    *  they all live at the top level. If a CU emits classes spanning multiple
+    *  packages (rare in Scala but legal), we drop the prefix and log a
+    *  warning - the former behaviour silently picked whichever class was
+    *  emitted first and produced a nondeterministic filename.
+    *
+    *  The package is derived from each `PyClassDef`'s own encoded name
+    *  rather than from the CU's `PackageDef`, so it stays in lockstep with
+    *  the name scheme used throughout the PyIR/linker pipeline.
+    */
+  private def deriveIrFileName(sourceName: String): String =
+    def packagePrefixOf(fullName: String): Option[String] =
+      fullName.lastIndexOf('.') match
+        case -1  => None
+        case idx => Some(fullName.substring(0, idx))
+
+    val prefixes = generatedClasses.iterator
+      .map(cls => packagePrefixOf(cls.name.nameString))
+      .toSet
+
+    val packagePrefix =
+      prefixes.size match
+        case 0 => None
+        case 1 => prefixes.head
+        case _ =>
+          val distinct = prefixes.iterator
+            .map(_.getOrElse("<root>"))
+            .toList
+            .sorted
+            .mkString(", ")
+          report.warning(
+            s"ScalaPy: compilation unit ${genCtx.compilationUnit.source.file.name} " +
+              s"emits classes across multiple packages ($distinct); " +
+              "falling back to un-prefixed PyIR filename.",
+            NoSourcePosition
+          )
+          None
+
+    packagePrefix match
+      case Some(pkg) => s"$pkg.$sourceName${PyIRFormat.FileExtension}"
+      case None      => sourceName + PyIRFormat.FileExtension
 
   private def reportLinkerErrors(errors: List[PyLinkingError]): Unit =
     errors.foreach { err =>

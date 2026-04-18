@@ -1,0 +1,11 @@
+io:java.io.IOException:read failed:java.io.EOFException
+to-string:java.io.IOException: read failed
+cause-to-string:java.io.EOFException: disk-short-read
+cause-class:java.io.EOFException
+cause-message:disk-short-read
+outer-frames:3
+outer-frame0:io.Loader.load(Loader.scala:21)
+outer-frame-last:app.Main.main(Main.scala:5)
+cause-frames:3
+cause-frame0:io.Decoder.decode(Decoder.scala:8)
+frame0-parts:io.Loader:load:Loader.scala:21
