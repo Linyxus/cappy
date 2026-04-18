@@ -1,6 +1,7 @@
-package scala.python
+package scala.python.runtime
 
 import scala.language.dynamics
+import scala.python.{PyAny, PyDynamic, extern}
 
 /** Public wrapper for Python's `math` module.
  *

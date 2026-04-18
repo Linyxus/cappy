@@ -10,7 +10,7 @@
  * additional information regarding copyright ownership.
  *
  * Ported to the Python backend (scala3-py). `js.Math.*` calls are replaced
- * by calls into `scala.python.PyMath` (which wraps Python's stdlib
+ * by calls into `scala.python.runtime.PyMath` (which wraps Python's stdlib
  * `math` module). Algorithms whose Python equivalents differ semantically
  * from Java's contract — notably `round`, `floorDiv`, `floorMod`, and the
  * *Exact overflow-checking helpers — keep the scala-js-sourced algorithms.
@@ -26,7 +26,7 @@
 package java
 package lang
 
-import scala.python.PyMath
+import scala.python.runtime.PyMath
 import scala.python.runtime.PyStruct
 
 object Math:

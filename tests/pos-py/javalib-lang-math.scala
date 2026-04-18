@@ -181,20 +181,20 @@ import java.lang.Math
   println("toint-l:" + Math.toIntExact(42L))
 
   // Overflow paths: each must throw ArithmeticException.
-  println("addexact-i-ovf:" + catchArith(() => Math.addExact(scala.Int.MaxValue, 1)))
-  println("addexact-l-ovf:" + catchArith(() => Math.addExact(scala.Long.MaxValue, 1L)))
-  println("subexact-i-ovf:" + catchArith(() => Math.subtractExact(scala.Int.MinValue, 1)))
-  println("subexact-l-ovf:" + catchArith(() => Math.subtractExact(scala.Long.MinValue, 1L)))
-  println("mulexact-i-ovf:" + catchArith(() => Math.multiplyExact(scala.Int.MaxValue, 2)))
-  println("mulexact-l-ovf:" + catchArith(() => Math.multiplyExact(scala.Long.MaxValue, 2L)))
-  println("incexact-i-ovf:" + catchArith(() => Math.incrementExact(scala.Int.MaxValue)))
-  println("incexact-l-ovf:" + catchArith(() => Math.incrementExact(scala.Long.MaxValue)))
-  println("decexact-i-ovf:" + catchArith(() => Math.decrementExact(scala.Int.MinValue)))
-  println("decexact-l-ovf:" + catchArith(() => Math.decrementExact(scala.Long.MinValue)))
-  println("negexact-i-ovf:" + catchArith(() => Math.negateExact(scala.Int.MinValue)))
-  println("negexact-l-ovf:" + catchArith(() => Math.negateExact(scala.Long.MinValue)))
-  println("toint-l-ovf:" + catchArith(() => Math.toIntExact(scala.Long.MaxValue)))
-  println("toint-l-neg-ovf:" + catchArith(() => Math.toIntExact(scala.Long.MinValue)))
+  println("addexact-i-ovf:" + catchArith(Math.addExact(scala.Int.MaxValue, 1)))
+  println("addexact-l-ovf:" + catchArith(Math.addExact(scala.Long.MaxValue, 1L)))
+  println("subexact-i-ovf:" + catchArith(Math.subtractExact(scala.Int.MinValue, 1)))
+  println("subexact-l-ovf:" + catchArith(Math.subtractExact(scala.Long.MinValue, 1L)))
+  println("mulexact-i-ovf:" + catchArith(Math.multiplyExact(scala.Int.MaxValue, 2)))
+  println("mulexact-l-ovf:" + catchArith(Math.multiplyExact(scala.Long.MaxValue, 2L)))
+  println("incexact-i-ovf:" + catchArith(Math.incrementExact(scala.Int.MaxValue)))
+  println("incexact-l-ovf:" + catchArith(Math.incrementExact(scala.Long.MaxValue)))
+  println("decexact-i-ovf:" + catchArith(Math.decrementExact(scala.Int.MinValue)))
+  println("decexact-l-ovf:" + catchArith(Math.decrementExact(scala.Long.MinValue)))
+  println("negexact-i-ovf:" + catchArith(Math.negateExact(scala.Int.MinValue)))
+  println("negexact-l-ovf:" + catchArith(Math.negateExact(scala.Long.MinValue)))
+  println("toint-l-ovf:" + catchArith(Math.toIntExact(scala.Long.MaxValue)))
+  println("toint-l-neg-ovf:" + catchArith(Math.toIntExact(scala.Long.MinValue)))
 
   // -------- multiplyFull / multiplyHigh -----------------------------
 
@@ -293,9 +293,9 @@ import java.lang.Math
 
   println("done:true")
 
-private def catchArith(thunk: () => Any): String =
+private inline def catchArith(inline thunk: => Any): String =
   try
-    thunk()
+    thunk
     "no-throw"
   catch
     case _: ArithmeticException => "ok"
