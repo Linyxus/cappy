@@ -27,6 +27,7 @@ import dotty.tools.backend.python.ir.pyir.*
 import dotty.tools.backend.python.ir.pyir.serialization.{PyIRFormat, PyIRSerializer}
 
 import scala.collection.mutable
+import scala.util.boundary, boundary.break
 
 /** Generates Python source files for the compilation unit. */
 class GenPython extends Phase:
@@ -610,73 +611,74 @@ private class PyCodeGen()(using genCtx: Context):
   private def genNormalApply(app: Apply, pos: PyPosition): PyTree =
     val sym = app.fun.symbol
     genDynamicApply(app, pos).getOrElse {
-      val args = app.args.map(genExpr)
-      val methodName = encoding.encodeMethodName(sym)
-      val ownerName  = encoding.encodeClassName(sym.owner)
-      val resultTpe  = encoding.encodeType(sym.info.finalResultType)
-      val isStaticTarget = sym.is(JavaStatic)
+      boundary:
+        val args = app.args.map(genExpr)
+        val methodName = encoding.encodeMethodName(sym)
+        val ownerName  = encoding.encodeClassName(sym.owner)
+        val resultTpe  = encoding.encodeType(sym.info.finalResultType)
+        val isStaticTarget = sym.is(JavaStatic)
 
-      // Intercept `java.lang.String` instance methods — the runtime
-      // receiver is a Python `str` which has no `length__I`/`substring__I_I__…`
-      // etc. Map the most common calls to Python-native equivalents.
-      if !isStaticTarget && sym.owner == defn.StringClass then
+        // Intercept `java.lang.String` instance methods — the runtime
+        // receiver is a Python `str` which has no `length__I`/`substring__I_I__…`
+        // etc. Map the most common calls to Python-native equivalents.
+        if !isStaticTarget && sym.owner == defn.StringClass then
+          app.fun match
+            case Select(qual, _) =>
+              break(genStringCall(sym, genExpr(qual), args, resultTpe, pos))
+            case _ => ()
+
         app.fun match
-          case Select(qual, _) =>
-            return genStringCall(sym, genExpr(qual), args, resultTpe, pos)
-          case _ => ()
-
-      app.fun match
-        case _ if isStaticTarget =>
-          PyApplyStatic(
-            PyApplyFlags.empty,
-            ownerName,
-            methodName,
-            args
-          )(resultTpe, pos)
-
-        case Select(receiver, _) =>
-          PyApply(
-            PyApplyFlags.empty,
-            genExpr(receiver),
-            ownerName,
-            methodName,
-            args
-          )(resultTpe, pos)
-
-        case Ident(_) =>
-          if sym.owner.is(ModuleClass) then
-            PyApply(
+          case _ if isStaticTarget =>
+            PyApplyStatic(
               PyApplyFlags.empty,
-              moduleReceiver(sym.owner, pos),
               ownerName,
               methodName,
               args
             )(resultTpe, pos)
-          else if sym.owner.isClass then
-            // Bare-name call on an instance member — the implicit receiver
-            // is `this`. Scala 3's tree form elides `this.` on own-class
-            // members inside instance methods (and for val-accessors
-            // generated from `val x = ...`). Emit `self.method(...)` to
-            // reach the right storage at Python runtime.
-            val classTpe = PyClassType(encoding.encodeClassName(currentClassSym))
+
+          case Select(receiver, _) =>
             PyApply(
               PyApplyFlags.empty,
-              PyThis()(classTpe, pos),
+              genExpr(receiver),
               ownerName,
               methodName,
               args
             )(resultTpe, pos)
-          else
+
+          case Ident(_) =>
+            if sym.owner.is(ModuleClass) then
+              PyApply(
+                PyApplyFlags.empty,
+                moduleReceiver(sym.owner, pos),
+                ownerName,
+                methodName,
+                args
+              )(resultTpe, pos)
+            else if sym.owner.isClass then
+              // Bare-name call on an instance member — the implicit receiver
+              // is `this`. Scala 3's tree form elides `this.` on own-class
+              // members inside instance methods (and for val-accessors
+              // generated from `val x = ...`). Emit `self.method(...)` to
+              // reach the right storage at Python runtime.
+              val classTpe = PyClassType(encoding.encodeClassName(currentClassSym))
+              PyApply(
+                PyApplyFlags.empty,
+                PyThis()(classTpe, pos),
+                ownerName,
+                methodName,
+                args
+              )(resultTpe, pos)
+            else
+              PyApplyExternal(
+                PyExternalName(methodName.encoded),
+                args
+              )(resultTpe, pos)
+
+          case _ =>
             PyApplyExternal(
               PyExternalName(methodName.encoded),
               args
             )(resultTpe, pos)
-
-        case _ =>
-          PyApplyExternal(
-            PyExternalName(methodName.encoded),
-            args
-          )(resultTpe, pos)
     }
 
   /** Map `java.lang.String` instance method calls onto Python-native
