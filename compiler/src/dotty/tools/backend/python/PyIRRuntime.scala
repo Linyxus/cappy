@@ -47,8 +47,6 @@ object PyIRRuntime:
   // Java-only class names. These have no Scala source and are backed by
   // Python builtins (object, str, type, annotation base classes).
   private val SerializableClass = PyClassName("java.io.Serializable")
-  private val NumberClass = PyClassName("java.lang.Number")
-  private val IntegerClass = PyClassName("java.lang.Integer")
   private val CharacterClass = PyClassName("java.lang.Character")
   private val Function0Class = PyClassName("scala.Function0")
   private val Function1Class = PyClassName("scala.Function1")
@@ -130,19 +128,6 @@ object PyIRRuntime:
         kind = PyClassKind.Interface,
         superClass = None,
         javaProvided = true
-      ),
-    NumberClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.ObjectClass),
-        javaProvided = true
-      ),
-    IntegerClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(NumberClass),
-        javaProvided = true,
-        staticMethods = MethodMatcher(simpleNamePrefixes = Set("rotateLeft", "parseInt"))
       ),
     CharacterClass ->
       ProvidedClass(

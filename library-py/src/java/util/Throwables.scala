@@ -80,16 +80,24 @@ class InputMismatchException(s: String | Null = null) extends NoSuchElementExcep
 
 class InvalidPropertiesFormatException(primary: Any = null)
     extends java.io.IOException(
-      primary match
-        case cause: Throwable =>
-          if cause == null then null.asInstanceOf[String]
-          else ThrowablesSupport.stringValueOf(cause)
-        case other =>
-          other.asInstanceOf[String]
+      InvalidPropertiesFormatException.messageOf(primary)
     ):
   primary match
     case cause: Throwable => initCause(cause)
     case _                => ()
+
+private object InvalidPropertiesFormatException:
+  // The ctor's original implementation used a `match` expression directly in
+  // the super-call argument position. The Python backend's current GenPython
+  // lacks a `Labeled` case in `genExpr`, so the desugared `matchResult1`
+  // wrapper lands on the `unhandled expression form` path. Extracting the
+  // selection into a helper (statement-position match via explicit `if`s)
+  // sidesteps the codegen hole while preserving behaviour.
+  def messageOf(primary: Any): String =
+    if primary == null then null.asInstanceOf[String]
+    else if primary.isInstanceOf[Throwable] then
+      ThrowablesSupport.stringValueOf(primary.asInstanceOf[Throwable])
+    else primary.asInstanceOf[String]
 
 class MissingFormatArgumentException(s: String) extends IllegalFormatException():
   ThrowablesUtil.requireNonNullValue(s)
