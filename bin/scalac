@@ -2,4 +2,48 @@
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" >& /dev/null && pwd)/.."
 
+scalapy=0
+for arg in "$@"; do
+  if [ "$arg" = "-scalapy" ]; then
+    scalapy=1
+    break
+  fi
+done
+
+if [ "$scalapy" = "1" ]; then
+  py_jar_glob="$ROOT/library-py/target/scala-library-py/*/scala-library-py_3-*.jar"
+  py_jar="$(ls $py_jar_glob 2>/dev/null | head -1)"
+  if [ -z "$py_jar" ] || [ ! -f "$py_jar" ]; then
+    echo "Building scala-library-py (required for -scalapy) ..." >&2
+    (cd "$ROOT" && sbt --client "scala-library-py/Compile/packageBin") >&2 || exit 1
+    py_jar="$(ls $py_jar_glob 2>/dev/null | head -1)"
+  fi
+  if [ -z "$py_jar" ] || [ ! -f "$py_jar" ]; then
+    echo "Could not locate scala-library-py jar under $py_jar_glob" >&2
+    exit 1
+  fi
+
+  # Merge $py_jar into any existing -classpath/-cp; prepend one otherwise.
+  merged=()
+  injected=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -classpath|-cp)
+        merged+=("$1" "$2:$py_jar")
+        shift 2
+        injected=1
+        ;;
+      *)
+        merged+=("$1")
+        shift
+        ;;
+    esac
+  done
+  if [ "$injected" = "0" ]; then
+    set -- -classpath "$py_jar" "${merged[@]}"
+  else
+    set -- "${merged[@]}"
+  fi
+fi
+
 "$ROOT/bin/common" "scalac" "$@"
