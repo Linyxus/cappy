@@ -98,7 +98,20 @@ object PyRun:
         .start()
 
       val output = new String(process.getInputStream.readAllBytes(), StandardCharsets.UTF_8)
-      val exitCode = process.waitFor()
+      // ForkJoinPool can interrupt workers in blocking I/O while reshuffling
+      // near pool shutdown (see `notes/issue-pyrun-waitfor-interrupt.md`).
+      // Loop until the subprocess exits; preserve the interrupt flag for any
+      // legitimate cancellation path upstream.
+      var interrupted = false
+      var exitCode    = 0
+      var done        = false
+      while !done do
+        try
+          exitCode = process.waitFor()
+          done = true
+        catch
+          case _: InterruptedException => interrupted = true
+      if interrupted then Thread.currentThread.nn.interrupt()
       Right(ProcessResult(exitCode, output))
     catch
       case e: IOException =>
