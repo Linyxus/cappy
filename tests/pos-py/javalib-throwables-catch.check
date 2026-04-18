@@ -6,3 +6,5 @@ cause:outer/inner
 custom:MyErr:boom
 finally:inner-finally-ran
 finally:propagates
+finally-value:42:1
+catch+finally:99:2
