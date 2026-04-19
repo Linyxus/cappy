@@ -1,0 +1,31 @@
+stripindent-nl:[a|  b|]
+stripindent-nonl:[a|  b]
+stripindent-blank:[||]
+stripindent-mixed:[a||b|]
+indent-pos:[  a|  b|]
+indent-neg:[  a|b|]
+repeat-zero:[]
+repeat-one:[ab]
+repeat-neg:iae
+hash-empty:0
+hash-a:97
+hash-abc:96354
+hash-hello:99162322
+charat-oob:sioobe
+codepoint-oob:sioobe
+codepoint-before-zero:sioobe
+substring-empty:[]
+substring-full:[abc]
+substring-oob:sioobe
+index-empty:0
+index-empty-from:3
+last-index-empty:3
+last-index-empty-from-neg:-1
+starts-neg-offset:false
+starts-beyond:false
+trim-nbsp:[ x ]
+strip-nbsp:[ x ]
+escapes-n:[a|b]
+escapes-octal:[a]
+escapes-u:[A]
+escapes-line-cont:[ab]

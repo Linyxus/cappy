@@ -380,6 +380,10 @@ object PyIRRuntime:
        |        raise StringIndexOutOfBoundsException(index)
        |
        |def _scpy_chr_is_whitespace(ch):
+       |    # Java's Character.isWhitespace excludes these three non-breaking
+       |    # spaces; Python's str.isspace() includes them.
+       |    if ch == '\u00A0' or ch == '\u2007' or ch == '\u202F':
+       |        return False
        |    return ch.isspace()
        |
        |def _scpy_str_char_at(s, index):
@@ -556,9 +560,6 @@ object PyIRRuntime:
        |    right = other[ooffset:ooffset + length]
        |    return left.lower() == right.lower() if ignore_case else left == right
        |
-       |def _scpy_str_get_bytes_utf8(s):
-       |    return _scpy_str_get_bytes(s)
-       |
        |def _scpy_str_get_bytes(s, *encoding):
        |    if not encoding:
        |        enc = 'utf-8'
@@ -572,35 +573,6 @@ object PyIRRuntime:
        |    except LookupError:
        |        _scpy_unsupported('java.lang.String.getBytes unsupported charset: ' + enc)
        |    return [b - 256 if b >= 128 else b for b in raw]
-       |
-       |def _scpy_str_from_chars(values, offset, count):
-       |    end = offset + count
-       |    if offset < 0 or count < 0 or end > len(values):
-       |        raise StringIndexOutOfBoundsException(offset if offset < 0 else end)
-       |    out = []
-       |    i = offset
-       |    while i < end:
-       |        out.append(chr(values[i]))
-       |        i += 1
-       |    return ''.join(out)
-       |
-       |def _scpy_str_from_code_points(values, offset, count):
-       |    end = offset + count
-       |    if offset < 0 or count < 0 or end > len(values):
-       |        raise StringIndexOutOfBoundsException(offset if offset < 0 else end)
-       |    out = []
-       |    i = offset
-       |    while i < end:
-       |        out.append(chr(values[i]))
-       |        i += 1
-       |    return ''.join(out)
-       |
-       |def _scpy_str_from_bytes_utf8(values, offset, length):
-       |    end = offset + length
-       |    if offset < 0 or length < 0 or end > len(values):
-       |        raise StringIndexOutOfBoundsException(offset if offset < 0 else end)
-       |    raw = _builtins.bytes((values[i] & 0xFF) for i in range(offset, end))
-       |    return raw.decode('utf-8')
        |
        |def _scpy_str_split_lines(s):
        |    xs = []
@@ -651,7 +623,7 @@ object PyIRRuntime:
        |            if min_leading is None or idx < min_leading:
        |                min_leading = idx
        |        i += 1
-       |    if trailing_nl or min_leading is None:
+       |    if min_leading is None:
        |        min_leading = 0
        |    parts = []
        |    j = 0

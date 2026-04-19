@@ -442,7 +442,18 @@ private class PyCodeGen()(using genCtx: Context):
         genArrayLiteral(seq.tpe, seq.elems, pos)
 
       case If(cond, thenp, elsep) =>
-        PyIf(genExpr(cond), genExpr(thenp), genExpr(elsep))(encoding.encodeType(tree.tpe), pos)
+        // Each branch must scope its own `pendingLocalDefs` to prevent
+        // side-effecting genExpr calls (notably `genExpr(Return)`) from
+        // leaking into the enclosing scope and running unconditionally.
+        def scopedBranch(branch: Tree): PyTree =
+          val saved = pendingLocalDefs
+          pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
+          val expr = genExpr(branch)
+          val locals = pendingLocalDefs
+          pendingLocalDefs = saved
+          if locals.isEmpty then expr
+          else PyBlock(locals.toList, expr)(pos)
+        PyIf(genExpr(cond), scopedBranch(thenp), scopedBranch(elsep))(encoding.encodeType(tree.tpe), pos)
 
       case t: This =>
         if t.symbol.is(ModuleClass) && t.symbol != currentClassSym then
@@ -1367,16 +1378,29 @@ private class PyCodeGen()(using genCtx: Context):
     var defaultTree: PyTree = PyUnitLit()(pos)
     var defaultSet = false
 
+    // Each case body must scope its own `pendingLocalDefs`. Otherwise
+    // side-effecting genExpr calls inside a case (e.g. the `genExpr(Return)`
+    // path pushes a `PyLabelReturn` as a pending stmt) would leak out of
+    // the match and execute unconditionally before the dispatch runs.
+    def scopedBody(body: Tree): PyTree =
+      val saved = pendingLocalDefs
+      pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
+      val expr = genExpr(body)
+      val locals = pendingLocalDefs
+      pendingLocalDefs = saved
+      if locals.isEmpty then expr
+      else PyBlock(locals.toList, expr)(pos)
+
     for caseDef <- cases do
       caseDef match
         case CaseDef(Literal(c), _, body) =>
           val lit = genLiteral(c, pos) match
             case ml: PyMatchableLiteral => ml
             case _ => PyNullLit()(pos): PyMatchableLiteral
-          litCases += ((List(lit), genExpr(body)))
+          litCases += ((List(lit), scopedBody(body)))
         case CaseDef(_, _, body) =>
           if !defaultSet then
-            defaultTree = genExpr(body)
+            defaultTree = scopedBody(body)
             defaultSet = true
 
     PyMatch(sel, litCases.toList, defaultTree)(resultTpe, pos)

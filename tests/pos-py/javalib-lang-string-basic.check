@@ -21,5 +21,5 @@ hash:96354
 chararray:2:65:122
 getchars:99:97:108
 indent:[  a|  b|]
-stripindent:[  a|    b|]
+stripindent:[a|  b|]
 escapes:[|a]

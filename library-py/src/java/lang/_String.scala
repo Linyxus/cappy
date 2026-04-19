@@ -13,16 +13,15 @@ import java.util.Comparator
 
 import scala.python.runtime.PyBuiltins
 
-private final class StringCaseInsensitiveOrder
-    extends Comparator[String]
-    with java.io.Serializable:
-
-  def compare(o1: String, o2: String): Int =
-    o1.compareToIgnoreCase(o2)
-
 object _String:
+  private final class CaseInsensitiveOrder
+      extends Comparator[String]
+      with java.io.Serializable:
+    def compare(o1: String, o2: String): Int =
+      o1.compareToIgnoreCase(o2)
+
   final val CASE_INSENSITIVE_ORDER: Comparator[String] =
-    new StringCaseInsensitiveOrder()
+    new CaseInsensitiveOrder()
 
   def `new`(): String =
     ""
