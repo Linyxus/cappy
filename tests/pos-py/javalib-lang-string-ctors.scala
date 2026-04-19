@@ -13,3 +13,7 @@
   println("slice-name:" + new String(ascii, 1, 2, "US-ASCII"))
   val asciiBytes = "AB".getBytes("US-ASCII")
   println("bytes:" + asciiBytes.length + ":" + asciiBytes(0) + ":" + asciiBytes(1))
+  val builder = new java.lang.StringBuilder().append("from").append('-').append("builder")
+  println("from-builder:" + new String(builder))
+  val buffer = new java.lang.StringBuffer("from").append('-').append("buffer")
+  println("from-buffer:" + new String(buffer))
