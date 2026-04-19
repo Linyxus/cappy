@@ -1,0 +1,5 @@
+allTail(0):10
+allTail(9):-7
+mixed(0):12
+mixed(1):34
+mixed(7):100

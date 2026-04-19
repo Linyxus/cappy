@@ -251,6 +251,24 @@ object PyIRRuntime:
        |        return self._scpy_name
        |Class = _scpy_Class
        |
+       |# -- scala.FunctionN wrapper --
+       |# `PyClosure` emits `_scpy_Fn(lambda params: body)`. Callers that
+       |# treat the closure as a `scala.Function0/1/N` and invoke its
+       |# erased `apply__...` method land in __getattr__, which returns
+       |# the underlying lambda; the `()` at the call site then calls it.
+       |# Callers that invoke the closure directly via `closure(args)`
+       |# hit `__call__` which just forwards.
+       |class _scpy_Fn:
+       |    __slots__ = ("_fn",)
+       |    def __init__(self, fn):
+       |        self._fn = fn
+       |    def __call__(self, *args):
+       |        return self._fn(*args)
+       |    def __getattr__(self, name):
+       |        if name.startswith("apply"):
+       |            return object.__getattribute__(self, "_fn")
+       |        raise AttributeError(name)
+       |
        |# -- scala.runtime.*Ref --
        |# By-ref capture wrappers. Scala's JVM target lowers mutable-var
        |# closure captures into `new IntRef(0)` + `.elem` reads/writes.

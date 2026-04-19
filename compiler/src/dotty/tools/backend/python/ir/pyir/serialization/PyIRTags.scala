@@ -31,6 +31,7 @@ object PyIRTags:
   final val TagPyBlock:       Byte = 0x14
   final val TagPyLabeled:     Byte = 0x15
   final val TagPyLabelReturn: Byte = 0x16
+  // 0x17, 0x18 — reserved (formerly PyLocalFnDef / PyLocalFnCall)
 
   // References (0x20..0x2F)
   final val TagPyVarRef:       Byte = 0x20

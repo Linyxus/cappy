@@ -93,6 +93,16 @@ object PyIREmitter:
     private var knownClasses: Set[PyClassName] = Set.empty
     private var classByName: Map[PyClassName, PyClassDef] = Map.empty
 
+    // Per-method state for `PyLabeled` / `PyLabelReturn` emission. Each
+    // Labeled that survives the usage-detection pre-pass allocates one
+    // `BaseException` subclass (`_scpy_lbl_<n>`) and records the
+    // mapping here; `PyLabelReturn` looks up the class by label and
+    // emits `raise <class>(<value>)`. Reset at every method entry
+    // because the `_scpy_lbl_<n>` names must be unique within one
+    // Python `def`. See `notes/issue-labeled-*.md`.
+    private var labelClassCounter: Int = 0
+    private val labelClasses = mutable.Map.empty[PyLabelName, String]
+
     private def indent(): Unit = indentLevel += 1
     private def dedent(): Unit = indentLevel -= 1
 
@@ -372,6 +382,11 @@ object PyIREmitter:
     // -- Method definition ---------------------------------------
 
     private def emitMethodDef(cls: PyClassDef, method: PyMethodDef): Unit =
+      // Per-method state for labeled-escape emission: each Python `def`
+      // gets a fresh `_scpy_lbl_<n>` namespace.
+      labelClassCounter = 0
+      labelClasses.clear()
+
       // Decorator for static methods
       if method.flags.namespace == PyMemberNamespace.PublicStatic
          || method.flags.namespace == PyMemberNamespace.PrivateStatic then
@@ -442,36 +457,50 @@ object PyIREmitter:
 
     /** Turn the last statement of a method body into a `return`. For
      *  nested structures (blocks, if/else, try/catch), recurse into
-     *  every exit path so each one is wrapped. */
-    private def wrapLastReturn(tree: PyTree): Unit = tree match
+     *  every exit path so each one is wrapped.
+     *
+     *  `methodReturnLabels` tracks labels whose escape the peephole
+     *  has collapsed into a direct Python `return`. When a
+     *  `PyLabeled(label, body)` is tail-targeted (every
+     *  `PyLabelReturn(label, _)` inside is at a tail position per
+     *  this function's own recursion), we skip the try/except wrapper
+     *  and the `_scpy_lbl_<n>` class allocation, and emit the inner
+     *  `PyLabelReturn`s as plain Python `return`s. Matches the
+     *  previous placeholder behaviour on the common "match at method
+     *  tail" shape — no exception machinery, no per-call class
+     *  creation. */
+    private def wrapLastReturn(
+        tree: PyTree,
+        methodReturnLabels: Set[PyLabelName] = Set.empty
+    ): Unit = tree match
       case PyBlock(stats, expr) =>
         stats.foreach(emitStmt)
-        wrapLastReturn(expr)
+        wrapLastReturn(expr, methodReturnLabels)
 
       case PyIf(cond, thenp, elsep) =>
         line(s"if ${exprToStr(cond)}:")
-        indent(); wrapLastReturn(thenp); dedent()
+        indent(); wrapLastReturn(thenp, methodReturnLabels); dedent()
         val elseStmts = flattenBlock(elsep)
         if elseStmts.nonEmpty then
           line("else:")
-          indent(); wrapLastReturn(elsep); dedent()
+          indent(); wrapLastReturn(elsep, methodReturnLabels); dedent()
 
       case PyTryCatch(block, errVar, _, handler) =>
         line("try:")
-        indent(); wrapLastReturn(block); dedent()
+        indent(); wrapLastReturn(block, methodReturnLabels); dedent()
         line(s"except Exception as ${errVar.name}:")
-        indent(); wrapLastReturn(handler); dedent()
+        indent(); wrapLastReturn(handler, methodReturnLabels); dedent()
 
       case PyTryFinally(block, finalizer) =>
         line("try:")
-        indent(); wrapLastReturn(block); dedent()
+        indent(); wrapLastReturn(block, methodReturnLabels); dedent()
         line("finally:")
         indent(); emitBlockStmts(finalizer); dedent()
 
       case PyMatch(selector, cases, default) =>
         val selStr = exprToStr(selector)
         if cases.isEmpty then
-          wrapLastReturn(default)
+          wrapLastReturn(default, methodReturnLabels)
         else
           var first = true
           for (lits, body) <- cases do
@@ -479,9 +508,27 @@ object PyIREmitter:
             first = false
             val conds = lits.map(lit => s"$selStr == ${exprToStr(lit)}").mkString(" or ")
             line(s"$keyword $conds:")
-            indent(); wrapLastReturn(body); dedent()
+            indent(); wrapLastReturn(body, methodReturnLabels); dedent()
           line("else:")
-          indent(); wrapLastReturn(default); dedent()
+          indent(); wrapLastReturn(default, methodReturnLabels); dedent()
+
+      // Method-tail peephole: the Labeled wraps the method's tail
+      // expression and every escape to its label is at a tail
+      // position. Emit body without the try/except wrapper; nested
+      // `PyLabelReturn(label, _)` emit as plain `return <value>`.
+      case PyLabeled(label, body) if isTailTargeted(body, label) =>
+        wrapLastReturn(body, methodReturnLabels + label)
+
+      // Peepholed label return → plain Python return.
+      case PyLabelReturn(label, value) if methodReturnLabels.contains(label) =>
+        value match
+          case _: PyUnitLit => line("return")
+          case PyBlock(stats, tail) =>
+            stats.foreach(emitStmt)
+            tail match
+              case _: PyUnitLit => line("return")
+              case _            => line(s"return ${exprToStr(tail)}")
+          case _ => line(s"return ${exprToStr(value)}")
 
       case _: PyUnitLit =>
         line("return None")
@@ -502,8 +549,18 @@ object PyIREmitter:
         line(s"${exprToStr(lhs)} = ${exprToStr(rhs)}")
 
       case PyReturn(value) =>
+        // Flatten a trailing `PyBlock` so its `stats` (side-effect
+        // statements hoisted from a Unit-typed expression, e.g. the arm
+        // body of a match) run before the `return`. `exprToStr(PyBlock)`
+        // silently drops stats — see `notes/issue-return-drops-unit-
+        // side-effects.md`.
         value match
           case _: PyUnitLit => line("return")
+          case PyBlock(stats, tail) =>
+            stats.foreach(emitStmt)
+            tail match
+              case _: PyUnitLit => line("return")
+              case _            => line(s"return ${exprToStr(tail)}")
           case _            => line(s"return ${exprToStr(value)}")
 
       case PyWhile(cond, body) =>
@@ -557,12 +614,41 @@ object PyIREmitter:
         emitBlockStmts(finalizer)
         dedent()
 
-      case PyLabeled(_, body) =>
-        // Placeholder - label/break lowering is not yet implemented
-        emitBlockStmts(body)
+      case PyLabeled(label, body) =>
+        // If no `PyLabelReturn(label, _)` inside the body targets this
+        // label, the wrapper is dead weight — emit body inline.
+        // PatternMatcher produces this shape whenever all match arms
+        // fall through (no explicit escape), e.g. a Unit-typed match
+        // whose arms only run for side effects.
+        if !labelReturnTargets(body, label) then
+          emitBlockStmts(body)
+        else
+          val className = allocLabelClass(label)
+          emitLabelClassDecl(className)
+          line("try:")
+          indent(); emitBlockStmts(body); dedent()
+          line(s"except $className:")
+          indent(); line("pass"); dedent()
+          labelClasses.remove(label)  // name is scoped to this Labeled
 
-      case PyLabelReturn(_, value) =>
-        line(s"return ${exprToStr(value)}")
+      case PyLabelReturn(label, value) =>
+        // Lookup the class allocated by the enclosing `PyLabeled`. If
+        // absent it means either (a) lowering produced a `PyLabelReturn`
+        // whose target is the method-return label being peepholed by
+        // `wrapLastReturn`, which must intercept before reaching here,
+        // or (b) a structural bug. Fall back to a `return` for (a)'s
+        // edge case; (b) would surface a `NameError` at runtime so the
+        // assertion below catches it at emit time.
+        labelClasses.get(label) match
+          case Some(className) =>
+            emitRaiseLabel(className, value)
+          case None =>
+            throw AssertionError(
+              s"PyLabelReturn targeting unallocated label '${label.name}' — " +
+              "emission must allocate the class via the enclosing `PyLabeled`, " +
+              "or `wrapLastReturn` must peephole the return before reaching " +
+              "`emitStmt(PyLabelReturn)`."
+            )
 
       case PyMatch(selector, cases, default) =>
         val selStr = exprToStr(selector)
@@ -593,6 +679,120 @@ object PyIREmitter:
       val stmts = flattenBlock(tree)
       if stmts.isEmpty then line("pass")
       else stmts.foreach(emitStmt)
+
+    // -- Labeled escape machinery --------------------------------
+    //
+    // `PyLabeled(label, body)` emits a unique `_scpy_lbl_<n>` subclass
+    // of `BaseException` plus a `try/except` wrapper; every
+    // `PyLabelReturn(label, v)` inside the body lowers to
+    // `raise _scpy_lbl_<n>(<v>)`. Nested labels don't interfere
+    // because each label has its own class; outer-label raises pass
+    // through inner `except` clauses unhandled. Matches Scala.js's
+    // use of JavaScript's labeled `break` but adapted for Python.
+    //
+    // `BaseException` (not `Exception`) so user code using
+    // `except Exception` cannot accidentally swallow our escapes.
+
+    private def allocLabelClass(label: PyLabelName): String =
+      labelClasses.get(label) match
+        case Some(existing) => existing
+        case None =>
+          labelClassCounter += 1
+          val className = s"_scpy_lbl_$labelClassCounter"
+          labelClasses.update(label, className)
+          className
+
+    private def emitLabelClassDecl(className: String): Unit =
+      line(s"class $className(BaseException):")
+      indent()
+      line("__slots__ = (\"value\",)")
+      line("def __init__(self, v=None): self.value = v")
+      dedent()
+
+    private def emitRaiseLabel(className: String, value: PyTree): Unit =
+      // A `PyBlock` here carries the hoisted side effects that the
+      // lowering-side fix for `Return(_, Block([stats], ()))` pushed
+      // into the return value. Emit the stats, then the raise with
+      // the tail expression (or no argument if tail is Unit).
+      value match
+        case PyBlock(stats, tail) =>
+          stats.foreach(emitStmt)
+          tail match
+            case _: PyUnitLit => line(s"raise $className()")
+            case _            => line(s"raise $className(${exprToStr(tail)})")
+        case _: PyUnitLit =>
+          line(s"raise $className()")
+        case _ =>
+          line(s"raise $className(${exprToStr(value)})")
+
+    /** True iff any `PyLabelReturn(target, _)` appears inside `tree`. */
+    private def labelReturnTargets(tree: PyTree, target: PyLabelName): Boolean =
+      tree match
+        case PyLabelReturn(lbl, value) =>
+          lbl == target || labelReturnTargets(value, target)
+        case PyBlock(stats, expr) =>
+          stats.exists(labelReturnTargets(_, target)) ||
+          labelReturnTargets(expr, target)
+        case PyIf(cond, thenp, elsep) =>
+          labelReturnTargets(cond, target) ||
+          labelReturnTargets(thenp, target) ||
+          labelReturnTargets(elsep, target)
+        case PyTryCatch(block, _, _, handler) =>
+          labelReturnTargets(block, target) ||
+          labelReturnTargets(handler, target)
+        case PyTryFinally(block, finalizer) =>
+          labelReturnTargets(block, target) ||
+          labelReturnTargets(finalizer, target)
+        case PyMatch(selector, cases, default) =>
+          labelReturnTargets(selector, target) ||
+          cases.exists { case (_, body) => labelReturnTargets(body, target) } ||
+          labelReturnTargets(default, target)
+        case PyLabeled(_, body) =>
+          labelReturnTargets(body, target)
+        case PyWhile(cond, body) =>
+          labelReturnTargets(cond, target) || labelReturnTargets(body, target)
+        case PyForEach(_, iter, body) =>
+          labelReturnTargets(iter, target) || labelReturnTargets(body, target)
+        case PyAssign(_, rhs) =>
+          labelReturnTargets(rhs, target)
+        case PyVarDef(_, _, _, _, rhs) =>
+          labelReturnTargets(rhs, target)
+        case PyReturn(value) =>
+          labelReturnTargets(value, target)
+        case _ => false
+
+    /** True iff every `PyLabelReturn(target, _)` inside `tree` sits at
+     *  a tail position per `wrapLastReturn`'s own recursion rules.
+     *  Used to decide whether a method-tail `PyLabeled` can be
+     *  peepholed: rather than allocating a class + try/except we let
+     *  the nested `PyLabelReturn`s emit a plain `return <value>`.
+     *
+     *  Conservative — any `PyLabelReturn(target, _)` outside a tail
+     *  position disables the peephole for this label. */
+    private def isTailTargeted(tree: PyTree, target: PyLabelName): Boolean =
+      tree match
+        case PyLabelReturn(lbl, value) =>
+          lbl == target && !labelReturnTargets(value, target)
+        case PyBlock(stats, expr) =>
+          !stats.exists(labelReturnTargets(_, target)) &&
+          isTailTargeted(expr, target)
+        case PyIf(_, thenp, elsep) =>
+          isTailTargeted(thenp, target) && isTailTargeted(elsep, target)
+        case PyTryCatch(block, _, _, handler) =>
+          isTailTargeted(block, target) && isTailTargeted(handler, target)
+        case PyTryFinally(block, finalizer) =>
+          isTailTargeted(block, target) && !labelReturnTargets(finalizer, target)
+        case PyMatch(_, cases, default) =>
+          cases.forall { case (_, body) => isTailTargeted(body, target) } &&
+          isTailTargeted(default, target)
+        case PyLabeled(_, body) =>
+          // Nested Labeled — the inner's body is a tail position too.
+          isTailTargeted(body, target)
+        case _ =>
+          // Any leaf tree that isn't a PyLabelReturn to `target` and
+          // doesn't contain one is trivially tail-targeted (no
+          // offending return inside).
+          !labelReturnTargets(tree, target)
 
     private def bindExternAlias(imp: ExternImport): String =
       externAliases.getOrElseUpdate(imp, {
@@ -811,10 +1011,13 @@ object PyIREmitter:
       case PyBinaryOp(op, lhs, rhs) =>
         emitBinary(op, lhs, rhs)
 
-      // Closures (simplified)
+      // Closures (simplified). Wrapped in `_scpy_Fn` (defined in the
+      // runtime preamble) so callers can invoke the erased
+      // `apply__...` method — `_scpy_Fn.__getattr__` forwards `apply*`
+      // accesses to the underlying Python lambda.
       case PyClosure(_, params, _, body, _) =>
         val paramsStr = params.map(_.name.name).mkString(", ")
-        s"(lambda $paramsStr: ${exprToStr(body)})"
+        s"_scpy_Fn(lambda $paramsStr: ${exprToStr(body)})"
 
       case PyClassOf(typeRef) =>
         "\"" + typeRef.encoded + "\""
@@ -1084,6 +1287,8 @@ object PyIREmitter:
           // Python bools are ints; Java Number is Integer/Long/Float/Double
           // (not Boolean), so exclude bool explicitly.
           s"(isinstance($exprStr, (int, float)) and not isinstance($exprStr, bool))"
+        case "java.lang.String" =>
+          s"isinstance($exprStr, str)"
         case _ =>
           s"isinstance($exprStr, ${classIdentifier(cn)})"
 

@@ -1,0 +1,7 @@
+direct:42
+thru:7
+capture:3
+fn1:42
+fn2:7
+catch-happy:no-throw
+catch-arith:caught-arith
