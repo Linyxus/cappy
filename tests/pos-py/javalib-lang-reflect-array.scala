@@ -19,3 +19,6 @@
   ints2(0) = 6
   println("coerce:int:" + java.lang.reflect.Array.getInt(bytes.asInstanceOf[AnyRef], 0))
   println("coerce:long:" + java.lang.reflect.Array.getLong(ints2.asInstanceOf[AnyRef], 0))
+  // No mismatch: scenario — primitive arrays all erase to Python `list`
+  // so the dispatch can't discriminate element types. See
+  // `notes/reflect-array-primitive-discrimination.md`.

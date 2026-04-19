@@ -11,19 +11,14 @@
  *   are backend stubs in scala-js; on the Python backend we implement
  *   them directly (Python `int` is arbitrary-precision, so masking
  *   gives the unsigned view).
- * - Cross-references from this unit back to `Character.*` are kept
- *   because Character symbol-resolves correctly here (no JDK shadow
- *   collision observed when Integer is the referrer — the shadow
- *   issue only manifests when the referrer is compiled *before* the
- *   referent in the batch). Consumers of Integer in other L1.1 units
- *   inline the cross-refs to avoid triggering the issue.
+ * - Parsing shares `IntegerLong.parseSignedImpl` / `parseUnsignedImpl`
+ *   with `Long` via the `IntFloatBits[Int, Float]` typeclass.
  */
 
 package java.lang
 
 import java.lang.constant.{Constable, ConstantDesc}
 import java.util.function._
-import scala.python.runtime.PyBuiltins
 
 final class Integer private ()
     extends Number with Comparable[Integer] with Constable with ConstantDesc:
@@ -75,52 +70,13 @@ object Integer:
 
   def parseInt(s: String, radix: scala.Int): scala.Int =
     if radix < 2 || radix > 36 then parseIntFail(s)
-    else parseIntImpl(s, radix)
-
-  private def parseIntImpl(s: String, radix: Int): Int =
-    if s == null then parseIntFail(s)
-    val inputLength = if s == null then 0 else s.length()
-    if inputLength == 0 then parseIntFail(s)
-
-    val firstChar = s.charAt(0)
-    val negative = firstChar == '-'
-    val i = if negative || firstChar == '+' then 1 else 0
-    if i >= inputLength then parseIntFail(s)
-
-    val toParse = if negative then "-" + s.substring(i) else s.substring(i)
-
-    try
-      val parsed = PyBuiltins.int_parse(toParse, radix).toLong
-      if parsed < MIN_VALUE.toLong || parsed > MAX_VALUE.toLong then
-        parseIntFail(s)
-      parsed.toInt
-    catch
-      case _: Throwable => parseIntFail(s)
+    else IntegerLong.parseSignedImpl(s, radix, divideUnsigned(MIN_VALUE, radix))
 
   def parseUnsignedInt(s: String): scala.Int = parseUnsignedInt(s, 10)
 
   def parseUnsignedInt(s: String, radix: scala.Int): scala.Int =
     if radix < 2 || radix > 36 then parseIntFail(s)
-    else parseUnsignedIntImpl(s, radix)
-
-  private def parseUnsignedIntImpl(s: String, radix: Int): Int =
-    if s == null then parseIntFail(s)
-    val inputLength = if s == null then 0 else s.length()
-    if inputLength == 0 then parseIntFail(s)
-
-    val firstChar = s.charAt(0)
-    if firstChar == '-' then parseIntFail(s)
-    val i = if firstChar == '+' then 1 else 0
-    if i >= inputLength then parseIntFail(s)
-
-    val toParse = s.substring(i)
-    try
-      val parsed = PyBuiltins.int_parse(toParse, radix).toLong
-      if parsed < 0L || parsed > 0xFFFFFFFFL then
-        parseIntFail(s)
-      parsed.toInt
-    catch
-      case _: Throwable => parseIntFail(s)
+    else IntegerLong.parseUnsignedImpl(s, radix, divideUnsigned(-1, radix))
 
   def toString(i: scala.Int): String = "" + i
 
@@ -288,7 +244,7 @@ object Integer:
       val r = radix.toLong
       while v != 0L do
         val digit = (v % r).toInt
-        buf(pos) = forDigitLocal(digit, radix)
+        buf(pos) = Character.forDigit(digit, radix)
         pos -= 1
         v = v / r
       var out = ""
@@ -300,10 +256,3 @@ object Integer:
 
   private def toStringBase(i: scala.Int, base: scala.Int): String =
     toUnsignedStringBase(toUnsignedLong(i), base)
-
-  // Local copy of Character.forDigit to avoid the javalib inter-unit
-  // cross-reference issue (see header).
-  private def forDigitLocal(digit: Int, radix: Int): scala.Char =
-    val overBaseTen = digit - 10
-    val result = if overBaseTen < 0 then '0'.toInt + digit else 'a'.toInt + overBaseTen
-    result.toChar

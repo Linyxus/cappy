@@ -345,42 +345,6 @@ object PyIRRuntime:
        |def _scpy_f32(x):
        |    return struct.unpack('f', struct.pack('f', _builtins.float(x)))[0]
        |
-       |def _scpy_float_to_bits(x):
-       |    return _builtins.int.from_bytes(
-       |        struct.pack('>f', _builtins.float(x)),
-       |        'big',
-       |        signed=True
-       |    )
-       |
-       |def _scpy_bits_to_float(bits):
-       |    return struct.unpack(
-       |        '>f',
-       |        (_builtins.int(bits) & 0xFFFFFFFF).to_bytes(4, 'big')
-       |    )[0]
-       |
-       |def _scpy_double_to_bits(x):
-       |    return _builtins.int.from_bytes(
-       |        struct.pack('>d', _builtins.float(x)),
-       |        'big',
-       |        signed=True
-       |    )
-       |
-       |def _scpy_bits_to_double(bits):
-       |    return struct.unpack(
-       |        '>d',
-       |        (_builtins.int(bits) & 0xFFFFFFFFFFFFFFFF).to_bytes(8, 'big')
-       |    )[0]
-       |
-       |def _scpy_chr_from_codepoint(cp):
-       |    return _builtins.chr(_builtins.int(cp))
-       |
-       |def _scpy_parse_double_literal(s):
-       |    return _builtins.float(s)
-       |
-       |def _scpy_parse_float_literal(s):
-       |    parsed = _builtins.float(s)
-       |    return struct.unpack('>f', struct.pack('>f', parsed))[0]
-       |
        |def _scpy_to_str(x):
        |    # Scala-faithful stringification: matches `String.valueOf`
        |    if x is None:
