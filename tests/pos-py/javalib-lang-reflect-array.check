@@ -1,0 +1,6 @@
+new:4
+get-set:int:7
+get-set:double:2.5
+get-set:object:hi
+coerce:int:5
+coerce:long:6

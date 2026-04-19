@@ -1,0 +1,8 @@
+float:one-bits:1065353216
+float:negzero-bits:true
+float:subnormal-rt:true
+float:nan:true
+double:one-bits:4607182418800017408
+double:negzero-bits:true
+double:subnormal-rt:true
+double:nan:true

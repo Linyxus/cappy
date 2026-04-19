@@ -18,6 +18,13 @@ object PyBuiltins:
   @extern("builtins")
   private object builtins extends PyDynamic
 
+  @extern("builtins", "float")
+  private object floatType extends PyDynamic
+
+  @extern("builtins", "float")
+  private class PyFloat extends PyAny:
+    def hex(): String = native
+
   /** Facade over Python's `str` for method dispatch. Scala `String`
    *  erases to Python `str` so the `asInstanceOf[PyStr]` bridges are
    *  no-ops at runtime. */
@@ -44,6 +51,7 @@ object PyBuiltins:
     def encode(encoding: String): PyAny = native
 
   private inline def asStr(s: String): PyStr = s.asInstanceOf[PyStr]
+  private inline def asFloat(value: Double): PyFloat = value.asInstanceOf[PyFloat]
 
   // --- Numeric formatting -------------------------------------------
 
@@ -72,6 +80,12 @@ object PyBuiltins:
 
   def float_parse(text: String): Double =
     builtins.float(text).asInstanceOf[Double]
+
+  def float_from_hex(text: String): Double =
+    floatType.fromhex(text).asInstanceOf[Double]
+
+  def float_hex(value: Double): String =
+    asFloat(value).hex()
 
   // --- Numeric ops (typed variants of Python's polymorphic builtins) -
 

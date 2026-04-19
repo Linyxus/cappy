@@ -79,13 +79,13 @@ object Integer:
 
   private def parseIntImpl(s: String, radix: Int): Int =
     if s == null then parseIntFail(s)
-    val len = if s == null then 0 else s.length()
-    if len == 0 then parseIntFail(s)
+    val inputLength = if s == null then 0 else s.length()
+    if inputLength == 0 then parseIntFail(s)
 
     val firstChar = s.charAt(0)
     val negative = firstChar == '-'
     val i = if negative || firstChar == '+' then 1 else 0
-    if i >= len then parseIntFail(s)
+    if i >= inputLength then parseIntFail(s)
 
     val toParse = if negative then "-" + s.substring(i) else s.substring(i)
 
@@ -105,13 +105,13 @@ object Integer:
 
   private def parseUnsignedIntImpl(s: String, radix: Int): Int =
     if s == null then parseIntFail(s)
-    val len = if s == null then 0 else s.length()
-    if len == 0 then parseIntFail(s)
+    val inputLength = if s == null then 0 else s.length()
+    if inputLength == 0 then parseIntFail(s)
 
     val firstChar = s.charAt(0)
     if firstChar == '-' then parseIntFail(s)
     val i = if firstChar == '+' then 1 else 0
-    if i >= len then parseIntFail(s)
+    if i >= inputLength then parseIntFail(s)
 
     val toParse = s.substring(i)
     try
@@ -131,11 +131,11 @@ object Integer:
     decodeGeneric(nm, (s, r) => valueOf(s, r))
 
   def decodeGeneric[A](nm: String, parse: BiFunction[String, Int, A]): A =
-    val len = nm.length()
+    val inputLength = nm.length()
     var i = 0
 
     val negative =
-      if i != len then
+      if i != inputLength then
         val ch = nm.charAt(i)
         if ch == '+' then
           i += 1
@@ -148,10 +148,10 @@ object Integer:
       else false
 
     val base =
-      if i != len then
+      if i != inputLength then
         val ch = nm.charAt(i)
         if ch == '0' then
-          if i == len - 1 then 10
+          if i == inputLength - 1 then 10
           else
             i += 1
             val radixPrefix = nm.charAt(i)
