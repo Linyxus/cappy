@@ -14,14 +14,10 @@ import java.util.Comparator
 import scala.python.runtime.PyBuiltins
 
 object _String:
-  private final class CaseInsensitiveOrder
-      extends Comparator[String]
-      with java.io.Serializable:
-    def compare(o1: String, o2: String): Int =
-      o1.compareToIgnoreCase(o2)
-
   final val CASE_INSENSITIVE_ORDER: Comparator[String] =
-    new CaseInsensitiveOrder()
+    new Comparator[String] with java.io.Serializable:
+      def compare(o1: String, o2: String): Int =
+        o1.compareToIgnoreCase(o2)
 
   def `new`(): String =
     ""
@@ -61,6 +57,12 @@ object _String:
 
   def `new`(original: String): String =
     ThrowablesSupport.requireNonNull(original)
+
+  def `new`(builder: StringBuilder): String =
+    ThrowablesSupport.requireNonNull(builder).toString()
+
+  def `new`(buffer: StringBuffer): String =
+    ThrowablesSupport.requireNonNull(buffer).toString()
 
   def valueOf(b: scala.Boolean): String =
     if b then "true" else "false"

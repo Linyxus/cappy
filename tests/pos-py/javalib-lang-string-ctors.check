@@ -7,3 +7,5 @@ utf8-name:Grüezi
 slice:BC
 slice-name:BC
 bytes:2:65:66
+from-builder:from-builder
+from-buffer:from-buffer
