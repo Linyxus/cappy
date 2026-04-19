@@ -357,20 +357,379 @@ object PyIRRuntime:
        |
        |# -- java.lang.String helpers --
        |# The compiler lowers `s.method(...)` on `java.lang.String` to
-       |# Python-native ops (len, ord, .startswith, etc.). A few calls
-       |# don't map 1:1, so these helpers carry the semantics.
-       |def _scpy_str_substring(s, *bounds):
-       |    if len(bounds) == 1:
-       |        return s[bounds[0]:]
-       |    return s[bounds[0]:bounds[1]]
-       |def _scpy_str_contains(s, t):
-       |    return t in s
-       |def _scpy_str_isempty(s):
-       |    return len(s) == 0
+       |# Python-native ops (len, slicing, str methods, bytes.encode, ...).
+       |# Where Java and Python differ we centralize the semantics here.
+       |def _scpy_unsupported(name):
+       |    raise UnsupportedOperationException(name, None)
+       |
+       |def _scpy_str_required_text(x):
+       |    if x is None:
+       |        raise NullPointerException()
+       |    if isinstance(x, str):
+       |        return x
+       |    if isinstance(x, int) and not isinstance(x, bool):
+       |        return chr(x)
+       |    return _builtins.str(x)
+       |
+       |def _scpy_str_check_index(s, index):
+       |    if index < 0 or index >= len(s):
+       |        raise StringIndexOutOfBoundsException(index)
+       |
+       |def _scpy_str_check_inclusive_index(s, index):
+       |    if index < 0 or index > len(s):
+       |        raise StringIndexOutOfBoundsException(index)
+       |
+       |def _scpy_chr_is_whitespace(ch):
+       |    return ch.isspace()
+       |
+       |def _scpy_str_char_at(s, index):
+       |    _scpy_str_check_index(s, index)
+       |    return ord(s[index])
+       |
+       |def _scpy_str_code_point_at(s, index):
+       |    _scpy_str_check_index(s, index)
+       |    return ord(s[index])
+       |
+       |def _scpy_str_code_point_before(s, index):
+       |    if index <= 0 or index > len(s):
+       |        raise StringIndexOutOfBoundsException(index)
+       |    return ord(s[index - 1])
+       |
+       |def _scpy_str_code_point_count(s, begin, end):
+       |    if begin < 0 or end < begin or end > len(s):
+       |        raise StringIndexOutOfBoundsException(end if end < begin or end > len(s) else begin)
+       |    return end - begin
+       |
+       |def _scpy_str_offset_by_code_points(s, index, offset):
+       |    _scpy_str_check_inclusive_index(s, index)
+       |    target = index + offset
+       |    if target < 0 or target > len(s):
+       |        raise StringIndexOutOfBoundsException(target)
+       |    return target
+       |
+       |def _scpy_str_hash_code(s):
+       |    h = 0
+       |    for ch in s:
+       |        h = _scpy_i32(h * 31 + ord(ch))
+       |    return h
+       |
        |def _scpy_str_equals(s, t):
-       |    return s == t
+       |    return s == t if isinstance(t, str) else False
+       |
        |def _scpy_str_equals_ci(s, t):
        |    return s.lower() == t.lower() if isinstance(t, str) else False
+       |
+       |def _scpy_str_compare_to(s, t):
+       |    t = _scpy_str_required_text(t)
+       |    limit = len(s) if len(s) < len(t) else len(t)
+       |    i = 0
+       |    while i < limit:
+       |        diff = ord(s[i]) - ord(t[i])
+       |        if diff != 0:
+       |            return diff
+       |        i += 1
+       |    return len(s) - len(t)
+       |
+       |def _scpy_str_compare_to_ci(s, t):
+       |    t = _scpy_str_required_text(t)
+       |    return _scpy_str_compare_to(s.lower(), t.lower())
+       |
        |def _scpy_str_concat(s, t):
-       |    return s + t
+       |    return s + _scpy_str_required_text(t)
+       |
+       |def _scpy_str_substring(s, *bounds):
+       |    if len(bounds) == 1:
+       |        begin = bounds[0]
+       |        end = len(s)
+       |    else:
+       |        begin, end = bounds
+       |    if begin < 0 or end < begin or end > len(s):
+       |        bad = begin if begin < 0 or begin > len(s) else end
+       |        raise StringIndexOutOfBoundsException(bad)
+       |    return s[begin:end]
+       |
+       |def _scpy_str_contains(s, t):
+       |    return _scpy_str_required_text(t) in s
+       |
+       |def _scpy_str_isempty(s):
+       |    return len(s) == 0
+       |
+       |def _scpy_str_startswith(s, prefix, *offset):
+       |    prefix = _scpy_str_required_text(prefix)
+       |    if not offset:
+       |        return s.startswith(prefix)
+       |    toffset = offset[0]
+       |    if toffset < 0 or toffset > len(s):
+       |        return False
+       |    return s.startswith(prefix, toffset)
+       |
+       |def _scpy_str_index_of(s, target, *rest):
+       |    target = _scpy_str_required_text(target)
+       |    if not rest:
+       |        return s.find(target)
+       |    from_index = rest[0]
+       |    if from_index < 0:
+       |        from_index = 0
+       |    if from_index > len(s):
+       |        return len(s) if target == '' else -1
+       |    return s.find(target, from_index)
+       |
+       |def _scpy_str_last_index_of(s, target, *rest):
+       |    target = _scpy_str_required_text(target)
+       |    if not rest:
+       |        return s.rfind(target)
+       |    from_index = rest[0]
+       |    if from_index < 0:
+       |        return -1
+       |    if target == '':
+       |        return from_index if from_index < len(s) else len(s)
+       |    start = from_index if from_index < len(s) else len(s) - 1
+       |    limit = start + len(target)
+       |    return s.rfind(target, 0, limit)
+       |
+       |def _scpy_str_repeat(s, count):
+       |    if count < 0:
+       |        raise IllegalArgumentException('count is negative: ' + _builtins.str(count), None)
+       |    return s * count
+       |
+       |def _scpy_str_to_char_array(s):
+       |    return [ord(ch) for ch in s]
+       |
+       |def _scpy_str_get_chars(s, src_begin, src_end, dst, dst_begin):
+       |    if src_begin < 0 or src_end < src_begin or src_end > len(s):
+       |        raise StringIndexOutOfBoundsException(src_begin if src_begin < 0 else src_end)
+       |    count = src_end - src_begin
+       |    if dst_begin < 0 or dst_begin + count > len(dst):
+       |        raise StringIndexOutOfBoundsException(dst_begin)
+       |    i = 0
+       |    while i < count:
+       |        dst[dst_begin + i] = ord(s[src_begin + i])
+       |        i += 1
+       |
+       |def _scpy_str_trim(s):
+       |    start = 0
+       |    end = len(s)
+       |    while start < end and ord(s[start]) <= 0x20:
+       |        start += 1
+       |    while end > start and ord(s[end - 1]) <= 0x20:
+       |        end -= 1
+       |    return s[start:end]
+       |
+       |def _scpy_str_strip_leading(s):
+       |    idx = 0
+       |    while idx < len(s) and _scpy_chr_is_whitespace(s[idx]):
+       |        idx += 1
+       |    return s[idx:]
+       |
+       |def _scpy_str_strip_trailing(s):
+       |    idx = len(s)
+       |    while idx > 0 and _scpy_chr_is_whitespace(s[idx - 1]):
+       |        idx -= 1
+       |    return s[:idx]
+       |
+       |def _scpy_str_strip(s):
+       |    return _scpy_str_strip_trailing(_scpy_str_strip_leading(s))
+       |
+       |def _scpy_str_is_blank(s):
+       |    i = 0
+       |    while i < len(s):
+       |        if not _scpy_chr_is_whitespace(s[i]):
+       |            return False
+       |        i += 1
+       |    return True
+       |
+       |def _scpy_str_replace(s, old, new):
+       |    return s.replace(_scpy_str_required_text(old), _scpy_str_required_text(new))
+       |
+       |def _scpy_str_region_matches(s, *args):
+       |    if len(args) == 4:
+       |        ignore_case = False
+       |        toffset, other, ooffset, length = args
+       |    else:
+       |        ignore_case, toffset, other, ooffset, length = args
+       |    other = _scpy_str_required_text(other)
+       |    if length < 0 or toffset < 0 or ooffset < 0:
+       |        return False
+       |    if length > len(s) - toffset or length > len(other) - ooffset:
+       |        return False
+       |    left = s[toffset:toffset + length]
+       |    right = other[ooffset:ooffset + length]
+       |    return left.lower() == right.lower() if ignore_case else left == right
+       |
+       |def _scpy_str_get_bytes_utf8(s):
+       |    return _scpy_str_get_bytes(s)
+       |
+       |def _scpy_str_get_bytes(s, *encoding):
+       |    if not encoding:
+       |        enc = 'utf-8'
+       |    else:
+       |        candidate = encoding[0]
+       |        if not isinstance(candidate, str):
+       |            _scpy_unsupported('java.lang.String.getBytes(Charset) pending L8.1 charset port')
+       |        enc = candidate
+       |    try:
+       |        raw = s.encode(enc)
+       |    except LookupError:
+       |        _scpy_unsupported('java.lang.String.getBytes unsupported charset: ' + enc)
+       |    return [b - 256 if b >= 128 else b for b in raw]
+       |
+       |def _scpy_str_from_chars(values, offset, count):
+       |    end = offset + count
+       |    if offset < 0 or count < 0 or end > len(values):
+       |        raise StringIndexOutOfBoundsException(offset if offset < 0 else end)
+       |    out = []
+       |    i = offset
+       |    while i < end:
+       |        out.append(chr(values[i]))
+       |        i += 1
+       |    return ''.join(out)
+       |
+       |def _scpy_str_from_code_points(values, offset, count):
+       |    end = offset + count
+       |    if offset < 0 or count < 0 or end > len(values):
+       |        raise StringIndexOutOfBoundsException(offset if offset < 0 else end)
+       |    out = []
+       |    i = offset
+       |    while i < end:
+       |        out.append(chr(values[i]))
+       |        i += 1
+       |    return ''.join(out)
+       |
+       |def _scpy_str_from_bytes_utf8(values, offset, length):
+       |    end = offset + length
+       |    if offset < 0 or length < 0 or end > len(values):
+       |        raise StringIndexOutOfBoundsException(offset if offset < 0 else end)
+       |    raw = _builtins.bytes((values[i] & 0xFF) for i in range(offset, end))
+       |    return raw.decode('utf-8')
+       |
+       |def _scpy_str_split_lines(s):
+       |    xs = []
+       |    idx = 0
+       |    last = 0
+       |    while idx < len(s):
+       |        ch = s[idx]
+       |        if ch == '\n' or ch == '\r':
+       |            xs.append(s[last:idx])
+       |            if ch == '\r' and idx + 1 < len(s) and s[idx + 1] == '\n':
+       |                idx += 1
+       |            last = idx + 1
+       |        idx += 1
+       |    if last != len(s):
+       |        xs.append(s[last:])
+       |    return xs
+       |
+       |def _scpy_str_indent(s, n):
+       |    xs = _scpy_str_split_lines(s)
+       |    out = []
+       |    if n < 0:
+       |        width = -n
+       |        for line in xs:
+       |            idx = 0
+       |            limit = len(line) if len(line) < width else width
+       |            while idx < limit and _scpy_chr_is_whitespace(line[idx]):
+       |                idx += 1
+       |            out.append(line[idx:] + '\n')
+       |    else:
+       |        pad = ' ' * n
+       |        for line in xs:
+       |            out.append(pad + line + '\n')
+       |    return ''.join(out)
+       |
+       |def _scpy_str_strip_indent(s):
+       |    if s == '':
+       |        return ''
+       |    trailing_nl = s[-1] == '\r' or s[-1] == '\n'
+       |    xs = _scpy_str_split_lines(s)
+       |    min_leading = None
+       |    i = 0
+       |    while i < len(xs):
+       |        line = xs[i]
+       |        if i == len(xs) - 1 or not _scpy_str_is_blank(line):
+       |            idx = 0
+       |            while idx < len(line) and _scpy_chr_is_whitespace(line[idx]):
+       |                idx += 1
+       |            if min_leading is None or idx < min_leading:
+       |                min_leading = idx
+       |        i += 1
+       |    if trailing_nl or min_leading is None:
+       |        min_leading = 0
+       |    parts = []
+       |    j = 0
+       |    while j < len(xs):
+       |        line = xs[j]
+       |        if not _scpy_str_is_blank(line):
+       |            parts.append(_scpy_str_strip_trailing(line[min_leading:]))
+       |        else:
+       |            parts.append('')
+       |        j += 1
+       |    result = '\n'.join(parts)
+       |    if trailing_nl:
+       |        result += '\n'
+       |    return result
+       |
+       |def _scpy_str_translate_escapes(s):
+       |    def is_octal_digit(ch):
+       |        return '0' <= ch <= '7'
+       |    mapping = {
+       |        'b': '\b',
+       |        't': '\t',
+       |        'n': '\n',
+       |        'f': '\f',
+       |        'r': '\r',
+       |        's': ' ',
+       |        '"': '"',
+       |        "'": "'",
+       |        '\\': '\\',
+       |    }
+       |    i = 0
+       |    out = []
+       |    while i < len(s):
+       |        if s[i] != '\\':
+       |            out.append(s[i])
+       |            i += 1
+       |            continue
+       |        if i + 1 >= len(s):
+       |            raise IllegalArgumentException('Illegal escape: `\\(end-of-string)`', None)
+       |        ch = s[i + 1]
+       |        if ch == '\r':
+       |            i += 2
+       |            if i < len(s) and s[i] == '\n':
+       |                i += 1
+       |            continue
+       |        if ch == '\n':
+       |            i += 2
+       |            continue
+       |        if ch in mapping:
+       |            out.append(mapping[ch])
+       |            i += 2
+       |            continue
+       |        if ch == 'u':
+       |            if i + 5 >= len(s):
+       |                raise IllegalArgumentException('Illegal escape: `\\u`', None)
+       |            digits = s[i + 2:i + 6]
+       |            try:
+       |                out.append(chr(_builtins.int(digits, 16)))
+       |            except ValueError:
+       |                raise IllegalArgumentException('Illegal escape: `\\u' + digits + '`', None)
+       |            i += 6
+       |            continue
+       |        if is_octal_digit(ch):
+       |            if ch <= '3' and i + 3 < len(s) and is_octal_digit(s[i + 2]) and is_octal_digit(s[i + 3]):
+       |                code_point = (_builtins.int(ch) - _builtins.int('0')) * 64
+       |                code_point += (_builtins.int(s[i + 2]) - _builtins.int('0')) * 8
+       |                code_point += _builtins.int(s[i + 3]) - _builtins.int('0')
+       |                out.append(chr(code_point))
+       |                i += 4
+       |                continue
+       |            if i + 2 < len(s) and is_octal_digit(s[i + 2]):
+       |                code_point = (_builtins.int(ch) - _builtins.int('0')) * 8
+       |                code_point += _builtins.int(s[i + 2]) - _builtins.int('0')
+       |                out.append(chr(code_point))
+       |                i += 3
+       |                continue
+       |            out.append(chr(_builtins.int(ch) - _builtins.int('0')))
+       |            i += 2
+       |            continue
+       |        raise IllegalArgumentException('Illegal escape: `\\' + ch + '`', None)
+       |    return ''.join(out)
        |""".stripMargin

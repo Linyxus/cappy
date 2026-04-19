@@ -1,0 +1,6 @@
+matches:java.lang.String.matches pending L5.1 regex
+split1:java.lang.String.split pending L5.1 regex
+split2:java.lang.String.split pending L5.1 regex
+replaceAll:java.lang.String.replaceAll pending L5.1 regex
+replaceFirst:java.lang.String.replaceFirst pending L5.1 regex
+format:String.format pending L4.10

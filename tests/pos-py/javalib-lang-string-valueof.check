@@ -1,0 +1,11 @@
+bool:true
+char:Z
+int:42
+long:42
+float:1.5
+double:2.25
+obj:7
+null:null
+chars:hi!:i!
+copy:hi!:hi
+order:-1

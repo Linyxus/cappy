@@ -1,0 +1,25 @@
+length:5
+charat:97
+substring:ala:cal
+subseq:cal
+concat:foobar
+equals:true:false
+compare:-1:0
+contains:true
+starts:true:true
+ends:true
+index-str:2:4:4:2
+index-char:1:3:5:3
+strip:[hi]:[hi]:[hi  ]:[  hi]
+blank:true:true:false
+case:scala:SCALA
+repeat:ababab
+codepoint:97:99:3:4
+region:true:true
+replace:bonono:baNONO
+hash:96354
+chararray:2:65:122
+getchars:99:97:108
+indent:[  a|  b|]
+stripindent:[  a|    b|]
+escapes:[|a]
