@@ -1,0 +1,13 @@
+str:a:alpha
+str:B:beta
+str:c:gamma
+int:1:one
+int:2:two
+int:3:three
+str:zz:iae
+int:99:iae
+if:-5:neg-other
+if:-1:neg-one
+if:0:zero
+if:1:pos-one
+if:7:pos-other

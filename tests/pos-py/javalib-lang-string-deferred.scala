@@ -25,3 +25,23 @@ private def captureStringDeferred(tag: String)(body: => Any): Unit =
   captureStringDeferred("format") {
     java.lang.String.format("%s", Array[AnyRef]("x"))
   }
+  // Backend-intercepted Locale overloads — the backend emits
+  // `_scpy_unsupported` before the null receiver is touched.
+  val locale = null.asInstanceOf[java.util.Locale]
+  captureStringDeferred("lower-locale") {
+    "abc".toLowerCase(locale)
+  }
+  captureStringDeferred("upper-locale") {
+    "abc".toUpperCase(locale)
+  }
+  // getBytes(Charset) — runtime-side unsupported check in
+  // `_scpy_str_get_bytes` (non-string encoding argument).
+  val charset = null.asInstanceOf[java.nio.charset.Charset]
+  captureStringDeferred("getbytes-charset") {
+    "abc".getBytes(charset)
+  }
+  // charset-name paths that aren't in the UTF-8 / US-ASCII / ISO-8859-1
+  // allowlist — the companion raises UnsupportedOperationException.
+  captureStringDeferred("new-charset-name") {
+    new String(Array[scala.Byte](65.toByte), "Windows-1252")
+  }
