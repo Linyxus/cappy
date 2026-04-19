@@ -327,21 +327,43 @@ private class PyCodeGen()(using genCtx: Context):
       case If(cond, thenp, elsep) =>
         PyIf(genExpr(cond), genStat(thenp), genStat(elsep))(PyVoidType, pos)
 
-      case Labeled(bind, expr) =>
-        PyLabeled(
-          encoding.encodeLabelName(bind.symbol),
-          genStat(expr)
-        )(PyVoidType, pos)
-
-      case Return(expr, from) =>
-        val fromSym = from.symbol
-        val value =
-          if expr == EmptyTree || expr.tpe.isRef(defn.UnitClass) then PyUnitLit()(pos)
-          else genExpr(expr)
-        if fromSym.is(Label) then
-          PyLabelReturn(encoding.encodeLabelName(fromSym), value)(pos)
+      case t @ Labeled(bind, expr) =>
+        // If the labeled block produces a value (non-Unit, non-Nothing
+        // Scala type), route through `genLabeledExpr` so a temp var
+        // captures the escape value and the caller can read it. Without
+        // this, a `Labeled` reached from `genStat` (e.g. as an arm of
+        // an `If` at method tail where `doGenStat(If)` processes arms
+        // via `genStat`) would drop the match's result — the emitter's
+        // `except _scpy_lbl_N: pass` clause discards the exception
+        // value because no temp exists to capture it.
+        val tpe = t.tpe
+        if tpe.exists && !tpe.isRef(defn.UnitClass) && !tpe.isRef(defn.NothingClass) then
+          genLabeledExpr(t)
         else
-          PyReturn(value)(pos)
+          PyLabeled(
+            encoding.encodeLabelName(bind.symbol),
+            genStat(expr)
+          )(PyVoidType, pos)
+
+      case tr @ Return(expr, from) =>
+        // PatternMatcher wraps every match arm in `Return(matchLabel,
+        // <arm body>)`. When an arm body is itself an unconditional
+        // escape (e.g. `case _ => return 99` → `Return(matchLabel,
+        // Return(methodSym, 99))`), the outer wrap is dead code — the
+        // inner return jumps out before the outer one runs. Strip it
+        // so we don't emit a dead `PyLabelReturn` and don't attempt to
+        // `genExpr` a `Return` (unsupported in expression position).
+        expr match
+          case _: Return => doGenStat(expr)
+          case _ =>
+            val fromSym = from.symbol
+            val value =
+              if expr == EmptyTree then PyUnitLit()(pos)
+              else genExpr(expr)
+            if fromSym.is(Label) then
+              PyLabelReturn(encoding.encodeLabelName(fromSym), value)(pos)
+            else
+              PyReturn(value)(pos)
 
       case WhileDo(cond, body) =>
         val genCond = if cond == EmptyTree then PyBooleanLit(true)(pos) else genExpr(cond)
@@ -486,6 +508,16 @@ private class PyCodeGen()(using genCtx: Context):
 
       case t: Try =>
         genTryExpr(t)
+
+      case t: Labeled =>
+        genLabeledExpr(t)
+
+      case tr: Return =>
+        // `Return` in expression position (Nothing-typed): emit the
+        // escape as a pending statement, return a dummy Unit. The
+        // "expression value" is unreachable since `return` jumps out.
+        pendingLocalDefs += doGenStat(tr)
+        PyUnitLit()(pos)
 
       case EmptyTree =>
         PyUnitLit()(pos)
@@ -1116,6 +1148,128 @@ private class PyCodeGen()(using genCtx: Context):
   private def freshTryResultName(): PyLocalName =
     tryResultCounter += 1
     PyLocalName(s"_scpy_try_result_$tryResultCounter")
+
+  /** Lower an expression-position `Labeled` to a temp-var assign +
+   *  statement-position `PyLabeled`.
+   *
+   *  Scala 3's `PatternMatcher` lowers `expr match { … }` in
+   *  expression position to `Labeled(matchEnd, { stats; fallthrough })`
+   *  where every exit path is an explicit `Return(matchEnd, result)`
+   *  (non-exhaustive matches get a synthesised `throw MatchError` as
+   *  the fallthrough — still covered).
+   *
+   *  Strategy: synthesise `_scpy_labeled_result_N: T = <default>`,
+   *  rewrite each `PyLabelReturn(label, v)` in the lowered body to
+   *  `{ temp = v; PyLabelReturn(label, ()) }` — i.e. store the value,
+   *  then escape — and emit a Void-typed `PyLabeled(label, body)`.
+   *  The emitter wraps the body in `try: body except
+   *  _scpy_lbl_<n>: pass`, so the temp holds the final value when
+   *  control falls out. The expression value is `PyVarRef(temp)`.
+   *
+   *  Nesting-safe: each `Labeled` gets its own exception class at
+   *  emit time (see `PyIREmitter.allocLabelClass`), so nested
+   *  `Labeled(a, … Labeled(b, … Return(a, …) …) …)` correctly routes
+   *  the outer escape through the inner `except` clause unhandled. */
+  private def genLabeledExpr(tree: Labeled): PyTree =
+    val Labeled(bind, body) = tree
+    val pos = posOf(tree)
+    val resultTpe = encoding.encodeType(tree.tpe)
+    val labelName = encoding.encodeLabelName(bind.symbol)
+    val tempName = freshLabeledResultName()
+    val tempVar = PyVarRef(tempName)(resultTpe, pos)
+    val tempLhs: PyAssignable = tempVar
+
+    val tempDef = PyVarDef(
+      name         = tempName,
+      originalName = PyOriginalName.NoOriginalName,
+      vtpe         = resultTpe,
+      mutable      = true,
+      rhs          = defaultValueFor(resultTpe, pos)
+    )(pos)
+
+    // Scope body pendings so they're captured inside the Labeled — a
+    // pending side effect inside a match arm must execute only when
+    // that arm runs, not unconditionally before the Labeled.
+    val saved = pendingLocalDefs
+    pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
+    val loweredBody = genStat(body)
+    val locals = pendingLocalDefs
+    pendingLocalDefs = saved
+    val bodyWithPendings =
+      if locals.isEmpty then loweredBody
+      else PyBlock(locals.toList, loweredBody)(pos)
+
+    val assignedBody = rewriteLabelReturns(bodyWithPendings, labelName, tempLhs)
+
+    val labeled = PyLabeled(labelName, assignedBody)(PyVoidType, pos)
+
+    pendingLocalDefs += tempDef
+    pendingLocalDefs += labeled
+    tempVar
+
+  /** Traverse `tree` rewriting every `PyLabelReturn(target, v)` into
+   *  `{ PyAssign(tempLhs, v); PyLabelReturn(target, ()) }`. Leaves
+   *  other label returns (to unrelated labels) and the rest of the
+   *  tree untouched. */
+  private def rewriteLabelReturns(
+      tree: PyTree, target: PyLabelName, tempLhs: PyAssignable
+  ): PyTree = tree match
+    case PyLabelReturn(lbl, value) if lbl == target =>
+      value match
+        case _: PyUnitLit =>
+          tree  // already Unit-valued — nothing to assign
+        case _ =>
+          val p = tree.pos
+          PyBlock(
+            List(PyAssign(tempLhs, value)(p)),
+            PyLabelReturn(lbl, PyUnitLit()(p))(p)
+          )(p)
+
+    case PyBlock(stats, expr) =>
+      PyBlock(
+        stats.map(rewriteLabelReturns(_, target, tempLhs)),
+        rewriteLabelReturns(expr, target, tempLhs)
+      )(tree.pos)
+
+    case PyIf(cond, thenp, elsep) =>
+      PyIf(
+        cond,
+        rewriteLabelReturns(thenp, target, tempLhs),
+        rewriteLabelReturns(elsep, target, tempLhs)
+      )(tree.tpe, tree.pos)
+
+    case PyTryCatch(block, errVar, origName, handler) =>
+      PyTryCatch(
+        rewriteLabelReturns(block, target, tempLhs),
+        errVar, origName,
+        rewriteLabelReturns(handler, target, tempLhs)
+      )(tree.tpe, tree.pos)
+
+    case PyTryFinally(block, finalizer) =>
+      PyTryFinally(
+        rewriteLabelReturns(block, target, tempLhs),
+        rewriteLabelReturns(finalizer, target, tempLhs)
+      )(tree.pos)
+
+    case PyMatch(selector, cases, default) =>
+      PyMatch(
+        selector,
+        cases.map { case (lits, body) => (lits, rewriteLabelReturns(body, target, tempLhs)) },
+        rewriteLabelReturns(default, target, tempLhs)
+      )(tree.tpe, tree.pos)
+
+    case PyLabeled(lbl, body) =>
+      // Nested Labeled — recurse so escapes to our target inside its
+      // body still get rewritten; its own `PyLabelReturn(lbl, _)`
+      // entries (lbl != target) are left alone by the base case above.
+      PyLabeled(lbl, rewriteLabelReturns(body, target, tempLhs))(tree.tpe, tree.pos)
+
+    case _ => tree
+
+  private var labeledResultCounter = 0
+  private def freshLabeledResultName(): PyLocalName =
+    labeledResultCounter += 1
+    PyLocalName(s"_scpy_labeled_result_$labeledResultCounter")
 
   // --- Match generation ----------------------------------------------
 
