@@ -59,6 +59,7 @@ private class PyCodeGen()(using genCtx: Context):
   private val primitives = new ScalaPrimitives(genCtx)
   private val generatedClasses = mutable.ListBuffer.empty[PyClassDef]
   private var mainEntry: Option[PyIREmitter.MainEntry] = None
+  private val stringCompanionClassName = PyClassName("java.lang._String_")
 
   // --- Scoped state --------------------------------------------------
 
@@ -445,7 +446,8 @@ private class PyCodeGen()(using genCtx: Context):
 
       case t: This =>
         if t.symbol.is(ModuleClass) && t.symbol != currentClassSym then
-          PyLoadModule(encoding.encodeClassName(t.symbol))(pos)
+          if t.symbol == defn.StringModule then PyLoadModule(stringCompanionClassName)(pos)
+          else PyLoadModule(encoding.encodeClassName(t.symbol))(pos)
         else
           PyThis()(encoding.encodeType(tree.tpe), pos)
 
@@ -455,8 +457,14 @@ private class PyCodeGen()(using genCtx: Context):
           genFacadeSelect(sel, pos)
         else
           val sym = tree.symbol
-          if sym.is(Module) then
-            PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
+          if isStringStaticField(sym) then
+            PySelect(
+              PyLoadModule(stringCompanionClassName)(pos),
+              PyFieldName(stringCompanionClassName, PySimpleFieldName(sym.name.mangledString))
+            )(encoding.encodeType(tree.tpe), pos)
+          else if sym.is(Module) then
+            if isStringCompanionModule(sym) then PyLoadModule(stringCompanionClassName)(pos)
+            else PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
           else
             PySelect(
               genExpr(qualifier),
@@ -470,7 +478,8 @@ private class PyCodeGen()(using genCtx: Context):
             genExternRef(binding, tree.tpe, pos)
           case None =>
             if sym.is(Module) then
-              PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
+              if isStringCompanionModule(sym) then PyLoadModule(stringCompanionClassName)(pos)
+              else PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
             else if sym.owner.isClass && !sym.is(Method) && !sym.is(Module)
                 && !sym.is(Package)
             then
@@ -614,9 +623,13 @@ private class PyCodeGen()(using genCtx: Context):
   private def genApplyNew(app: Apply, pos: PyPosition): PyTree =
     val Apply(fun @ Select(New(tpt), _), args) = app: @unchecked
     val classSym = tpt.tpe.typeSymbol
-    val className = encoding.encodeClassName(classSym)
-    val ctorName = encoding.encodeMethodName(fun.symbol)
-    PyNew(className, ctorName, args.map(genExpr))(pos)
+    val pyArgs = args.map(genExpr)
+    if classSym == defn.StringClass then
+      genStringCtorCall(fun.symbol, pyArgs, pos)
+    else
+      val className = encoding.encodeClassName(classSym)
+      val ctorName = encoding.encodeMethodName(fun.symbol)
+      PyNew(className, ctorName, pyArgs)(pos)
 
   private def genArrayFactoryApply(app: Apply, pos: PyPosition): Option[PyTree] =
     val sym = app.fun.symbol
@@ -679,6 +692,8 @@ private class PyCodeGen()(using genCtx: Context):
             case Select(qual, _) =>
               break(genStringCall(sym, genExpr(qual), args, resultTpe, pos))
             case _ => ()
+        else if isStaticTarget && isStringStaticOwner(sym.owner) then
+          break(genStringStaticCall(sym, args, resultTpe, pos))
 
         app.fun match
           case _ if isStaticTarget =>
@@ -755,39 +770,110 @@ private class PyCodeGen()(using genCtx: Context):
       )(resultTpe, pos)
     def external(helperName: String, callArgs: List[PyTree] = args): PyTree =
       PyApplyExternal(PyExternalName(helperName), recv :: callArgs)(resultTpe, pos)
+    def unsupported(message: String): PyTree =
+      PyApplyExternal(
+        PyExternalName("_scpy_unsupported"),
+        List(PyStringLit(message)(pos))
+      )(resultTpe, pos)
     name match
       case "length" =>
         PyApplyExternal(PyExternalName("len"), List(recv))(resultTpe, pos)
       case "charAt" =>
-        // Scala returns a Char (0-65535). `ord(s[i])` matches semantics.
-        PyApplyExternal(
-          PyExternalName("ord"),
-          List(PyArraySelect(recv, args.head)(PyCharType, pos))
-        )(resultTpe, pos)
-      case "substring" =>
-        // Dispatch to a runtime helper that handles both 1-arg and 2-arg
-        // slicing cleanly.
-        external("_scpy_str_substring")
-      case "startsWith"      => attr("startswith")
-      case "endsWith"        => attr("endswith")
-      case "indexOf"         => attr("find")
-      case "lastIndexOf"     => attr("rfind")
-      case "contains"        => external("_scpy_str_contains")
-      case "isEmpty"         => external("_scpy_str_isempty", Nil)
-      case "toLowerCase"     => attr("lower", Nil)
-      case "toUpperCase"     => attr("upper", Nil)
-      case "trim" | "strip"  => attr("strip", Nil)
-      case "replace"         => attr("replace")
-      case "equals"          => external("_scpy_str_equals")
-      case "equalsIgnoreCase" => external("_scpy_str_equals_ci")
-      case "hashCode"        =>
-        PyApplyExternal(PyExternalName("hash"), List(recv))(resultTpe, pos)
-      case "toString"        => recv
-      case "concat"          => external("_scpy_str_concat")
+        external("_scpy_str_char_at")
+      case "codePointAt"       => external("_scpy_str_code_point_at")
+      case "codePointBefore"   => external("_scpy_str_code_point_before")
+      case "codePointCount"    => external("_scpy_str_code_point_count")
+      case "offsetByCodePoints" => external("_scpy_str_offset_by_code_points")
+      case "hashCode"          => external("_scpy_str_hash_code", Nil)
+      case "equals"            => external("_scpy_str_equals")
+      case "equalsIgnoreCase"  => external("_scpy_str_equals_ci")
+      case "compareTo"         => external("_scpy_str_compare_to")
+      case "compareToIgnoreCase" => external("_scpy_str_compare_to_ci")
+      case "concat"            => external("_scpy_str_concat")
+      case "contains"          => external("_scpy_str_contains")
+      case "startsWith"        => external("_scpy_str_startswith")
+      case "endsWith"          => attr("endswith")
+      case "indexOf"           => external("_scpy_str_index_of")
+      case "lastIndexOf"       => external("_scpy_str_last_index_of")
+      case "isEmpty"           => external("_scpy_str_isempty", Nil)
+      case "intern"            => recv
+      case "substring"         => external("_scpy_str_substring")
+      case "subSequence"       => external("_scpy_str_substring")
+      case "getChars"          => external("_scpy_str_get_chars")
+      case "toCharArray"       => external("_scpy_str_to_char_array", Nil)
+      case "toLowerCase" =>
+        if args.isEmpty then attr("lower", Nil)
+        else unsupported("java.lang.String.toLowerCase(Locale) pending Locale port")
+      case "toUpperCase" =>
+        if args.isEmpty then attr("upper", Nil)
+        else unsupported("java.lang.String.toUpperCase(Locale) pending Locale port")
+      case "trim"              => external("_scpy_str_trim", Nil)
+      case "strip"             => external("_scpy_str_strip", Nil)
+      case "stripLeading"      => external("_scpy_str_strip_leading", Nil)
+      case "stripTrailing"     => external("_scpy_str_strip_trailing", Nil)
+      case "isBlank"           => external("_scpy_str_is_blank", Nil)
+      case "replace"           => external("_scpy_str_replace")
+      case "replaceAll" =>
+        unsupported("java.lang.String.replaceAll pending L5.1 regex")
+      case "replaceFirst" =>
+        unsupported("java.lang.String.replaceFirst pending L5.1 regex")
+      case "matches" =>
+        unsupported("java.lang.String.matches pending L5.1 regex")
+      case "split" =>
+        unsupported("java.lang.String.split pending L5.1 regex")
+      case "regionMatches"     => external("_scpy_str_region_matches")
+      case "repeat"            => external("_scpy_str_repeat")
+      case "getBytes"          => external("_scpy_str_get_bytes")
+      case "indent"            => external("_scpy_str_indent")
+      case "stripIndent"       => external("_scpy_str_strip_indent", Nil)
+      case "translateEscapes"  => external("_scpy_str_translate_escapes", Nil)
+      case "toString"          => recv
       case _ =>
         // Unmapped: emit attribute access + dynamic call so Python
         // surfaces an AttributeError naming the method precisely.
         attr(name)
+
+  private def genStringCtorCall(ctor: Symbol, args: List[PyTree], pos: PyPosition): PyTree =
+    val methodName = PyMethodName(
+      PySimpleMethodName("new"),
+      ctor.info.paramInfoss.flatten.map(encoding.encodeTypeRef),
+      PyClassRef(PyClassName.StringClass)
+    )
+    PyApply(
+      PyApplyFlags.empty,
+      PyLoadModule(stringCompanionClassName)(pos),
+      stringCompanionClassName,
+      methodName,
+      args
+    )(PyStringType, pos)
+
+  private def genStringStaticCall(
+      sym: Symbol,
+      args: List[PyTree],
+      resultTpe: PyType,
+      pos: PyPosition
+  ): PyTree =
+    val methodName = PyMethodName(
+      PySimpleMethodName(sym.name.mangledString),
+      sym.info.paramInfoss.flatten.map(encoding.encodeTypeRef),
+      encoding.encodeTypeRef(sym.info.finalResultType)
+    )
+    PyApply(
+      PyApplyFlags.empty,
+      PyLoadModule(stringCompanionClassName)(pos),
+      stringCompanionClassName,
+      methodName,
+      args
+    )(resultTpe, pos)
+
+  private def isStringCompanionModule(sym: Symbol): Boolean =
+    sym.exists && sym.is(Module) && sym.moduleClass == defn.StringModule
+
+  private def isStringStaticOwner(sym: Symbol): Boolean =
+    sym == defn.StringClass || sym == defn.StringModule
+
+  private def isStringStaticField(sym: Symbol): Boolean =
+    (sym.owner == defn.StringClass || sym.owner == defn.StringModule) && !sym.is(Method)
 
   // --- TypeApply (isInstanceOf / asInstanceOf) -----------------------
 

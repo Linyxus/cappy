@@ -1,0 +1,13 @@
+@main def javalibLangStringValueOf(): Unit =
+  println("bool:" + java.lang.String.valueOf(true))
+  println("char:" + java.lang.String.valueOf('Z'))
+  println("int:" + java.lang.String.valueOf(42))
+  println("long:" + java.lang.String.valueOf(42L))
+  println("float:" + java.lang.String.valueOf(1.5f))
+  println("double:" + java.lang.String.valueOf(2.25d))
+  println("obj:" + java.lang.String.valueOf(java.lang.Integer.valueOf(7)))
+  println("null:" + java.lang.String.valueOf(null.asInstanceOf[Object]))
+  val chars = Array[Char]('h', 'i', '!')
+  println("chars:" + java.lang.String.valueOf(chars) + ":" + java.lang.String.valueOf(chars, 1, 2))
+  println("copy:" + java.lang.String.copyValueOf(chars) + ":" + java.lang.String.copyValueOf(chars, 0, 2))
+  println("order:" + java.lang.String.CASE_INSENSITIVE_ORDER.compare("a", "B"))

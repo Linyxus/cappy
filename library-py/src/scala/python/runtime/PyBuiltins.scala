@@ -21,9 +21,19 @@ object PyBuiltins:
   @extern("builtins", "float")
   private object floatType extends PyDynamic
 
+  @extern("builtins", "bytes")
+  private def bytesOf(value: Any): Any = native
+
   @extern("builtins", "float")
   private class PyFloat extends PyAny:
     def hex(): String = native
+
+  @extern("builtins", "bytes")
+  private class PyBytes extends PyAny:
+    def decode(encoding: String): String = native
+
+  @extern("operator", "getitem")
+  private def getItem(value: Any, index: Int): Any = native
 
   /** Facade over Python's `str` for method dispatch. Scala `String`
    *  erases to Python `str` so the `asInstanceOf[PyStr]` bridges are
@@ -52,6 +62,7 @@ object PyBuiltins:
 
   private inline def asStr(s: String): PyStr = s.asInstanceOf[PyStr]
   private inline def asFloat(value: Double): PyFloat = value.asInstanceOf[PyFloat]
+  private inline def asBytes(value: Any): PyBytes = value.asInstanceOf[PyBytes]
 
   // --- Numeric formatting -------------------------------------------
 
@@ -154,3 +165,24 @@ object PyBuiltins:
   /** Python `str.encode(encoding)` returns `bytes`. */
   def encode(s: String, encoding: String): PyAny =
     asStr(s).encode(encoding)
+
+  /** Encode a Scala/Python string to a signed-byte Array[Byte]. */
+  def encode_bytes(s: String, encoding: String): Array[Byte] =
+    val raw = asBytes(asStr(s).encode(encoding))
+    val len = builtins.len(raw).asInstanceOf[Int]
+    val out = new Array[Byte](len)
+    var i = 0
+    while i < len do
+      val b = getItem(raw, i).asInstanceOf[Int]
+      out(i) = (if b >= 128 then b - 256 else b).toByte
+      i += 1
+    out
+
+  /** Decode a signed-byte Array[Byte] through Python's `bytes.decode`. */
+  def decode_bytes(bytes: Array[Byte], encoding: String): String =
+    val unsigned = new Array[Int](bytes.length)
+    var i = 0
+    while i < bytes.length do
+      unsigned(i) = bytes(i) & 0xFF
+      i += 1
+    asBytes(bytesOf(unsigned)).decode(encoding)
