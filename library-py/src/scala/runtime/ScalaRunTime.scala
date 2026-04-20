@@ -30,6 +30,14 @@ object ScalaRunTime:
     if xs == null then null.asInstanceOf[ArraySeq[T]]
     else ArraySeq.unsafeWrapArray(xs)
 
+  // The `wrap*Array` family below mirrors stdlib `ScalaRunTime`.
+  // Frontend lowering of varargs on primitive/ref element types rewrites
+  // `foo(a, b)` (where `foo` takes `T*`) into
+  // `foo(ScalaRunTime.wrap<T>Array(Array(a, b)))`. Call sites are
+  // compiler-synthesized, so these definitions have to exist by name
+  // even though library-py never calls them directly. Without them,
+  // library-py code that uses primitive varargs (e.g. _String split/
+  // formatter paths via the regex port) fails to link.
   def wrapRefArray[T <: AnyRef | Null](xs: Array[T]): ArraySeq[T] =
     if xs == null then null.asInstanceOf[ArraySeq[T]]
     else new ArraySeq.ofRef[T](xs)

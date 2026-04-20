@@ -71,24 +71,57 @@ final class Matcher private[regex] (
   private def appendReplacementGeneric(sb: Appendable, replacement: String): Matcher = {
     sb.append(inputstr.substring(appendPos, start()))
 
+    // Java replacement syntax (JDK Matcher.appendReplacement):
+    //   $<n>      — numeric group reference (n is a sequence of digits).
+    //   ${name}   — named group reference.
+    //   \c        — literal `c` (including `\\`, `\$`).
+    // A bare `$` followed by anything other than a digit or `{`, and
+    // `$` at end-of-string, is an IllegalArgumentException per Java.
     val replacementLen = replacement.length()
     var i = 0
     while (i < replacementLen) {
       val current = replacement.charAt(i)
       if (current == '$') {
-        i = i + 1
-        val j = i
-        while (i < replacementLen && replacement.charAt(i) >= '0' && replacement.charAt(i) <= '9')
+        if (i + 1 >= replacementLen)
+          throw new IllegalArgumentException(
+            "Illegal group reference: group index is missing"
+          )
+        val next = replacement.charAt(i + 1)
+        if (next == '{') {
+          val nameStart = i + 2
+          val nameEnd = replacement.indexOf('}', nameStart)
+          if (nameEnd < 0)
+            throw new IllegalArgumentException(
+              "Named capturing group is missing trailing '}'"
+            )
+          val name = replacement.substring(nameStart, nameEnd)
+          if (name.isEmpty)
+            throw new IllegalArgumentException("Named capturing group has zero length name")
+          val replaced = this.group(name)
+          if (replaced != null)
+            sb.append(replaced)
+          i = nameEnd + 1
+        } else if (next >= '0' && next <= '9') {
           i = i + 1
-        val group = Integer.parseInt(replacement.substring(j, i))
-        val replaced = this.group(group)
-        if (replaced != null)
-          sb.append(replaced)
+          val j = i
+          while (i < replacementLen && replacement.charAt(i) >= '0' && replacement.charAt(i) <= '9')
+            i = i + 1
+          val group = Integer.parseInt(replacement.substring(j, i))
+          val replaced = this.group(group)
+          if (replaced != null)
+            sb.append(replaced)
+        } else {
+          throw new IllegalArgumentException(
+            "Illegal group reference: expected digit or '{' after '$'"
+          )
+        }
       } else if (current == '\\') {
-        i = i + 1
-        if (i < replacementLen)
-          sb.append(replacement.charAt(i))
-        i = i + 1
+        if (i + 1 >= replacementLen)
+          throw new IllegalArgumentException(
+            "character to be escaped is missing"
+          )
+        sb.append(replacement.charAt(i + 1))
+        i = i + 2
       } else {
         sb.append(current)
         i = i + 1
