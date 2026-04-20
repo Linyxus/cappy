@@ -1,5 +1,7 @@
 package java.lang
 
+import java.io.PrintStream
+
 import scala.python.{PyAny, extern, name, native}
 import scala.python.runtime.{PyOs, PySys, PyTime}
 
@@ -8,27 +10,6 @@ object System:
   private object builtins extends PyAny:
     @name("id")
     def pyId(value: Any): Long = native
-
-  final class _SystemPrintStream private[lang] (isErr: scala.Boolean):
-    private def render(value: Any): String =
-      if value == null then "null" else value.toString()
-
-    private def writeRaw(text: String): Unit =
-      if isErr then PySys.stderr_write(text)
-      else PySys.stdout_write(text)
-
-    def print(value: Any): Unit =
-      writeRaw(render(value))
-
-    def println(): Unit =
-      writeRaw("\n")
-
-    def println(value: Any): Unit =
-      writeRaw(render(value) + "\n")
-
-    def flush(): Unit =
-      if isErr then PySys.stderr_flush()
-      else PySys.stdout_flush()
 
   final class _SystemProperties private[lang] ():
     def getProperty(key: String): String | Null =
@@ -54,8 +35,8 @@ object System:
       get(key) != null
 
   private var inRef: Object | Null = null
-  private var outRef = new _SystemPrintStream(false)
-  private var errRef = new _SystemPrintStream(true)
+  private var outRef = PrintStream.stdout()
+  private var errRef = PrintStream.stderr()
   private val propertiesView = new _SystemProperties()
   private val envView = new _SystemEnv()
 
@@ -66,17 +47,17 @@ object System:
 
   def in: Object | Null = inRef
 
-  def out: _SystemPrintStream = outRef
+  def out: PrintStream = outRef
 
-  def err: _SystemPrintStream = errRef
+  def err: PrintStream = errRef
 
   def setIn(in: Object | Null): Unit =
     inRef = in
 
-  def setOut(out: _SystemPrintStream): Unit =
+  def setOut(out: PrintStream): Unit =
     outRef = ThrowablesSupport.requireNonNull(out)
 
-  def setErr(err: _SystemPrintStream): Unit =
+  def setErr(err: PrintStream): Unit =
     errRef = ThrowablesSupport.requireNonNull(err)
 
   def currentTimeMillis(): scala.Long =

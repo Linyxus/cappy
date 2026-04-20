@@ -382,7 +382,7 @@ object PyIREmitter:
       ctor.args.count(arg => constructorArgGuard(arg.ptpe, "arg").nonEmpty)
 
     private def constructorDispatchCondition(ctor: PyMethodDef): String =
-      val arityGuard = s"len(args) == ${ctor.args.length}"
+      val arityGuard = s"_scpy_len(args) == ${ctor.args.length}"
       val argGuards = ctor.args.zipWithIndex.flatMap { case (arg, index) =>
         constructorArgGuard(arg.ptpe, s"args[$index]")
       }
@@ -1105,8 +1105,8 @@ object PyIREmitter:
         case FloatToInt | DoubleToInt => wrapI32(s"int($l)")
         case FloatToLong | DoubleToLong => wrapI64(s"int($l)")
 
-        case StringLength   => s"len($l)"
-        case ArrayLength    => s"len($l)"
+        case StringLength   => s"_scpy_len($l)"
+        case ArrayLength    => s"_scpy_len($l)"
         case CheckNotNull   => l
         case GetClass       => s"_scpy_class_of_instance($l)"
         case IdentityHashCode => s"_scpy_identity_hash_code($l)"

@@ -877,7 +877,7 @@ private class PyCodeGen()(using genCtx: Context):
       )(resultTpe, pos)
     name match
       case "length" =>
-        PyApplyExternal(PyExternalName("len"), List(recv))(resultTpe, pos)
+        PyApplyExternal(PyExternalName("_scpy_len"), List(recv))(resultTpe, pos)
       case "charAt" =>
         external("_scpy_str_char_at")
       case "codePointAt"       => external("_scpy_str_code_point_at")

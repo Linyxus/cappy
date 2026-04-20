@@ -1,0 +1,190 @@
+/*
+ * Scala.js (https://www.scala-js.org/)
+ *
+ * Copyright EPFL.
+ *
+ * Licensed under Apache License 2.0
+ * (https://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
+package java.nio
+
+import scala.language.unsafeNulls
+
+import java.util.Objects.requireNonNull
+import java.util.function.IntConsumer
+
+object ByteBuffer {
+  private final val HashSeed = -547316498
+
+  def allocate(capacity: Int): ByteBuffer = {
+    BoundsChecks.checkCapacity(capacity)
+    wrap(new Array[Byte](capacity))
+  }
+
+  def allocateDirect(capacity: Int): ByteBuffer = {
+    BoundsChecks.checkCapacity(capacity)
+    // Python collapses the TypedArray/DataView split to heap-backed buffers.
+    HeapByteBuffer.allocateDirect(capacity)
+  }
+
+  def wrap(array: Array[Byte], offset: Int, length: Int): ByteBuffer =
+    HeapByteBuffer.wrap(array, 0, array.length, offset, length, false)
+
+  def wrap(array: Array[Byte]): ByteBuffer =
+    wrap(array, 0, array.length)
+}
+
+abstract class ByteBuffer private[nio] (
+    _capacity: Int,
+    private[nio] val _array: Array[Byte],
+    private[nio] val _arrayOffset: Int
+) extends Buffer(_capacity)
+    with Comparable[ByteBuffer] {
+
+  private[nio] type ElementType = Byte
+  private[nio] type BufferType = ByteBuffer
+
+  def this(_capacity: Int) = this(_capacity, null, -1)
+
+  private[nio] var _isBigEndian: Boolean = true
+
+  def slice(): ByteBuffer
+  def duplicate(): ByteBuffer
+  def asReadOnlyBuffer(): ByteBuffer
+  def get(): Byte
+  def put(b: Byte): ByteBuffer
+  def get(index: Int): Byte
+  def put(index: Int, b: Byte): ByteBuffer
+
+  @noinline
+  def get(dst: Array[Byte], offset: Int, length: Int): ByteBuffer =
+    GenBuffer(this).getArray(dst, offset, length)
+
+  def get(dst: Array[Byte]): ByteBuffer =
+    get(dst, 0, dst.length)
+
+  @noinline
+  def put(src: ByteBuffer): ByteBuffer =
+    GenBuffer(this).putBuffer(src)
+
+  @noinline
+  def put(src: Array[Byte], offset: Int, length: Int): ByteBuffer =
+    GenBuffer(this).putArray(src, offset, length)
+
+  final def put(src: Array[Byte]): ByteBuffer =
+    put(src, 0, src.length)
+
+  @inline final def hasArray(): Boolean =
+    GenBuffer(this).generic_hasArray()
+
+  @inline final def array(): Array[Byte] =
+    GenBuffer(this).generic_array().asInstanceOf[Array[Byte]]
+
+  @inline final def arrayOffset(): Int =
+    GenBuffer(this).generic_arrayOffset()
+
+  @inline override def position(newPosition: Int): ByteBuffer = { super.position(newPosition); this }
+  @inline override def limit(newLimit: Int): ByteBuffer = { super.limit(newLimit); this }
+  @inline override def mark(): ByteBuffer = { super.mark(); this }
+  @inline override def reset(): ByteBuffer = { super.reset(); this }
+  @inline override def clear(): ByteBuffer = { super.clear(); this }
+  @inline override def flip(): ByteBuffer = { super.flip(); this }
+  @inline override def rewind(): ByteBuffer = { super.rewind(); this }
+
+  def compact(): ByteBuffer
+  def isDirect(): Boolean
+
+  @noinline
+  override def hashCode(): Int =
+    GenBuffer(this).generic_hashCode(ByteBuffer.HashSeed)
+
+  override def equals(that: Any): Boolean = that match
+    case that: ByteBuffer => compareTo(that) == 0
+    case _                => false
+
+  @noinline
+  def compareTo(that: ByteBuffer): Int =
+    GenBuffer(this).generic_compareTo(that)(java.lang.Byte.compare(_, _))
+
+  final def order(): ByteOrder =
+    if (_isBigEndian) ByteOrder.BIG_ENDIAN else ByteOrder.LITTLE_ENDIAN
+
+  final def order(bo: ByteOrder): ByteBuffer = {
+    _isBigEndian = requireNonNull(bo) == ByteOrder.BIG_ENDIAN
+    this
+  }
+
+  def getChar(): Char
+  def putChar(value: Char): ByteBuffer
+  def getChar(index: Int): Char
+  def putChar(index: Int, value: Char): ByteBuffer
+  def asCharBuffer(): CharBuffer
+
+  def getShort(): Short
+  def putShort(value: Short): ByteBuffer
+  def getShort(index: Int): Short
+  def putShort(index: Int, value: Short): ByteBuffer
+  def asShortBuffer(): ShortBuffer
+
+  def getInt(): Int
+  def putInt(value: Int): ByteBuffer
+  def getInt(index: Int): Int
+  def putInt(index: Int, value: Int): ByteBuffer
+  def asIntBuffer(): IntBuffer
+
+  def getLong(): Long
+  def putLong(value: Long): ByteBuffer
+  def getLong(index: Int): Long
+  def putLong(index: Int, value: Long): ByteBuffer
+  def asLongBuffer(): LongBuffer
+
+  def getFloat(): Float
+  def putFloat(value: Float): ByteBuffer
+  def getFloat(index: Int): Float
+  def putFloat(index: Int, value: Float): ByteBuffer
+  def asFloatBuffer(): FloatBuffer
+
+  def getDouble(): Double
+  def putDouble(value: Double): ByteBuffer
+  def getDouble(index: Int): Double
+  def putDouble(index: Int, value: Double): ByteBuffer
+  def asDoubleBuffer(): DoubleBuffer
+
+  override private[nio] def isBigEndian: Boolean =
+    _isBigEndian
+
+  private[nio] def load(index: Int): Byte
+  private[nio] def store(index: Int, elem: Byte): Unit
+
+  @inline
+  private[nio] def load(startIndex: Int, dst: Array[Byte], offset: Int, length: Int): Unit =
+    GenBuffer(this).loadInto(startIndex, dst, offset, length)
+
+  @inline
+  private[nio] def store(startIndex: Int, src: Array[Byte], offset: Int, length: Int): Unit =
+    GenBuffer(this).storeFrom(startIndex, src, offset, length)
+
+  @inline
+  private[nio] def validateIndex(index: Int, bytes: Int): Int = {
+    BoundsChecks.checkOffsetCount(index, bytes, limit())
+    index
+  }
+
+  @inline
+  private[nio] def multiByteRelWrite(bytes: Int)(op: IntConsumer): this.type = {
+    ensureNotReadOnly()
+    op.accept(getPosAndAdvanceWrite(bytes))
+    this
+  }
+
+  @inline
+  private[nio] def multiByteAbsWrite(bytes: Int, index: Int)(op: IntConsumer): this.type = {
+    ensureNotReadOnly()
+    op.accept(validateIndex(index, bytes))
+    this
+  }
+}

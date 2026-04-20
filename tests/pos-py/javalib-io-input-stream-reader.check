@@ -1,0 +1,6 @@
+partial-utf8:1:true
+partial-utf8-array:1:😀
+mixed:true
+encoding:UTF-8:true
+mark-not-supported:false:true
+closed:true
