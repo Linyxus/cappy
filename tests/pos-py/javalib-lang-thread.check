@@ -1,0 +1,7 @@
+currentthread:true:main:1
+interrupted:true:true:false
+threadlocal-get-set:ready
+threadlocal-remove:true
+threadlocal-initial-value:41
+threadlocal-initial-value-reset:41
+inheritablethreadlocal:seed

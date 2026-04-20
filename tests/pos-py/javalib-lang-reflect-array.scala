@@ -19,6 +19,16 @@
   ints2(0) = 6
   println("coerce:int:" + java.lang.reflect.Array.getInt(bytes.asInstanceOf[AnyRef], 0))
   println("coerce:long:" + java.lang.reflect.Array.getLong(ints2.asInstanceOf[AnyRef], 0))
-  // No mismatch: scenario — primitive arrays all erase to Python `list`
-  // so the dispatch can't discriminate element types. See
-  // `notes/reflect-array-primitive-discrimination.md`.
+
+  try
+    java.lang.reflect.Array.getBoolean(ints.asInstanceOf[AnyRef], 0)
+  catch
+    case e: IllegalArgumentException =>
+      println("mismatch:" + e.getMessage())
+
+  val matrix = java.lang.reflect.Array
+    .newInstance(classOf[Int], scala.Array(2, 3))
+    .asInstanceOf[scala.Array[scala.Array[Int]]]
+  matrix(1)(2) = 9
+  println("multidim:" + matrix.length + ":" + matrix(0).length + ":" + matrix(1)(2))
+  println("multidim-class:" + matrix.getClass().getName() + ":" + matrix(0).getClass().getName())

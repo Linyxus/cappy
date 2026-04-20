@@ -47,7 +47,7 @@ final class Integer private ()
     Integer.toString(intValue())
 
 object Integer:
-  def TYPE: Class[?] = null.asInstanceOf[Class[?]]
+  def TYPE: Class[?] = scala.Predef.classOf[scala.Int]
 
   final val MIN_VALUE = -2147483648
   final val MAX_VALUE = 2147483647

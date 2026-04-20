@@ -25,5 +25,5 @@ double:hex:0x1.cp1
 double:nan-ne:true
 double:compare:-1
 double:hash-nan:2146959360
-void:type:V
+void:type:void
 void:tostring:()

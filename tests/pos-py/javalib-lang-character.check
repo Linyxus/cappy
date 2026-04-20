@@ -1,4 +1,4 @@
-type:C
+type:char
 ascii:true:true:true
 unicode:É:ω:1
 supplementary:true:2:😀
