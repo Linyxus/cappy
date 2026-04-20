@@ -1,0 +1,6 @@
+standard:UTF-8:UTF-16:true
+forname:true:true:true:false
+decoder-replace:�
+decoder-report:true:1
+encoder-report:true:2
+forname-throws:true

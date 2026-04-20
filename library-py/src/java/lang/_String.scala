@@ -9,10 +9,10 @@
 
 package java.lang
 
+import java.nio.ByteBuffer
+import java.nio.charset.Charset
 import java.util.Comparator
 import java.util.regex.Pattern
-
-import scala.python.runtime.PyBuiltins
 
 object _String:
   final val CASE_INSENSITIVE_ORDER: Comparator[String] =
@@ -36,16 +36,22 @@ object _String:
     out
 
   def `new`(bytes: Array[scala.Byte]): String =
-    PyBuiltins.decode_bytes(bytes, "utf-8")
+    decodeBytes(bytes, Charset.forName("UTF-8"))
 
   def `new`(bytes: Array[scala.Byte], charsetName: String): String =
-    PyBuiltins.decode_bytes(bytes, normalizeCharsetName(charsetName))
+    decodeBytes(bytes, Charset.forName(normalizeCharsetName(charsetName)))
+
+  def `new`(bytes: Array[scala.Byte], charset: Charset): String =
+    decodeBytes(bytes, ThrowablesSupport.requireNonNull(charset))
 
   def `new`(bytes: Array[scala.Byte], offset: Int, length: Int): String =
     `new`(sliceBytes(bytes, offset, length))
 
   def `new`(bytes: Array[scala.Byte], offset: Int, length: Int, charsetName: String): String =
-    PyBuiltins.decode_bytes(sliceBytes(bytes, offset, length), normalizeCharsetName(charsetName))
+    decodeBytes(sliceBytes(bytes, offset, length), Charset.forName(normalizeCharsetName(charsetName)))
+
+  def `new`(bytes: Array[scala.Byte], offset: Int, length: Int, charset: Charset): String =
+    decodeBytes(sliceBytes(bytes, offset, length), ThrowablesSupport.requireNonNull(charset))
 
   def `new`(codePoints: Array[Int], offset: Int, count: Int): String =
     val end = checkBoundsForNewFromArray(offset, count, codePoints.length)
@@ -137,13 +143,10 @@ object _String:
     out
 
   private def normalizeCharsetName(name: String): String =
-    val nn = ThrowablesSupport.requireNonNull(name)
-    nn.toUpperCase() match
-      case "UTF-8"      => "utf-8"
-      case "US-ASCII"   => "ascii"
-      case "ISO-8859-1" => "latin-1"
-      case _ =>
-        throw new UnsupportedOperationException("String charset pending L8.1: " + nn)
+    Charset.forName(ThrowablesSupport.requireNonNull(name)).name()
+
+  private def decodeBytes(bytes: Array[scala.Byte], charset: Charset): String =
+    charset.decode(ByteBuffer.wrap(bytes)).toString()
 
   /** Checks bounds and returns `offset + count`, the exclusive end offset. */
   private def checkBoundsForNewFromArray(offset: Int, count: Int, arrayLength: Int): Int =

@@ -1,6 +1,7 @@
 package java.io
 
 import java.lang.StringBuilder
+import java.nio.charset.{Charset, UnsupportedCharsetException}
 
 import scala.python.runtime.PyBuiltins
 
@@ -18,7 +19,7 @@ class OutputStreamWriter(private var out: OutputStream | Null, charsetName: Stri
     this(out, null)
 
   def getEncoding(): String | Null =
-    if (closed) null else "UTF-8"
+    if (closed) null else encoding
 
   override def write(c: Int): Unit =
     write(PyBuiltins.chr_of(c), 0, 1)
@@ -100,12 +101,10 @@ class OutputStreamWriter(private var out: OutputStream | Null, charsetName: Stri
 }
 
 object OutputStreamWriter {
-  private[io] def normalizeEncoding(charsetName: String | Null): String = {
-    val effective = if (charsetName == null) "UTF-8" else charsetName
-    effective.toUpperCase() match
-      case "UTF-8" => "utf-8"
-      case _ =>
-        // TODO L8: lift the UTF-8-only gate once java.nio.charset lands.
+  private[io] def normalizeEncoding(charsetName: String | Null): String =
+    val effective = if charsetName == null then "UTF-8" else charsetName
+    try Charset.forName(effective).name()
+    catch
+      case _: UnsupportedCharsetException =>
         throw new UnsupportedEncodingException(effective)
-  }
 }

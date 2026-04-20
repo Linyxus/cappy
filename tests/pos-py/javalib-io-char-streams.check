@@ -1,0 +1,11 @@
+reader:5:scala
+stringreader:3:hel:108:108:1
+stringwriter:abcef
+chararrayreader:2:yz:false
+chararraywriter:5:bcxy!
+printwriter:hi there\n!:false
+outputstreamwriter:true
+inputstreamreader:4:true
+latin1-roundtrip:true:ISO-8859-1
+latin1-reader:2:hé:ISO-8859-1
+bogus-charset:true
