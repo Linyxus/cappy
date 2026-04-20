@@ -22,9 +22,7 @@ private def captureStringDeferred(tag: String)(body: => Any): Unit =
   captureStringDeferred("replaceFirst") {
     "aba".replaceFirst("a", "x")
   }
-  captureStringDeferred("format") {
-    java.lang.String.format("%s", Array[AnyRef]("x"))
-  }
+  println("format:" + java.lang.String.format("%s", Array[AnyRef]("x")))
   // Backend-intercepted Locale overloads — the backend emits
   // `_scpy_unsupported` before the null receiver is touched.
   val locale = null.asInstanceOf[java.util.Locale]

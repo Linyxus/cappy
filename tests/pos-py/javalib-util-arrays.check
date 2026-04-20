@@ -1,0 +1,16 @@
+sort-int:[1, 2, 3]
+sort-double:[-1.0, 2.0, 2.5]
+sort-object:[apple, banana, pear]
+sort-comparator:[a, cc, bbb]
+binarysearch:1:-4
+equals-prim:true:false
+equals-ref:true:false
+hashcode:30817
+deephash:36577
+fill:[0, 9, 9, 0]
+copyof:[4, 5, 0, 0]
+copyofrange:[5, 6]
+aslist:x:z
+tostring:[true, false]
+deeptostring:[[1, 2], [x, y]]
+deeptostring-cycle:[[...]]

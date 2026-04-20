@@ -1,0 +1,13 @@
+package scala.runtime
+
+transparent trait EnumValue extends Product, Serializable:
+  override def canEqual(that: Any): Boolean =
+    this eq that.asInstanceOf[AnyRef]
+
+  override def productArity: Int = 0
+
+  override def productElement(n: Int): Any =
+    throw IndexOutOfBoundsException(n.toString)
+
+  override def productElementName(n: Int): String =
+    throw IndexOutOfBoundsException(n.toString)
