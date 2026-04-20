@@ -3,71 +3,113 @@ package scala.python.runtime
 import scala.language.dynamics
 import scala.python.{PyAny, PyDynamic, extern, name, native}
 
-/** Thin facade over Python's `re` module. Covers the minimum surface
- *  that backend-adjacent ports (Formatter's format-spec scanner,
- *  future L5.1 `java.util.regex.Pattern`) need: compile, match,
- *  search, sub (with optional limit), and group extraction.
+/** Thin facade over Python's third-party `regex` module.
  *
- *  Python regex syntax differs from Java's in meaningful ways
- *  (possessive quantifiers, look-behind fixed-length, named-group
- *  syntax). This facade is a *transport* layer — callers that need
- *  Java-faithful regex semantics must translate the pattern before
- *  handing it here. The current consumer (Formatter's internal
- *  spec-parser) uses Python-style patterns directly.
+ *  The Java regex port relies on features that stdlib `re` does not
+ *  support (`\p{...}`, possessive quantifiers, set intersections,
+ *  Java-style named groups). `regex` covers that surface directly,
+ *  so callers only need light Java-specific rewrites rather than a
+ *  full engine emulation layer.
  */
 object PyRegex:
-  @extern("re")
-  private object re extends PyAny:
-    @name("compile")
-    def compilePattern(pattern: String): PyDynamic = native
+  @extern("regex")
+  private object regex extends PyDynamic
 
-    @name("match")
-    def firstMatch(pattern: String, text: String): PyDynamic | Null = native
+  @extern("builtins")
+  private[runtime] object builtins extends PyAny:
+    @name("list")
+    def toList(iter: Any): PyDynamic = native
 
-    @name("search")
-    def anyMatch(pattern: String, text: String): PyDynamic | Null = native
+    @name("len")
+    def lengthOf(value: Any): Int = native
 
-    @name("sub")
-    def substitute(pattern: String, replacement: String, text: String): String = native
-
-    @name("escape")
-    def escape(text: String): String = native
+  @extern("operator")
+  private[runtime] object operator extends PyAny:
+    @name("getitem")
+    def getItem(container: Any, index: Int): Any = native
 
   /** Compile a raw Python regex pattern once; reuse via `PyPattern`. */
   def compile(pattern: String): PyPattern =
-    new PyPattern(re.compilePattern(pattern))
+    wrapPattern(regex.compile(pattern).asInstanceOf[PyDynamic])
+
+  def compileWithFlags(pattern: String, flags: Int): PyPattern =
+    wrapPattern(regex.compile(pattern, flags).asInstanceOf[PyDynamic])
 
   /** Attempt to match `text` from position 0 against `pattern`. `null`
    *  if no match. */
   def firstMatch(pattern: String, text: String): PyMatch | Null =
-    val m = re.firstMatch(pattern, text)
-    if m == null then null else new PyMatch(m.asInstanceOf[PyDynamic])
+    val compiled = compile(pattern)
+    compiled.firstMatch(text)
 
   /** Find the first occurrence of `pattern` anywhere in `text`. */
   def search(pattern: String, text: String): PyMatch | Null =
-    val m = re.anyMatch(pattern, text)
-    if m == null then null else new PyMatch(m.asInstanceOf[PyDynamic])
+    val compiled = compile(pattern)
+    compiled.search(text)
 
   def sub(pattern: String, replacement: String, text: String): String =
-    re.substitute(pattern, replacement, text)
+    regex.sub(pattern, replacement, text).asInstanceOf[String]
+
+  def subn(pattern: String, replacement: String, text: String, count: Int): PySubResult =
+    wrapSubResult(regex.subn(pattern, replacement, text, count).asInstanceOf[PyDynamic])
 
   /** Escape `text` so it matches itself literally inside a regex. */
   def escape(text: String): String =
-    re.escape(text)
+    regex.escape(text).asInstanceOf[String]
 
-final class PyPattern private[runtime] (private val underlying: PyDynamic):
+  val IgnoreCaseFlag: Int = regex.IGNORECASE.asInstanceOf[Int]
+  val MultilineFlag: Int = regex.MULTILINE.asInstanceOf[Int]
+  val DotAllFlag: Int = regex.DOTALL.asInstanceOf[Int]
+  val VerboseFlag: Int = regex.VERBOSE.asInstanceOf[Int]
+  val AsciiFlag: Int = regex.ASCII.asInstanceOf[Int]
+  val Version1Flag: Int = regex.VERSION1.asInstanceOf[Int]
+
+  private[runtime] def wrapPattern(pattern: PyDynamic): PyPattern =
+    new PyPattern(pattern, pattern.groups.asInstanceOf[Int])
+
+  private[runtime] def wrapMatch(m: PyDynamic | Null, groupCount: Int): PyMatch | Null =
+    if m == null then null else new PyMatch(m.asInstanceOf[PyDynamic], groupCount)
+
+  private[runtime] def wrapSubResult(result: PyDynamic): PySubResult =
+    new PySubResult(result)
+
+final class PyPattern private[runtime] (
+    private val underlying: PyDynamic,
+    private val groupCount0: Int
+):
+  def groupCount: Int =
+    groupCount0
+
   def firstMatch(text: String): PyMatch | Null =
-    val m = underlying.`match`(text)
-    if m == null then null else new PyMatch(m.asInstanceOf[PyDynamic])
+    PyRegex.wrapMatch(underlying.`match`(text).asInstanceOf[PyDynamic | Null], groupCount0)
+
+  def firstMatch(text: String, startPos: Int): PyMatch | Null =
+    PyRegex.wrapMatch(underlying.`match`(text, startPos).asInstanceOf[PyDynamic | Null], groupCount0)
+
+  def fullMatch(text: String): PyMatch | Null =
+    PyRegex.wrapMatch(underlying.fullmatch(text).asInstanceOf[PyDynamic | Null], groupCount0)
 
   def search(text: String): PyMatch | Null =
-    val m = underlying.search(text)
-    if m == null then null else new PyMatch(m.asInstanceOf[PyDynamic])
+    PyRegex.wrapMatch(underlying.search(text).asInstanceOf[PyDynamic | Null], groupCount0)
+
+  def search(text: String, startPos: Int): PyMatch | Null =
+    PyRegex.wrapMatch(underlying.search(text, startPos).asInstanceOf[PyDynamic | Null], groupCount0)
 
   def sub(replacement: String, text: String): String =
     underlying.sub(replacement, text).asInstanceOf[String]
 
-final class PyMatch private[runtime] (private val underlying: PyDynamic):
+  def subn(replacement: String, text: String, count: Int): PySubResult =
+    PyRegex.wrapSubResult(underlying.subn(replacement, text, count).asInstanceOf[PyDynamic])
+
+  def findIter(text: String, startPos: Int): PyMatchIter =
+    new PyMatchIter(PyRegex.builtins.toList(underlying.finditer(text, startPos)), groupCount0)
+
+final class PyMatch private[runtime] (
+    private val underlying: PyDynamic,
+    private val groupCount0: Int
+):
+  def groupCount: Int =
+    groupCount0
+
   /** Full match text. */
   def matched(): String =
     underlying.group(0).asInstanceOf[String]
@@ -76,9 +118,38 @@ final class PyMatch private[runtime] (private val underlying: PyDynamic):
   def group(n: Int): String | Null =
     underlying.group(n).asInstanceOf[String | Null]
 
+  def groupByName(name: String): String | Null =
+    underlying.group(name).asInstanceOf[String | Null]
+
   /** Start offset of group n in the source string. */
   def start(n: Int): Int =
     underlying.start(n).asInstanceOf[Int]
 
+  def startByName(name: String): Int =
+    underlying.start(name).asInstanceOf[Int]
+
   def end(n: Int): Int =
     underlying.end(n).asInstanceOf[Int]
+
+  def endByName(name: String): Int =
+    underlying.end(name).asInstanceOf[Int]
+
+  def index: Int =
+    underlying.start(0).asInstanceOf[Int]
+
+final class PyMatchIter private[runtime] (
+    private val backing: PyDynamic,
+    private val groupCount0: Int
+):
+  def length: Int =
+    PyRegex.builtins.lengthOf(backing)
+
+  def get(index: Int): PyMatch =
+    new PyMatch(PyRegex.operator.getItem(backing, index).asInstanceOf[PyDynamic], groupCount0)
+
+final class PySubResult private[runtime] (private val backing: PyDynamic):
+  def text: String =
+    PyRegex.operator.getItem(backing, 0).asInstanceOf[String]
+
+  def count: Int =
+    PyRegex.operator.getItem(backing, 1).asInstanceOf[Int]

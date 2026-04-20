@@ -33,3 +33,39 @@ object ScalaRunTime:
   def wrapRefArray[T <: AnyRef | Null](xs: Array[T]): ArraySeq[T] =
     if xs == null then null.asInstanceOf[ArraySeq[T]]
     else new ArraySeq.ofRef[T](xs)
+
+  def wrapIntArray(xs: Array[Int]): ArraySeq[Int] =
+    if xs == null then null.asInstanceOf[ArraySeq[Int]]
+    else new ArraySeq.ofInt(xs)
+
+  def wrapLongArray(xs: Array[Long]): ArraySeq[Long] =
+    if xs == null then null.asInstanceOf[ArraySeq[Long]]
+    else new ArraySeq.ofLong(xs)
+
+  def wrapDoubleArray(xs: Array[Double]): ArraySeq[Double] =
+    if xs == null then null.asInstanceOf[ArraySeq[Double]]
+    else new ArraySeq.ofDouble(xs)
+
+  def wrapFloatArray(xs: Array[Float]): ArraySeq[Float] =
+    if xs == null then null.asInstanceOf[ArraySeq[Float]]
+    else new ArraySeq.ofFloat(xs)
+
+  def wrapCharArray(xs: Array[Char]): ArraySeq[Char] =
+    if xs == null then null.asInstanceOf[ArraySeq[Char]]
+    else new ArraySeq.ofChar(xs)
+
+  def wrapByteArray(xs: Array[Byte]): ArraySeq[Byte] =
+    if xs == null then null.asInstanceOf[ArraySeq[Byte]]
+    else new ArraySeq.ofByte(xs)
+
+  def wrapShortArray(xs: Array[Short]): ArraySeq[Short] =
+    if xs == null then null.asInstanceOf[ArraySeq[Short]]
+    else new ArraySeq.ofShort(xs)
+
+  def wrapBooleanArray(xs: Array[Boolean]): ArraySeq[Boolean] =
+    if xs == null then null.asInstanceOf[ArraySeq[Boolean]]
+    else new ArraySeq.ofBoolean(xs)
+
+  def wrapUnitArray(xs: Array[Unit]): ArraySeq[Unit] =
+    if xs == null then null.asInstanceOf[ArraySeq[Unit]]
+    else ArraySeq.unsafeWrapArray(xs)

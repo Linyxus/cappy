@@ -1,0 +1,9 @@
+find:true:abbb:true:ab
+matches:true:a:bbb
+start-end:1:4:1:3:3:4
+reset:0:1
+region:true:2:5
+lookingAt:true:false
+appendReplacement:baxba
+replaceAll:xbx
+replaceFirst:xba

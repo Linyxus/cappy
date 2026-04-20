@@ -1,0 +1,5 @@
+matches:true
+split1:a|b|c
+split2:a|b,c
+replaceAll:xbx
+replaceFirst:xba
