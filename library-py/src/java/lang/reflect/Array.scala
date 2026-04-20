@@ -3,21 +3,43 @@ package java.lang.reflect
 object Array {
   @inline
   def newInstance(componentType: Class[?], length: Int): AnyRef = {
-    val tag = componentType.asInstanceOf[String]
-    if tag == "Z" then new scala.Array[Boolean](length)
-    else if tag == "C" then new scala.Array[Char](length)
-    else if tag == "B" then new scala.Array[Byte](length)
-    else if tag == "S" then new scala.Array[Short](length)
-    else if tag == "I" then new scala.Array[Int](length)
-    else if tag == "J" then new scala.Array[Long](length)
-    else if tag == "F" then new scala.Array[Float](length)
-    else if tag == "D" then new scala.Array[Double](length)
-    else if tag == "V" then throw new IllegalArgumentException("component type is void")
+    if componentType == java.lang.Boolean.TYPE then new scala.Array[Boolean](length)
+    else if componentType == java.lang.Character.TYPE then new scala.Array[Char](length)
+    else if componentType == java.lang.Byte.TYPE then new scala.Array[Byte](length)
+    else if componentType == java.lang.Short.TYPE then new scala.Array[Short](length)
+    else if componentType == java.lang.Integer.TYPE then new scala.Array[Int](length)
+    else if componentType == java.lang.Long.TYPE then new scala.Array[Long](length)
+    else if componentType == java.lang.Float.TYPE then new scala.Array[Float](length)
+    else if componentType == java.lang.Double.TYPE then new scala.Array[Double](length)
+    else if componentType == java.lang.Void.TYPE then throw new IllegalArgumentException("component type is void")
+    // GenPython lowers calls to this overload directly to the tagged
+    // runtime helper for reference and nested-array component types.
     else new scala.Array[Object](length)
   }
 
   def newInstance(componentType: Class[?], dimensions: scala.Array[Int]): AnyRef =
-    throw new UnsupportedOperationException("multi-dim reflect.Array pending L3.3 Class port")
+    if dimensions.length == 0 then
+      throw new IllegalArgumentException("dimensions")
+    else if dimensions.length == 1 then
+      newInstance(componentType, dimensions(0))
+    else
+      val tail = new scala.Array[Int](dimensions.length - 1)
+      var i = 1
+      while i < dimensions.length do
+        tail(i - 1) = dimensions(i)
+        i += 1
+
+      val sample = newInstance(componentType, tail).asInstanceOf[AnyRef]
+      val outer = newInstance(sample.getClass(), dimensions(0)).asInstanceOf[Array[AnyRef]]
+
+      if outer.length != 0 then
+        outer(0) = sample
+        i = 1
+        while i < outer.length do
+          outer(i) = newInstance(componentType, tail).asInstanceOf[AnyRef]
+          i += 1
+
+      outer
 
   def getLength(array: AnyRef): scala.Int =
     if array.isInstanceOf[Array[Object]] then array.asInstanceOf[Array[Object]].length

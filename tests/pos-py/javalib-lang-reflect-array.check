@@ -4,3 +4,6 @@ get-set:double:2.5
 get-set:object:hi
 coerce:int:5
 coerce:long:6
+mismatch:argument type mismatch
+multidim:2:3:9
+multidim-class:[[I:[I

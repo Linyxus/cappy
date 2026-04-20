@@ -53,6 +53,14 @@ object PyIRRuntime:
   private val AnnotationClass = PyClassName("scala.annotation.Annotation")
   private val StaticAnnotationClass = PyClassName("scala.annotation.StaticAnnotation")
   private val ComparableClass = PyClassName("java.lang.Comparable")
+  private val EnumClass = PyClassName("java.lang.Enum")
+  private val ClassLoaderClass = PyClassName("java.lang.ClassLoader")
+  private val ClassValueClass = PyClassName("java.lang.ClassValue")
+  private val MirrorClass = PyClassName("scala.deriving.Mirror")
+  private val MirrorProductClass = PyClassName("scala.deriving.Mirror_Product")
+  private val MirrorSumClass = PyClassName("scala.deriving.Mirror_Sum")
+  private val MirrorSingletonClass = PyClassName("scala.deriving.Mirror_Singleton")
+  private val MirrorSingletonProxyClass = PyClassName("scala.deriving.Mirror_SingletonProxy")
 
   // Scala's by-ref closure-capture wrappers. The JVM lowers
   // `var x = 0; ... = { () => x += 1 }` into `val x$1 = new IntRef(0)`
@@ -76,6 +84,7 @@ object PyIRRuntime:
   private val VolatileCharRefClass    = PyClassName("scala.runtime.VolatileCharRef")
   private val VolatileShortRefClass   = PyClassName("scala.runtime.VolatileShortRef")
   private val VolatileObjectRefClass  = PyClassName("scala.runtime.VolatileObjectRef")
+  private val BoxedUnitClass = PyClassName("scala.runtime.BoxedUnit")
 
   private val ObjectCtor =
     PyMethodName(
@@ -120,7 +129,34 @@ object PyIRRuntime:
       ProvidedClass(
         kind = PyClassKind.Class,
         superClass = Some(PyClassName.ObjectClass),
-        javaProvided = true
+        javaProvided = true,
+        instanceMethods = MethodMatcher(
+          simpleNamePrefixes = Set(
+            "getName", "toString",
+            "getSuperclass", "getInterfaces", "getComponentType",
+            "isPrimitive", "isInterface", "isArray",
+            "isInstance", "isAssignableFrom",
+            "getClassLoader"
+          )
+        )
+      ),
+    ClassLoaderClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("getParent"))
+      ),
+    ClassValueClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(
+          simpleNamePrefixes = Set("get", "remove", "computeValue")
+        )
       ),
     SerializableClass ->
       ProvidedClass(
@@ -156,6 +192,17 @@ object PyIRRuntime:
         javaProvided = true,
         constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
       ),
+    BoxedUnitClass ->
+      ProvidedClass(
+        kind = PyClassKind.ModuleClass,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        fields = Set(
+          PyFieldName(BoxedUnitClass, PySimpleFieldName("UNIT")),
+          PyFieldName(BoxedUnitClass, PySimpleFieldName("TYPE"))
+        )
+      ),
     StaticAnnotationClass ->
       ProvidedClass(
         kind = PyClassKind.Class,
@@ -172,6 +219,63 @@ object PyIRRuntime:
         kind = PyClassKind.Interface,
         superClass = None,
         javaProvided = true
+      ),
+    EnumClass ->
+      // Like Comparable, `java.lang.Enum` must stay compiler/JDK-owned:
+      // dotc's `CompleteJavaEnums` phase assumes the class symbol comes
+      // from the JDK classfile loader and crashes if we source-port it.
+      // Provide the runtime shape here instead.
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        interfaces = List(ComparableClass, SerializableClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(
+          simpleNamePrefixes = Set(
+            "name", "ordinal", "toString",
+            "compareTo", "clone", "finalize"
+          )
+        )
+      ),
+    MirrorClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        javaProvided = true
+      ),
+    MirrorProductClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        interfaces = List(MirrorClass),
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("fromProduct"))
+      ),
+    MirrorSumClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        interfaces = List(MirrorClass),
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("ordinal"))
+      ),
+    MirrorSingletonClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        interfaces = List(MirrorProductClass),
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("fromProduct"))
+      ),
+    MirrorSingletonProxyClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        interfaces = List(MirrorProductClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("fromProduct"))
       ),
   ) ++ Seq(
     IntRefClass, LongRefClass, DoubleRefClass, FloatRefClass,
@@ -228,21 +332,429 @@ object PyIRRuntime:
        |import builtins as _builtins
        |from typing import Any
        |
-       |class Annotation:
-       |    pass
-       |class StaticAnnotation(Annotation):
-       |    pass
-       |class Comparable:
-       |    pass
-       |class Serializable:
-       |    pass
-       |class _scpy_Class:
-       |    def __init__(self, name):
+       |class _scpy_Object:
+       |    def getClass__Ljava_lang_Class(self):
+       |        return _scpy_class_of_instance(self)
+       |
+       |_scpy_class_registry = {}
+       |_scpy_unset = object()
+       |
+       |class _scpy_Class(_scpy_Object):
+       |    def __init__(self, name, kind, component_type=None, py_type=None):
        |        self._scpy_name = name
+       |        self._scpy_kind = kind
+       |        self._scpy_component_type = component_type
+       |        self._scpy_py_type = py_type
+       |        self._scpy_superclass_name = None
+       |        self._scpy_interface_names = ()
        |
        |    def getName__Ljava_lang_String(self):
        |        return self._scpy_name
+       |
+       |    def getSuperclass__Ljava_lang_Class(self):
+       |        if self._scpy_kind == "primitive" or self._scpy_kind == "interface":
+       |            return None
+       |        if self._scpy_kind == "array":
+       |            return _scpy_class_of_name("java.lang.Object")
+       |        if self._scpy_name == "java.lang.Object":
+       |            return None
+       |        if self._scpy_superclass_name is None:
+       |            return _scpy_class_of_name("java.lang.Object")
+       |        return _scpy_class_of_name(self._scpy_superclass_name)
+       |
+       |    def getInterfaces__ALjava_lang_Class(self):
+       |        if self._scpy_kind == "array":
+       |            names = ("java.lang.Cloneable", "java.io.Serializable")
+       |        else:
+       |            names = self._scpy_interface_names
+       |        return _scpy_array_value(
+       |            _scpy_class_of_name("java.lang.Class"),
+       |            [_scpy_class_of_name(name) for name in names],
+       |        )
+       |
+       |    def getComponentType__Ljava_lang_Class(self):
+       |        if self._scpy_kind == "array":
+       |            return self._scpy_component_type
+       |        return None
+       |
+       |    def isPrimitive__Z(self):
+       |        return self._scpy_kind == "primitive"
+       |
+       |    def isInterface__Z(self):
+       |        return self._scpy_kind == "interface"
+       |
+       |    def isArray__Z(self):
+       |        return self._scpy_kind == "array"
+       |
+       |    def isInstance__Ljava_lang_Object__Z(self, value):
+       |        return _scpy_is_instance(value, self)
+       |
+       |    def isAssignableFrom__Ljava_lang_Class__Z(self, other):
+       |        return _scpy_is_assignable(self, other)
+       |
+       |    def getClassLoader__Ljava_lang_ClassLoader(self):
+       |        if self._scpy_kind == "primitive":
+       |            return None
+       |        return _scpy_system_class_loader
+       |
+       |    def toString__Ljava_lang_String(self):
+       |        if self._scpy_kind == "primitive":
+       |            return self._scpy_name
+       |        if self._scpy_kind == "interface":
+       |            return "interface " + self._scpy_name
+       |        return "class " + self._scpy_name
+       |
+       |    def __str__(self):
+       |        return self.toString__Ljava_lang_String()
+       |
+       |    def __getattr__(self, name):
+       |        if name.startswith("getName"):
+       |            return self.getName__Ljava_lang_String
+       |        if name.startswith("getSuperclass"):
+       |            return self.getSuperclass__Ljava_lang_Class
+       |        if name.startswith("getInterfaces"):
+       |            return self.getInterfaces__ALjava_lang_Class
+       |        if name.startswith("getComponentType"):
+       |            return self.getComponentType__Ljava_lang_Class
+       |        if name.startswith("isPrimitive"):
+       |            return self.isPrimitive__Z
+       |        if name.startswith("isInterface"):
+       |            return self.isInterface__Z
+       |        if name.startswith("isArray"):
+       |            return self.isArray__Z
+       |        if name.startswith("isInstance"):
+       |            return self.isInstance__Ljava_lang_Object__Z
+       |        if name.startswith("isAssignableFrom"):
+       |            return self.isAssignableFrom__Ljava_lang_Class__Z
+       |        if name.startswith("getClassLoader"):
+       |            return self.getClassLoader__Ljava_lang_ClassLoader
+       |        if name.startswith("toString"):
+       |            return self.toString__Ljava_lang_String
+       |        raise AttributeError(name)
+       |
        |Class = _scpy_Class
+       |
+       |class _scpy_Array(list):
+       |    def __init__(self, values, clazz):
+       |        super().__init__(values)
+       |        self._scpy_class = clazz
+       |
+       |    def getClass__Ljava_lang_Class(self):
+       |        return self._scpy_class
+       |
+       |    def clone__Ljava_lang_Object(self):
+       |        return _scpy_Array(self, self._scpy_class)
+       |
+       |def _scpy_class_of_name(name, kind="class"):
+       |    clazz = _scpy_class_registry.get(name)
+       |    if clazz is None:
+       |        clazz = _scpy_Class(name, kind)
+       |        _scpy_class_registry[name] = clazz
+       |    return clazz
+       |
+       |def _scpy_register_class(py_type, name, kind="class", superclass_name=None, interface_names=(), component_type=None):
+       |    clazz = _scpy_class_registry.get(name)
+       |    if clazz is None:
+       |        clazz = _scpy_Class(name, kind, component_type, py_type)
+       |        _scpy_class_registry[name] = clazz
+       |    else:
+       |        clazz._scpy_kind = kind
+       |        clazz._scpy_component_type = component_type
+       |        if py_type is not None:
+       |            clazz._scpy_py_type = py_type
+       |    clazz._scpy_superclass_name = superclass_name
+       |    clazz._scpy_interface_names = tuple(interface_names)
+       |    if py_type is not None:
+       |        clazz._scpy_py_type = py_type
+       |        try:
+       |            py_type._scpy_class = clazz
+       |        except (AttributeError, TypeError):
+       |            pass
+       |    return clazz
+       |
+       |def _scpy_descriptor_for_class(clazz):
+       |    if clazz._scpy_kind == "primitive":
+       |        return {
+       |            "void": "V",
+       |            "boolean": "Z",
+       |            "char": "C",
+       |            "byte": "B",
+       |            "short": "S",
+       |            "int": "I",
+       |            "long": "J",
+       |            "float": "F",
+       |            "double": "D",
+       |        }[clazz._scpy_name]
+       |    if clazz._scpy_kind == "array":
+       |        return clazz._scpy_name
+       |    return "L" + clazz._scpy_name + ";"
+       |
+       |def _scpy_array_class(component_type):
+       |    name = "[" + _scpy_descriptor_for_class(component_type)
+       |    clazz = _scpy_class_registry.get(name)
+       |    if clazz is None:
+       |        clazz = _scpy_Class(name, "array", component_type, _scpy_Array)
+       |        clazz._scpy_superclass_name = "java.lang.Object"
+       |        clazz._scpy_interface_names = ("java.lang.Cloneable", "java.io.Serializable")
+       |        _scpy_class_registry[name] = clazz
+       |    return clazz
+       |
+       |def _scpy_default_value_for_class(component_type):
+       |    if component_type._scpy_kind == "primitive":
+       |        if component_type._scpy_name == "boolean":
+       |            return False
+       |        if component_type._scpy_name == "float" or component_type._scpy_name == "double":
+       |            return 0.0
+       |        if component_type._scpy_name == "void":
+       |            return None
+       |        return 0
+       |    return None
+       |
+       |def _scpy_new_array(component_type, length, default=_scpy_unset):
+       |    if length < 0:
+       |        raise NegativeArraySizeException(length)
+       |    fill = _scpy_default_value_for_class(component_type) if default is _scpy_unset else default
+       |    return _scpy_Array([fill] * length, _scpy_array_class(component_type))
+       |
+       |def _scpy_array_value(component_type, values):
+       |    return _scpy_Array(list(values), _scpy_array_class(component_type))
+       |
+       |def _scpy_array_clone(value):
+       |    if isinstance(value, _scpy_Array):
+       |        return _scpy_Array(value, value._scpy_class)
+       |    return list(value)
+       |
+       |def _scpy_new_multi_array(component_type, dimensions):
+       |    dims = list(dimensions)
+       |    if len(dims) == 0:
+       |        raise IllegalArgumentException("dimensions")
+       |    if dims[0] < 0:
+       |        raise NegativeArraySizeException(dims[0])
+       |    if len(dims) == 1:
+       |        return _scpy_new_array(component_type, dims[0])
+       |    child_component = component_type
+       |    for _ in range(len(dims) - 1):
+       |        child_component = _scpy_array_class(child_component)
+       |    children = [_scpy_new_multi_array(component_type, dims[1:]) for _ in range(dims[0])]
+       |    return _scpy_array_value(child_component, children)
+       |
+       |def _scpy_class_of_instance(value):
+       |    if value is None:
+       |        raise NullPointerException()
+       |    if isinstance(value, _scpy_Array):
+       |        return value._scpy_class
+       |    py_cls = getattr(value.__class__, "_scpy_class", None)
+       |    if py_cls is not None:
+       |        return py_cls
+       |    if isinstance(value, bool):
+       |        return _scpy_class_of_name("java.lang.Boolean")
+       |    if isinstance(value, int):
+       |        return _scpy_class_of_name("java.lang.Integer")
+       |    if isinstance(value, float):
+       |        return _scpy_class_of_name("java.lang.Double")
+       |    if isinstance(value, str):
+       |        return _scpy_class_of_name("java.lang.String")
+       |    return _scpy_class_of_name("java.lang.Object")
+       |
+       |def _scpy_is_assignable(target, source):
+       |    if target is None or source is None:
+       |        return False
+       |    if target is source:
+       |        return True
+       |    if target._scpy_kind == "primitive" or source._scpy_kind == "primitive":
+       |        return False
+       |    if source._scpy_kind == "array":
+       |        if target._scpy_kind == "array":
+       |            if target._scpy_component_type is None or source._scpy_component_type is None:
+       |                return False
+       |            if (
+       |                target._scpy_component_type._scpy_kind == "primitive"
+       |                or source._scpy_component_type._scpy_kind == "primitive"
+       |            ):
+       |                return target._scpy_component_type is source._scpy_component_type
+       |            return _scpy_is_assignable(target._scpy_component_type, source._scpy_component_type)
+       |        return target._scpy_name in ("java.lang.Object", "java.lang.Cloneable", "java.io.Serializable")
+       |
+       |    seen = set()
+       |
+       |    def walk(clazz):
+       |        if clazz is None or clazz._scpy_name in seen:
+       |            return False
+       |        if clazz is target:
+       |            return True
+       |        seen.add(clazz._scpy_name)
+       |        if clazz._scpy_superclass_name is not None and walk(_scpy_class_of_name(clazz._scpy_superclass_name)):
+       |            return True
+       |        for iface in clazz._scpy_interface_names:
+       |            if walk(_scpy_class_of_name(iface)):
+       |                return True
+       |        return False
+       |
+       |    return walk(source)
+       |
+       |def _scpy_is_instance(value, clazz):
+       |    if value is None or clazz is None or clazz._scpy_kind == "primitive":
+       |        return False
+       |    if clazz._scpy_kind == "array":
+       |        return isinstance(value, _scpy_Array) and _scpy_is_assignable(clazz, value._scpy_class)
+       |    return _scpy_is_assignable(clazz, _scpy_class_of_instance(value))
+       |
+       |def _scpy_is_value_of_type(value, clazz):
+       |    if clazz is None:
+       |        return False
+       |    if clazz._scpy_kind == "primitive":
+       |        if clazz._scpy_name == "void":
+       |            return value is None
+       |        if clazz._scpy_name == "boolean":
+       |            return isinstance(value, bool)
+       |        if clazz._scpy_name in ("char", "byte", "short", "int", "long"):
+       |            return isinstance(value, int) and not isinstance(value, bool)
+       |        if clazz._scpy_name in ("float", "double"):
+       |            return isinstance(value, float)
+       |        return False
+       |    return _scpy_is_instance(value, clazz)
+       |
+       |_scpy_primitive_void = _scpy_register_class(None, "void", "primitive")
+       |_scpy_primitive_boolean = _scpy_register_class(None, "boolean", "primitive")
+       |_scpy_primitive_char = _scpy_register_class(None, "char", "primitive")
+       |_scpy_primitive_byte = _scpy_register_class(None, "byte", "primitive")
+       |_scpy_primitive_short = _scpy_register_class(None, "short", "primitive")
+       |_scpy_primitive_int = _scpy_register_class(None, "int", "primitive")
+       |_scpy_primitive_long = _scpy_register_class(None, "long", "primitive")
+       |_scpy_primitive_float = _scpy_register_class(None, "float", "primitive")
+       |_scpy_primitive_double = _scpy_register_class(None, "double", "primitive")
+       |
+       |class Annotation(_scpy_Object):
+       |    pass
+       |
+       |class StaticAnnotation(Annotation):
+       |    pass
+       |
+       |class Comparable(_scpy_Object):
+       |    pass
+       |
+       |class Serializable(_scpy_Object):
+       |    pass
+       |
+       |class Mirror(_scpy_Object):
+       |    pass
+       |
+       |class Mirror_Product(Mirror):
+       |    def fromProduct__Lscala_Product__O(self, product):
+       |        return None
+       |
+       |class Mirror_Sum(Mirror):
+       |    def ordinal__O__I(self, value):
+       |        return 0
+       |
+       |class Mirror_Singleton(Mirror_Product):
+       |    def fromProduct__Lscala_Product__Lscala_deriving_Mirror_Singleton(self, product):
+       |        return self
+       |
+       |class Mirror_SingletonProxy(Mirror_Product):
+       |    def __init__(self, value):
+       |        self.value = value
+       |
+       |    def fromProduct__Lscala_Product__O(self, product):
+       |        return self.value
+       |
+       |class Enum(Comparable, Serializable):
+       |    def __init__(self, name, ordinal):
+       |        self._scpy_enum_name = name
+       |        self._scpy_enum_ordinal = ordinal
+       |
+       |    def name__Ljava_lang_String(self):
+       |        return self._scpy_enum_name
+       |
+       |    def ordinal__I(self):
+       |        return self._scpy_enum_ordinal
+       |
+       |    def toString__Ljava_lang_String(self):
+       |        return self._scpy_enum_name
+       |
+       |    def compareTo__Ljava_lang_Enum__I(self, other):
+       |        return self._scpy_enum_ordinal - other.ordinal__I()
+       |
+       |    def compareTo__Ljava_lang_Object__I(self, other):
+       |        return self.compareTo__Ljava_lang_Enum__I(other)
+       |
+       |    def clone__Ljava_lang_Object(self):
+       |        raise CloneNotSupportedException("Enums are not cloneable", None)
+       |
+       |    def finalize__V(self):
+       |        return None
+       |
+       |    def __str__(self):
+       |        return self._scpy_enum_name
+       |
+       |class ClassLoader(_scpy_Object):
+       |    def __init__(self, parent=None):
+       |        self._scpy_parent = parent
+       |
+       |    def getParent__Ljava_lang_ClassLoader(self):
+       |        return self._scpy_parent
+       |
+       |class ClassValue(_scpy_Object):
+       |    def __init__(self):
+       |        self._scpy_values = {}
+       |
+       |    def computeValue__Ljava_lang_Class__Ljava_lang_Object(self, clazz):
+       |        return None
+       |
+       |    def get__Ljava_lang_Class__Ljava_lang_Object(self, clazz):
+       |        if clazz is None:
+       |            raise NullPointerException()
+       |        if clazz not in self._scpy_values:
+       |            self._scpy_values[clazz] = self.computeValue__Ljava_lang_Class__Ljava_lang_Object(clazz)
+       |        return self._scpy_values[clazz]
+       |
+       |    def remove__Ljava_lang_Class__V(self, clazz):
+       |        if clazz is None:
+       |            raise NullPointerException()
+       |        self._scpy_values.pop(clazz, None)
+       |        return None
+       |
+       |class BoxedUnit(_scpy_Object):
+       |    def __eq__(self, other):
+       |        return self is other
+       |
+       |    def __hash__(self):
+       |        return 0
+       |
+       |    def __str__(self):
+       |        return "()"
+       |
+       |BoxedUnit.UNIT = BoxedUnit()
+       |BoxedUnit.TYPE = _scpy_primitive_void
+       |_scpy_mod_scala_runtime_BoxedUnit_ = BoxedUnit
+       |_scpy_system_class_loader = ClassLoader()
+       |
+       |_scpy_register_class(object, "java.lang.Object", "class", None)
+       |_scpy_register_class(str, "java.lang.String", "class", "java.lang.Object", ("java.lang.Comparable", "java.io.Serializable"))
+       |_scpy_register_class(_scpy_Class, "java.lang.Class", "class", "java.lang.Object")
+       |_scpy_register_class(ClassLoader, "java.lang.ClassLoader", "class", "java.lang.Object")
+       |_scpy_register_class(ClassValue, "java.lang.ClassValue", "class", "java.lang.Object")
+       |_scpy_register_class(Annotation, "scala.annotation.Annotation", "class", "java.lang.Object")
+       |_scpy_register_class(StaticAnnotation, "scala.annotation.StaticAnnotation", "class", "scala.annotation.Annotation")
+       |_scpy_register_class(Comparable, "java.lang.Comparable", "interface", None)
+       |_scpy_register_class(Serializable, "java.io.Serializable", "interface", None)
+       |_scpy_register_class(Mirror, "scala.deriving.Mirror", "interface", None)
+       |_scpy_register_class(Mirror_Product, "scala.deriving.Mirror_Product", "interface", None, ("scala.deriving.Mirror",))
+       |_scpy_register_class(Mirror_Sum, "scala.deriving.Mirror_Sum", "interface", None, ("scala.deriving.Mirror",))
+       |_scpy_register_class(Mirror_Singleton, "scala.deriving.Mirror_Singleton", "interface", None, ("scala.deriving.Mirror_Product",))
+       |_scpy_register_class(Mirror_SingletonProxy, "scala.deriving.Mirror_SingletonProxy", "class", "java.lang.Object", ("scala.deriving.Mirror_Product",))
+       |_scpy_register_class(Enum, "java.lang.Enum", "class", "java.lang.Object", ("java.lang.Comparable", "java.io.Serializable"))
+       |_scpy_register_class(BoxedUnit, "scala.runtime.BoxedUnit", "class", "java.lang.Object")
+       |_scpy_register_class(None, "java.lang.Cloneable", "interface", None)
+       |_scpy_register_class(None, "java.lang.Number", "class", "java.lang.Object", ("java.io.Serializable",))
+       |_scpy_register_class(None, "java.lang.Boolean", "class", "java.lang.Object", ("java.lang.Comparable", "java.io.Serializable"))
+       |_scpy_register_class(None, "java.lang.Character", "class", "java.lang.Object", ("java.lang.Comparable", "java.io.Serializable"))
+       |_scpy_register_class(None, "java.lang.Byte", "class", "java.lang.Number", ("java.lang.Comparable", "java.io.Serializable"))
+       |_scpy_register_class(None, "java.lang.Short", "class", "java.lang.Number", ("java.lang.Comparable", "java.io.Serializable"))
+       |_scpy_register_class(None, "java.lang.Integer", "class", "java.lang.Number", ("java.lang.Comparable", "java.io.Serializable"))
+       |_scpy_register_class(None, "java.lang.Long", "class", "java.lang.Number", ("java.lang.Comparable", "java.io.Serializable"))
+       |_scpy_register_class(None, "java.lang.Float", "class", "java.lang.Number", ("java.lang.Comparable", "java.io.Serializable"))
+       |_scpy_register_class(None, "java.lang.Double", "class", "java.lang.Number", ("java.lang.Comparable", "java.io.Serializable"))
        |
        |# -- scala.FunctionN wrapper --
        |# `PyClosure` emits `_scpy_Fn(lambda params: body)`. Callers that
@@ -268,7 +780,7 @@ object PyIRRuntime:
        |# Python's lexical closure doesn't need them, but PyIR still
        |# emits the code that constructs them, so the names must resolve.
        |def _scpy_mk_ref(default):
-       |    class _Ref:
+       |    class _Ref(_scpy_Object):
        |        def __init__(self, elem=default):
        |            self.elem = elem
        |        @staticmethod
@@ -333,6 +845,24 @@ object PyIRRuntime:
        |VolatileCharRef = CharRef
        |VolatileShortRef = ShortRef
        |VolatileObjectRef = ObjectRef
+       |_scpy_register_class(IntRef, "scala.runtime.IntRef", "class", "java.lang.Object")
+       |_scpy_register_class(LongRef, "scala.runtime.LongRef", "class", "java.lang.Object")
+       |_scpy_register_class(DoubleRef, "scala.runtime.DoubleRef", "class", "java.lang.Object")
+       |_scpy_register_class(FloatRef, "scala.runtime.FloatRef", "class", "java.lang.Object")
+       |_scpy_register_class(BooleanRef, "scala.runtime.BooleanRef", "class", "java.lang.Object")
+       |_scpy_register_class(ByteRef, "scala.runtime.ByteRef", "class", "java.lang.Object")
+       |_scpy_register_class(CharRef, "scala.runtime.CharRef", "class", "java.lang.Object")
+       |_scpy_register_class(ShortRef, "scala.runtime.ShortRef", "class", "java.lang.Object")
+       |_scpy_register_class(ObjectRef, "scala.runtime.ObjectRef", "class", "java.lang.Object")
+       |_scpy_register_class(None, "scala.runtime.VolatileIntRef", "class", "java.lang.Object")
+       |_scpy_register_class(None, "scala.runtime.VolatileLongRef", "class", "java.lang.Object")
+       |_scpy_register_class(None, "scala.runtime.VolatileDoubleRef", "class", "java.lang.Object")
+       |_scpy_register_class(None, "scala.runtime.VolatileFloatRef", "class", "java.lang.Object")
+       |_scpy_register_class(None, "scala.runtime.VolatileBooleanRef", "class", "java.lang.Object")
+       |_scpy_register_class(None, "scala.runtime.VolatileByteRef", "class", "java.lang.Object")
+       |_scpy_register_class(None, "scala.runtime.VolatileCharRef", "class", "java.lang.Object")
+       |_scpy_register_class(None, "scala.runtime.VolatileShortRef", "class", "java.lang.Object")
+       |_scpy_register_class(None, "scala.runtime.VolatileObjectRef", "class", "java.lang.Object")
        |
        |# -- Compiler-invented: numeric wrapping (Scala overflow semantics) --
        |
@@ -354,6 +884,24 @@ object PyIRRuntime:
        |    if x is False:
        |        return "false"
        |    return _builtins.str(x)
+       |
+       |def _scpy_identity_hash_code(obj):
+       |    if obj is None:
+       |        return 0
+       |    # Python can reuse ids after object death; within an object's
+       |    # lifetime this matches the stable identity hash we need.
+       |    return id(obj) & 0x7FFFFFFF
+       |
+       |def _scpy_arraycopy(src, src_pos, dst, dst_pos, length):
+       |    if src is None or dst is None:
+       |        raise NullPointerException()
+       |    if src_pos < 0 or dst_pos < 0 or length < 0:
+       |        raise ArrayIndexOutOfBoundsException(length)
+       |    if src_pos + length > len(src):
+       |        raise ArrayIndexOutOfBoundsException(src_pos + length)
+       |    if dst_pos + length > len(dst):
+       |        raise ArrayIndexOutOfBoundsException(dst_pos + length)
+       |    dst[dst_pos:dst_pos + length] = src[src_pos:src_pos + length]
        |
        |# -- java.lang.String helpers --
        |# The compiler lowers `s.method(...)` on `java.lang.String` to

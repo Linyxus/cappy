@@ -1,0 +1,10 @@
+class-of:string:java.lang.String:class java.lang.String
+class-of:int:int:true:int
+class-of:array:[I:true:int:class [I
+derived:Base:1:Marker
+getclass:Derived
+isinstance:true:true:false
+assignable:true:true:false
+array-assign:true:false
+array-instance:true:true:false
+classvalue-cache:java.lang.String#1:java.lang.String#1:java.lang.String#2:2

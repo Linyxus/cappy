@@ -139,19 +139,28 @@ object PyIREmitter:
       if externAliases.nonEmpty then
         emptyLine()
 
-      // Class definitions + module-singleton initializers. Emit in a
-      // topological order so that each class's Python base(s) are
-      // already defined above. Python evaluates `class Foo(Bar):` at
-      // definition time and resolves `Bar` by name — forward references
-      // fail with `NameError`.
+      // Class definitions + runtime registration. Emit in a topological
+      // order so that each class's Python base(s) are already defined
+      // above. Python evaluates `class Foo(Bar):` at definition time and
+      // resolves `Bar` by name — forward references fail with
+      // `NameError`.
       for cls <- orderedClasses do
         line(s"# -- ${cls.name.nameString} --")
         emptyLine()
         emitClassDef(cls)
+        emitClassRegistration(cls)
         emptyLine()
-        if cls.kind == PyClassKind.ModuleClass then
-          emitModuleSingletonInit(cls)
-          emptyLine()
+
+      // Instantiate Scala `object`s only after every class body in the
+      // bundle has been defined. Module constructors can reference
+      // synthetic classes emitted later in the same bundle (e.g. Scala 3
+      // enum case implementations); eager per-class initialization would
+      // see those names before they exist.
+      for cls <- orderedClasses if cls.kind == PyClassKind.ModuleClass do
+        line(s"# -- init ${cls.name.nameString} --")
+        emptyLine()
+        emitModuleSingletonInit(cls)
+        emptyLine()
 
       mainEntry.foreach(entry => emitMainGuard(entry, orderedClasses))
 
@@ -171,15 +180,8 @@ object PyIREmitter:
       def spacer(): Unit =
         if first then first = false else emptyLine()
 
-      // `_scpy_full_name` + `getClass__...` are only needed by classes in
-      // the `java.lang.Throwable` hierarchy, because `Throwable.toString`
-      // lowers to `getClass().getName()`. Emitting the metadata for every
-      // class would lock in a `Class`-intrinsic layout that properly
-      // belongs to L3.3 (see notes/l03-audit-2026-04-18.md C1). Gate on
-      // "transitively extends Throwable" to contain the blast radius.
-      if isThrowableDescendant(cls) then
-        spacer()
-        emitClassMetadata(cls)
+      spacer()
+      emitClassMetadata(cls)
 
       // Emit constructor dispatcher (if any) or synthesize a field-init __init__
       if ctorMethods.nonEmpty then
@@ -204,10 +206,36 @@ object PyIREmitter:
 
     private def emitClassMetadata(cls: PyClassDef): Unit =
       line("_scpy_full_name = \"" + escapeString(cls.name.nameString) + "\"")
+      line("_scpy_kind = \"" + classKindLiteral(cls.kind) + "\"")
+      line("_scpy_superclass = " + classSuperclassLiteral(cls))
+      line("_scpy_interfaces = " + classInterfacesLiteral(cls.interfaces))
       line("def getClass__Ljava_lang_Class(self):")
       indent()
-      line("return _scpy_Class(self.__class__._scpy_full_name)")
+      line("return _scpy_class_of_instance(self)")
       dedent()
+
+    private def emitClassRegistration(cls: PyClassDef): Unit =
+      val clsId = classIdentifier(cls.name)
+      line(s"_scpy_register_class($clsId, $clsId._scpy_full_name, $clsId._scpy_kind, $clsId._scpy_superclass, $clsId._scpy_interfaces)")
+
+    private def classKindLiteral(kind: PyClassKind): String = kind match
+      case PyClassKind.Interface => "interface"
+      case _                     => "class"
+
+    private def classSuperclassLiteral(cls: PyClassDef): String =
+      cls.kind match
+        case PyClassKind.Interface =>
+          "None"
+        case _ =>
+          val superName = cls.superClass.getOrElse(PyClassName.ObjectClass)
+          "\"" + escapeString(superName.nameString) + "\""
+
+    private def classInterfacesLiteral(interfaces: List[PyClassName]): String =
+      if interfaces.isEmpty then "()"
+      else
+        interfaces
+          .map(cn => "\"" + escapeString(cn.nameString) + "\"")
+          .mkString("(", ", ", if interfaces.length == 1 then ",)" else ")")
 
     /** Topologically sort `classes` so that any class whose Python bases
      *  (superclass + materialised interfaces) appear in the bundle are
@@ -370,14 +398,15 @@ object PyIREmitter:
       case PyStringType =>
         Some(s"($argRef is None or isinstance($argRef, str))")
       case PyArrayType =>
-        Some(s"($argRef is None or isinstance($argRef, list))")
+        Some(s"($argRef is None or isinstance($argRef, _scpy_Array))")
       case PyClassType(className) if className == PyClassName.ObjectClass =>
         None
       case PyClassType(className) =>
-        Some(s"($argRef is None or ${emitIsInstanceCheck(argRef, className)})")
+        Some(s"($argRef is None or _scpy_is_instance($argRef, ${typeRefToClassExpr(PyClassRef(className))}))")
       case PyAnyType | PyUndefinedType | PyVoidType | PyNothingType | PyNullType =>
         None
-    // Python doesn't distinguish Array[?] from list at runtime.
+    // `PyArrayType` forgets the element type, but arrays now have a
+    // distinct runtime carrier (`_scpy_Array`).
 
     // -- Method definition ---------------------------------------
 
@@ -986,20 +1015,17 @@ object PyIREmitter:
 
       // Type tests / casts
       case PyIsInstanceOf(expr, testType) =>
-        testType match
-          case PyClassRef(cn) => emitIsInstanceCheck(exprToStr(expr), cn)
-          case PyArrayRef(_, _) => s"isinstance(${exprToStr(expr)}, list)"
-          case _ => s"isinstance(${exprToStr(expr)}, object)"
+        s"_scpy_is_value_of_type(${exprToStr(expr)}, ${typeRefToClassExpr(testType)})"
 
       case PyAsInstanceOf(expr, _) =>
         exprToStr(expr)  // Python is duck-typed, cast is a no-op
 
       // Arrays
       case PyNewArray(elemTypeRef, length) =>
-        s"[${arrayDefaultValue(elemTypeRef)}] * ${parenthesize(length)}"
+        s"_scpy_new_array(${typeRefToClassExpr(elemTypeRef)}, ${parenthesize(length)}, ${arrayDefaultValue(elemTypeRef)})"
 
-      case PyArrayValue(_, elems) =>
-        s"[${elems.map(exprToStr).mkString(", ")}]"
+      case PyArrayValue(elemTypeRef, elems) =>
+        s"_scpy_array_value(${typeRefToClassExpr(elemTypeRef)}, [${elems.map(exprToStr).mkString(", ")}])"
 
       case PyArraySelect(array, index) =>
         s"${parenthesize(array)}[${exprToStr(index)}]"
@@ -1020,7 +1046,7 @@ object PyIREmitter:
         s"_scpy_Fn(lambda $paramsStr: ${exprToStr(body)})"
 
       case PyClassOf(typeRef) =>
-        "\"" + typeRef.encoded + "\""
+        typeRefToClassExpr(typeRef)
 
       // If-expression
       case PyIf(cond, thenp, elsep) =>
@@ -1082,19 +1108,19 @@ object PyIREmitter:
         case StringLength   => s"len($l)"
         case ArrayLength    => s"len($l)"
         case CheckNotNull   => l
-        case GetClass       => s"type($l)"
-        case IdentityHashCode => s"id($l)"
-        case Clone          => l
+        case GetClass       => s"_scpy_class_of_instance($l)"
+        case IdentityHashCode => s"_scpy_identity_hash_code($l)"
+        case Clone          => s"_scpy_array_clone($l)"
 
         case WrapAsThrowable | UnwrapFromThrowable => l
         case Throw          => s"(lambda: (_ for _ in ()).throw($l))()"
 
         case FloatToBits | FloatFromBits | DoubleToBits | DoubleFromBits => l
 
-        case ClassGetName      => s"$l.__name__"
-        case ClassIsPrimitive  => "False"
-        case ClassIsInterface  => "False"
-        case ClassIsArray      => s"isinstance($l, list)"
+        case ClassGetName      => s"$l.getName__Ljava_lang_String()"
+        case ClassIsPrimitive  => s"$l.isPrimitive__Z()"
+        case ClassIsInterface  => s"$l.isInterface__Z()"
+        case ClassIsArray      => s"$l.isArray__Z()"
 
     private def emitBinary(op: PyBinaryCode, lhs: PyTree, rhs: PyTree): String =
       import PyBinaryCode.*
@@ -1185,10 +1211,10 @@ object PyIREmitter:
         case RefNe => s"($l is not $r)"
 
         // Class
-        case ClassIsInstance       => s"isinstance($r, $l)"
-        case ClassIsAssignableFrom => s"issubclass($r, $l)"
+        case ClassIsInstance       => s"_scpy_is_instance($r, $l)"
+        case ClassIsAssignableFrom => s"_scpy_is_assignable($l, $r)"
         case ClassCast             => r
-        case ClassNewArray         => s"([None] * $r)"
+        case ClassNewArray         => s"_scpy_new_array($l, $r)"
 
     private def arrayDefaultValue(elemTypeRef: PyTypeRef): String = elemTypeRef match
       case PyPrimRef(tag) => tag match
@@ -1201,6 +1227,26 @@ object PyIREmitter:
         case _                        => "0"
       case _ =>
         "None"
+
+    private def typeRefToClassExpr(typeRef: PyTypeRef): String = typeRef match
+      case PyPrimRef(tag) => tag match
+        case PyPrimRef.Tag.VoidRef    => s"${Prefix}primitive_void"
+        case PyPrimRef.Tag.BooleanRef => s"${Prefix}primitive_boolean"
+        case PyPrimRef.Tag.CharRef    => s"${Prefix}primitive_char"
+        case PyPrimRef.Tag.ByteRef    => s"${Prefix}primitive_byte"
+        case PyPrimRef.Tag.ShortRef   => s"${Prefix}primitive_short"
+        case PyPrimRef.Tag.IntRef     => s"${Prefix}primitive_int"
+        case PyPrimRef.Tag.LongRef    => s"${Prefix}primitive_long"
+        case PyPrimRef.Tag.FloatRef   => s"${Prefix}primitive_float"
+        case PyPrimRef.Tag.DoubleRef  => s"${Prefix}primitive_double"
+        case PyPrimRef.Tag.NullRef | PyPrimRef.Tag.NothingRef =>
+          s"""${Prefix}class_of_name("java.lang.Object")"""
+      case PyClassRef(cn) =>
+        s"""${Prefix}class_of_name("${escapeString(cn.nameString)}")"""
+      case PyArrayRef(base, dims) =>
+        (0 until dims).foldLeft(typeRefToClassExpr(base)) { (componentExpr, _) =>
+          s"${Prefix}array_class($componentExpr)"
+        }
 
     // -- Numeric wrapping helpers --------------------------------
 
@@ -1254,43 +1300,6 @@ object PyIREmitter:
       PyIREmitter.PythonReservedShortNames.get(cn.nameString) match
         case Some(alias) => alias
         case None        => sanitizeIdent(cn.simpleName)
-
-    /** Emit a Python expression implementing `isinstance(expr, cn)`.
-     *
-     *  Boxed-primitive Java classes don't have Python class
-     *  counterparts — `java.lang.Integer` isn't a real class, it's
-     *  Python's `int` builtin. Map those here so the runtime preamble
-     *  doesn't need to expose `Integer = int` aliases (which don't work
-     *  as base classes anyway).
-     *
-     *  For integer-valued boxes, Java semantics forbid `bool` from
-     *  matching `Integer`, but Python has `bool <: int` — so emit the
-     *  stricter `isinstance(x, int) and not isinstance(x, bool)` guard
-     *  to match Java's `Integer.class.isInstance(...)` semantics.
-     *
-     *  This helper is only for test-type positions (isinstance).
-     *  Base-class positions still go through `classIdentifier`.
-     */
-    private def emitIsInstanceCheck(exprStr: String, cn: PyClassName): String =
-      cn.nameString match
-        case "java.lang.Integer"
-           | "java.lang.Long"
-           | "java.lang.Byte"
-           | "java.lang.Short"
-           | "java.lang.Character" =>
-          s"(isinstance($exprStr, int) and not isinstance($exprStr, bool))"
-        case "java.lang.Float" | "java.lang.Double" =>
-          s"isinstance($exprStr, float)"
-        case "java.lang.Boolean" =>
-          s"isinstance($exprStr, bool)"
-        case "java.lang.Number" =>
-          // Python bools are ints; Java Number is Integer/Long/Float/Double
-          // (not Boolean), so exclude bool explicitly.
-          s"(isinstance($exprStr, (int, float)) and not isinstance($exprStr, bool))"
-        case "java.lang.String" =>
-          s"isinstance($exprStr, str)"
-        case _ =>
-          s"isinstance($exprStr, ${classIdentifier(cn)})"
 
     /** Python variable holding the singleton of a Scala `object`.
      *  Uses the full qualified path so two modules with the same

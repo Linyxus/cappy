@@ -411,7 +411,14 @@ private class PyCodeGen()(using genCtx: Context):
         // singleton) member. `Param` alone is not disqualifying — a
         // constructor param-accessor can keep both `Param` and `ParamAccessor`
         // flags while still representing a field on the class.
-        if sym.owner.isClass && !sym.is(Method) && !sym.is(Module)
+        if sym.owner.is(ModuleClass) && !sym.is(Method) && !sym.is(Module)
+            && !sym.is(Package)
+        then
+          PySelect(
+            moduleReceiver(sym.owner, pos),
+            encoding.encodeFieldName(sym)
+          )(encoding.encodeType(tree.tpe), pos)
+        else if sym.owner.isClass && !sym.is(Method) && !sym.is(Module)
             && !sym.is(Package)
         then
           val classTpe = PyClassType(encoding.encodeClassName(currentClassSym))
@@ -491,6 +498,13 @@ private class PyCodeGen()(using genCtx: Context):
             if sym.is(Module) then
               if isStringCompanionModule(sym) then PyLoadModule(stringCompanionClassName)(pos)
               else PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
+            else if sym.owner.is(ModuleClass) && !sym.is(Method) && !sym.is(Module)
+                && !sym.is(Package)
+            then
+              PySelect(
+                moduleReceiver(sym.owner, pos),
+                encoding.encodeFieldName(sym)
+              )(encoding.encodeType(tree.tpe), pos)
             else if sym.owner.isClass && !sym.is(Method) && !sym.is(Module)
                 && !sym.is(Package)
             then
@@ -588,6 +602,12 @@ private class PyCodeGen()(using genCtx: Context):
     if app.fun.symbol == defn.newArrayMethod then
       return genRuntimeNewArray(app, pos)
 
+    genReflectArrayNewInstance(app, pos) match
+      case Some(tree) =>
+        return tree
+      case None =>
+        ()
+
     app.fun match
       case id: Ident if encoding.externBindingOf(id.symbol).isDefined =>
         genExternCall(id.symbol, app.args, pos)
@@ -661,9 +681,42 @@ private class PyCodeGen()(using genCtx: Context):
           case singleDim :: Nil =>
             PyNewArray(arrayElemTypeRef(arrayClassConstant.typeValue), genExpr(singleDim))(pos)
           case _ =>
-            genNormalApply(app, pos)
+            PyApplyExternal(
+              PyExternalName("_scpy_new_multi_array"),
+              List(
+                PyClassOf(arrayBaseTypeRef(arrayClassConstant.typeValue))(pos),
+                PyArrayValue(PyPrimRef.IntRef, dimsArray.elems.map(genExpr))(pos)
+              )
+            )(PyArrayType, pos)
       case _ =>
         genNormalApply(app, pos)
+
+  private def genReflectArrayNewInstance(app: Apply, pos: PyPosition): Option[PyTree] =
+    val sym = app.fun.symbol
+    if sym.exists
+       && sym.name.toString == "newInstance"
+       && sym.owner.exists
+       && sym.owner.javaClassName.toString.startsWith("java.lang.reflect.Array")
+    then
+      app.args match
+        case List(componentType, length) if length.tpe.typeSymbol == defn.IntClass =>
+          Some(
+            PyApplyExternal(
+              PyExternalName("_scpy_new_array"),
+              List(genExpr(componentType), genExpr(length))
+            )(PyArrayType, pos)
+          )
+        case List(componentType, dimensions) if isIntArrayType(dimensions.tpe) =>
+          Some(
+            PyApplyExternal(
+              PyExternalName("_scpy_new_multi_array"),
+              List(genExpr(componentType), genExpr(dimensions))
+            )(PyArrayType, pos)
+          )
+        case _ =>
+          None
+    else
+      None
 
   private def genArrayLiteral(arrayTp: Type, elems: List[Tree], pos: PyPosition): PyTree =
     PyArrayValue(arrayElemTypeRef(arrayTp), elems.map(genExpr))(pos)
@@ -674,6 +727,20 @@ private class PyCodeGen()(using genCtx: Context):
         encoding.encodeTypeRef(elemTp)
       case _ =>
         PyClassRef(PyClassName.ObjectClass)
+
+  private def arrayBaseTypeRef(arrayTp: Type): PyTypeRef =
+    arrayTp match
+      case JavaArrayType(elemTp) =>
+        elemTp match
+          case _: JavaArrayType => arrayBaseTypeRef(elemTp)
+          case _                => encoding.encodeTypeRef(elemTp)
+      case _ =>
+        PyClassRef(PyClassName.ObjectClass)
+
+  private def isIntArrayType(tp: Type): Boolean =
+    tp.widenDealias match
+      case JavaArrayType(elemTp) => elemTp.typeSymbol == defn.IntClass
+      case _                     => false
 
   private def genFacadeNew(app: Apply, pos: PyPosition): PyTree =
     val Apply(Select(New(tpt), _), args) = app: @unchecked
@@ -694,6 +761,26 @@ private class PyCodeGen()(using genCtx: Context):
         val ownerName  = encoding.encodeClassName(sym.owner)
         val resultTpe  = encoding.encodeType(sym.info.finalResultType)
         val isStaticTarget = sym.is(JavaStatic)
+
+        if !isStaticTarget && sym.name == nme.clone_ then
+          app.fun match
+            case Select(receiver, _) =>
+              receiver.tpe.widenDealias match
+                case JavaArrayType(_) =>
+                  break(PyApplyExternal(PyExternalName("_scpy_array_clone"), List(genExpr(receiver)))(PyArrayType, pos))
+                case _ =>
+                  ()
+            case _ =>
+              ()
+
+        if isStaticTarget && ownerName == PyClassName("java.lang.System") then
+          sym.name.mangledString match
+            case "arraycopy" =>
+              break(PyApplyExternal(PyExternalName("_scpy_arraycopy"), args)(PyVoidType, pos))
+            case "identityHashCode" =>
+              break(PyApplyExternal(PyExternalName("_scpy_identity_hash_code"), args)(PyIntType, pos))
+            case _ =>
+              ()
 
         // Intercept `java.lang.String` instance methods — the runtime
         // receiver is a Python `str` which has no `length__I`/`substring__I_I__…`
