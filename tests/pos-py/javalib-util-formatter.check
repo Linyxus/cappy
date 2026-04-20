@@ -1,0 +1,10 @@
+d:42
+s:scala-py
+f3:3.142
+x:255
+o:11
+pad:00012
+upper:MIX
+n:a|b
+tc:Formatter conversion pending L4.10: %tc
+group:Formatter grouping flag unsupported: %,

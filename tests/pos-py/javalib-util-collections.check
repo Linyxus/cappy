@@ -1,0 +1,10 @@
+sort:a,b,c
+reverse:c,b,a
+shuffle:c,a,b
+minmax:a:c
+unmodifiable:uoe
+sync:c
+emptyviews:0:0:0
+singletons:true:y:v
+enumeration:enum
+list:list

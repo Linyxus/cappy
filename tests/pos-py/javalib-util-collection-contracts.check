@@ -1,0 +1,13 @@
+collection:keep,stay
+list:bbb!,a!,cc!:a!,cc!,bbb!
+map:fallback:one:b!:b!?:seed:seed+:a=uno;b=b!?;c=seed+
+queue:left:left:right
+deque:right:left:center
+sortedmap:a:c
+navigablemap:b:c
+sortedset:1:3
+navigableset:2:3
+sequencedcollection:3
+sequencedmap:uno
+sequencedset:true
+dictionary:one:two:null

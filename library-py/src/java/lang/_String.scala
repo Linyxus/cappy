@@ -90,7 +90,26 @@ object _String:
     valueOf(data, offset, count)
 
   def format(format: String, args: Array[AnyRef]): String =
-    throw new UnsupportedOperationException("String.format pending L4.10")
+    val effectiveArgs = normalizeFormatArgs(args)
+    new java.util.Formatter().format(format, effectiveArgs).toString()
+
+  private def normalizeFormatArgs(args: Array[AnyRef]): Array[AnyRef] = {
+    if args.length != 1 || args(0) == null then
+      args
+    else
+      try
+        val nested = args(0)
+        val length = java.lang.reflect.Array.getLength(nested)
+        val out = new Array[AnyRef](length)
+        var i = 0
+        while i < length do
+          out(i) = java.lang.reflect.Array.get(nested, i).asInstanceOf[AnyRef]
+          i += 1
+        out
+      catch
+        case _: IllegalArgumentException =>
+          args
+  }
 
   private def sliceBytes(bytes: Array[scala.Byte], offset: Int, length: Int): Array[scala.Byte] =
     val end = checkBoundsForNewFromArray(offset, length, bytes.length)

@@ -238,11 +238,15 @@ object Long {
 
   @inline
   def rotateLeft(i: scala.Long, distance: scala.Int): scala.Long =
-    (i << distance) | (i >>> -distance)
+    val shift = distance & 63
+    if shift == 0 then i
+    else (i << shift) | (i >>> (64 - shift))
 
   @inline
   def rotateRight(i: scala.Long, distance: scala.Int): scala.Long =
-    (i >>> distance) | (i << -distance)
+    val shift = distance & 63
+    if shift == 0 then i
+    else (i >>> shift) | (i << (64 - shift))
 
   @noinline
   def compress(i: scala.Long, mask: scala.Long): scala.Long =

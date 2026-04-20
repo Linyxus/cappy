@@ -192,10 +192,14 @@ object Integer:
     (t3 | (t3 << 2)) ^ x2
 
   def rotateLeft(i: scala.Int, distance: scala.Int): scala.Int =
-    (i << distance) | (i >>> -distance)
+    val shift = distance & 31
+    if shift == 0 then i
+    else (i << shift) | (i >>> (32 - shift))
 
   def rotateRight(i: scala.Int, distance: scala.Int): scala.Int =
-    (i >>> distance) | (i << -distance)
+    val shift = distance & 31
+    if shift == 0 then i
+    else (i >>> shift) | (i << (32 - shift))
 
   def signum(i: scala.Int): scala.Int =
     (i >> 31) | (-i >>> 31)

@@ -1,0 +1,6 @@
+abstractcollection:keep,stay:true:2
+abstractlist:alpha,beta,gamma,delta:beta,gamma
+abstractmap:a,c:1,3:{a=1, c=3}
+abstractqueue:first:first:second:true
+abstractset:true:1,3
+abstractsequential:two:one!,two?,three:three
