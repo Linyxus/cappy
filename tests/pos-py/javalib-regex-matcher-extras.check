@@ -1,0 +1,7 @@
+named-replace:12-AB 34-CD
+literal-escapes:a$\a
+possessive:false
+atomic:false
+look-behind:true:bar
+look-behind-no:false
+property:abc|xyz|

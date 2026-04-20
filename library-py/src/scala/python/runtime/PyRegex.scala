@@ -23,6 +23,12 @@ object PyRegex:
     @name("len")
     def lengthOf(value: Any): Int = native
 
+    @name("hasattr")
+    def hasAttr(obj: Any, name: String): Boolean = native
+
+    @name("getattr")
+    def getAttr(obj: Any, name: String): Any = native
+
   @extern("operator")
   private[runtime] object operator extends PyAny:
     @name("getitem")
@@ -62,6 +68,19 @@ object PyRegex:
   val VerboseFlag: Int = regex.VERBOSE.asInstanceOf[Int]
   val AsciiFlag: Int = regex.ASCII.asInstanceOf[Int]
   val Version1Flag: Int = regex.VERSION1.asInstanceOf[Int]
+
+  /** Extract the `pos` attribute of a Python `regex.error` exception, if
+   *  present and integer-valued. Returns `-1` when unavailable. The
+   *  `regex` module exposes the parse offset directly via `error.pos`,
+   *  which is more robust than scraping `"at position N"` out of the
+   *  message string. */
+  def errorPosition(error: Any): Int =
+    if error == null then -1
+    else if !builtins.hasAttr(error, "pos") then -1
+    else
+      val raw = builtins.getAttr(error, "pos")
+      if raw == null then -1
+      else raw.asInstanceOf[Int]
 
   private[runtime] def wrapPattern(pattern: PyDynamic): PyPattern =
     new PyPattern(pattern, pattern.groups.asInstanceOf[Int])

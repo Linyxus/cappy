@@ -1,0 +1,6 @@
+before-match:ISE
+out-of-range:IOOBE
+dangling-dollar:IAE
+bad-dollar:IAE
+unterminated-name:IAE
+dangling-backslash:IAE

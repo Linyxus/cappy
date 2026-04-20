@@ -385,7 +385,8 @@ private final class PatternCompiler(private val pattern: String, private var fla
         case throwable: Throwable => String.valueOf(throwable.getMessage())
         case other                => String.valueOf(other)
       }
-    val index = extractIndex(message)
+    val attrIndex = PyRegex.errorPosition(t)
+    val index = if (attrIndex >= 0) attrIndex else extractIndex(message)
     val desc =
       if (message == null || message == "null") "Invalid regular expression"
       else message
