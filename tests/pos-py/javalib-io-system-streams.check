@@ -1,0 +1,6 @@
+sysout-bytes:A
+sysout-text:hello
+sysout-fmt:42-done
+sysout-checkerror:false
+syserr-text:hi
+setout:captured

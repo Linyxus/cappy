@@ -1,0 +1,109 @@
+/*
+ * Scala.js (https://www.scala-js.org/)
+ *
+ * Copyright EPFL.
+ *
+ * Licensed under Apache License 2.0
+ * (https://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
+package java.nio
+
+private[nio] object GenHeapBufferView {
+  def apply[B <: Buffer](buffer: B): GenHeapBufferView[B] =
+    new GenHeapBufferView(buffer)
+
+  trait NewHeapBufferView[BufferType <: Buffer] {
+    def bytesPerElem: Int
+
+    def apply(
+        capacity: Int,
+        byteArray: Array[Byte],
+        byteArrayOffset: Int,
+        initialPosition: Int,
+        initialLimit: Int,
+        readOnly: Boolean,
+        isDirect: Boolean,
+        isBigEndian: Boolean
+    ): BufferType
+  }
+
+  @inline
+  def generic_fromHeapByteBuffer[BufferType <: Buffer](byteBuffer: HeapByteBuffer)(
+      implicit newHeapBufferView: NewHeapBufferView[BufferType]
+  ): BufferType = {
+    val byteBufferPos = byteBuffer.position()
+    val viewCapacity = (byteBuffer.limit() - byteBufferPos) / newHeapBufferView.bytesPerElem
+    newHeapBufferView(
+      viewCapacity,
+      byteBuffer._array,
+      byteBuffer._arrayOffset + byteBufferPos,
+      0,
+      viewCapacity,
+      byteBuffer.isReadOnly(),
+      byteBuffer.isDirect(),
+      byteBuffer.isBigEndian
+    )
+  }
+}
+
+private[nio] final class GenHeapBufferView[B <: Buffer] private (val owner: B) extends AnyVal {
+  import owner._
+
+  type NewThisHeapBufferView = GenHeapBufferView.NewHeapBufferView[BufferType]
+
+  @inline
+  def sliceView()(implicit newHeapBufferView: NewThisHeapBufferView): BufferType = {
+    val newCapacity = remaining()
+    val bytesPerElem = newHeapBufferView.bytesPerElem
+    newHeapBufferView(
+      newCapacity,
+      _byteArray,
+      _byteArrayOffset + bytesPerElem * position(),
+      0,
+      newCapacity,
+      isReadOnly(),
+      isDirect(),
+      isBigEndian
+    )
+  }
+
+  @inline
+  def duplicateView()(implicit newHeapBufferView: NewThisHeapBufferView): BufferType = {
+    val result = newHeapBufferView(capacity(), _byteArray, _byteArrayOffset, position(), limit(), isReadOnly(), isDirect(), isBigEndian)
+    result._mark = _mark
+    result
+  }
+
+  @inline
+  def readOnlyView()(implicit newHeapBufferView: NewThisHeapBufferView): BufferType = {
+    val result = newHeapBufferView(capacity(), _byteArray, _byteArrayOffset, position(), limit(), true, isDirect(), isBigEndian)
+    result._mark = _mark
+    result
+  }
+
+  @inline
+  def compactView()(implicit newHeapBufferView: NewThisHeapBufferView): BufferType = {
+    if (isReadOnly())
+      throw new ReadOnlyBufferException
+
+    val len = remaining()
+    val bytesPerElem = newHeapBufferView.bytesPerElem
+    System.arraycopy(_byteArray, _byteArrayOffset + bytesPerElem * position(), _byteArray, _byteArrayOffset, bytesPerElem * len)
+    _mark = -1
+    limit(capacity())
+    position(len)
+    owner
+  }
+
+  @inline
+  def viewOrder(): ByteOrder =
+    if (isBigEndian) ByteOrder.BIG_ENDIAN else ByteOrder.LITTLE_ENDIAN
+
+  @inline
+  def bits(implicit newHeapBufferView: NewThisHeapBufferView): ByteArrayBits =
+    ByteArrayBits(_byteArray, _byteArrayOffset, isBigEndian, newHeapBufferView.bytesPerElem)
+}

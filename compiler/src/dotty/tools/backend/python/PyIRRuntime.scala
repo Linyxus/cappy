@@ -85,6 +85,8 @@ object PyIRRuntime:
   private val VolatileShortRefClass   = PyClassName("scala.runtime.VolatileShortRef")
   private val VolatileObjectRefClass  = PyClassName("scala.runtime.VolatileObjectRef")
   private val BoxedUnitClass = PyClassName("scala.runtime.BoxedUnit")
+  private val IntCompanionClass = PyClassName("scala.Int_")
+  private val CharCompanionClass = PyClassName("scala.Char_")
 
   private val ObjectCtor =
     PyMethodName(
@@ -202,6 +204,22 @@ object PyIRRuntime:
           PyFieldName(BoxedUnitClass, PySimpleFieldName("UNIT")),
           PyFieldName(BoxedUnitClass, PySimpleFieldName("TYPE"))
         )
+      ),
+    IntCompanionClass ->
+      ProvidedClass(
+        kind = PyClassKind.ModuleClass,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("toChar")),
+        staticMethods = MethodMatcher(simpleNamePrefixes = Set("toChar"))
+      ),
+    CharCompanionClass ->
+      ProvidedClass(
+        kind = PyClassKind.ModuleClass,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("toInt")),
+        staticMethods = MethodMatcher(simpleNamePrefixes = Set("toInt"))
       ),
     StaticAnnotationClass ->
       ProvidedClass(
@@ -331,6 +349,8 @@ object PyIRRuntime:
        |import struct
        |import builtins as _builtins
        |from typing import Any
+       |
+       |_scpy_len = _builtins.len
        |
        |class _scpy_Object:
        |    def getClass__Ljava_lang_Class(self):
@@ -727,10 +747,29 @@ object PyIRRuntime:
        |BoxedUnit.UNIT = BoxedUnit()
        |BoxedUnit.TYPE = _scpy_primitive_void
        |_scpy_mod_scala_runtime_BoxedUnit_ = BoxedUnit
+       |
+       |class _scpy_IntModule(_scpy_Object):
+       |    def toChar__I__C(self, value):
+       |        return chr(value & 0xFFFF)
+       |
+       |    def int2long__I__J(self, value):
+       |        return value
+       |
+       |class _scpy_CharModule(_scpy_Object):
+       |    def toInt__C__I(self, value):
+       |        return ord(value)
+       |
+       |    def char2int__C__I(self, value):
+       |        return ord(value)
+       |
+       |_scpy_mod_scala_Int_ = _scpy_IntModule()
+       |_scpy_mod_scala_Char_ = _scpy_CharModule()
+       |_scpy_mod_scala_Int__ = _scpy_mod_scala_Int_
+       |_scpy_mod_scala_Char__ = _scpy_mod_scala_Char_
        |_scpy_system_class_loader = ClassLoader()
        |
        |_scpy_register_class(object, "java.lang.Object", "class", None)
-       |_scpy_register_class(str, "java.lang.String", "class", "java.lang.Object", ("java.lang.Comparable", "java.io.Serializable"))
+       |_scpy_register_class(str, "java.lang.String", "class", "java.lang.Object", ("java.lang.CharSequence", "java.lang.Comparable", "java.io.Serializable"))
        |_scpy_register_class(_scpy_Class, "java.lang.Class", "class", "java.lang.Object")
        |_scpy_register_class(ClassLoader, "java.lang.ClassLoader", "class", "java.lang.Object")
        |_scpy_register_class(ClassValue, "java.lang.ClassValue", "class", "java.lang.Object")
@@ -745,6 +784,8 @@ object PyIRRuntime:
        |_scpy_register_class(Mirror_SingletonProxy, "scala.deriving.Mirror_SingletonProxy", "class", "java.lang.Object", ("scala.deriving.Mirror_Product",))
        |_scpy_register_class(Enum, "java.lang.Enum", "class", "java.lang.Object", ("java.lang.Comparable", "java.io.Serializable"))
        |_scpy_register_class(BoxedUnit, "scala.runtime.BoxedUnit", "class", "java.lang.Object")
+       |_scpy_register_class(None, "scala.Int_", "class", "java.lang.Object")
+       |_scpy_register_class(None, "scala.Char_", "class", "java.lang.Object")
        |_scpy_register_class(None, "java.lang.Cloneable", "interface", None)
        |_scpy_register_class(None, "java.lang.Number", "class", "java.lang.Object", ("java.io.Serializable",))
        |_scpy_register_class(None, "java.lang.Boolean", "class", "java.lang.Object", ("java.lang.Comparable", "java.io.Serializable"))
@@ -1045,7 +1086,10 @@ object PyIRRuntime:
        |    return s * count
        |
        |def _scpy_str_to_char_array(s):
-       |    return [ord(ch) for ch in s]
+       |    out = _scpy_new_array(_scpy_primitive_char, len(s), 0)
+       |    for i, ch in enumerate(s):
+       |        out[i] = ord(ch)
+       |    return out
        |
        |def _scpy_str_get_chars(s, src_begin, src_end, dst, dst_begin):
        |    if src_begin < 0 or src_end < src_begin or src_end > len(s):
@@ -1120,7 +1164,10 @@ object PyIRRuntime:
        |        raw = s.encode(enc)
        |    except LookupError:
        |        _scpy_unsupported('java.lang.String.getBytes unsupported charset: ' + enc)
-       |    return [b - 256 if b >= 128 else b for b in raw]
+       |    out = _scpy_new_array(_scpy_primitive_byte, len(raw), 0)
+       |    for i, b in enumerate(raw):
+       |        out[i] = b - 256 if b >= 128 else b
+       |    return out
        |
        |def _scpy_str_split_lines(s):
        |    xs = []

@@ -1,0 +1,163 @@
+/*
+ * Scala.js (https://www.scala-js.org/)
+ *
+ * Copyright EPFL.
+ *
+ * Licensed under Apache License 2.0
+ * (https://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
+package java.nio
+
+import scala.language.unsafeNulls
+
+object CharBuffer {
+  private final val HashSeed = -182887236
+
+  def allocate(capacity: Int): CharBuffer = {
+    BoundsChecks.checkCapacity(capacity)
+    wrap(new Array[Char](capacity))
+  }
+
+  def wrap(array: Array[Char], offset: Int, length: Int): CharBuffer =
+    HeapCharBuffer.wrap(array, 0, array.length, offset, length, false)
+
+  def wrap(array: Array[Char]): CharBuffer =
+    wrap(array, 0, array.length)
+
+  def wrap(csq: CharSequence, start: Int, end: Int): CharBuffer = {
+    val text = csq.toString
+    StringCharBuffer.wrap(text, 0, text.length(), start, end - start)
+  }
+
+  def wrap(csq: CharSequence): CharBuffer =
+    wrap(csq, 0, csq.toString.length())
+}
+
+abstract class CharBuffer private[nio] (
+    _capacity: Int,
+    private[nio] val _array: Array[Char],
+    private[nio] val _arrayOffset: Int
+) extends Buffer(_capacity)
+    with Comparable[CharBuffer]
+    with CharSequence
+    with Appendable
+    with Readable {
+
+  private[nio] type ElementType = Char
+  private[nio] type BufferType = CharBuffer
+
+  def this(_capacity: Int) = this(_capacity, null, -1)
+
+  def read(target: CharBuffer): Int = {
+    val n = remaining()
+    if (n == 0) -1
+    else if (_array != null) {
+      target.put(_array, _arrayOffset + position(), n)
+      n
+    } else {
+      val savedPos = position()
+      target.put(this)
+      position(savedPos)
+      n
+    }
+  }
+
+  def slice(): CharBuffer
+  def duplicate(): CharBuffer
+  def asReadOnlyBuffer(): CharBuffer
+  def get(): Char
+  def put(c: Char): CharBuffer
+  def get(index: Int): Char
+  def put(index: Int, c: Char): CharBuffer
+
+  @noinline
+  def get(dst: Array[Char], offset: Int, length: Int): CharBuffer =
+    GenBuffer(this).getArray(dst, offset, length)
+
+  def get(dst: Array[Char]): CharBuffer =
+    get(dst, 0, dst.length)
+
+  @noinline
+  def put(src: CharBuffer): CharBuffer =
+    GenBuffer(this).putBuffer(src)
+
+  @noinline
+  def put(src: Array[Char], offset: Int, length: Int): CharBuffer =
+    GenBuffer(this).putArray(src, offset, length)
+
+  final def put(src: Array[Char]): CharBuffer =
+    put(src, 0, src.length)
+
+  def put(src: String, start: Int, end: Int): CharBuffer =
+    put(CharBuffer.wrap(src, start, end))
+
+  final def put(src: String): CharBuffer =
+    put(src, 0, src.length)
+
+  @inline final def hasArray(): Boolean =
+    GenBuffer(this).generic_hasArray()
+
+  @inline final def array(): Array[Char] =
+    GenBuffer(this).generic_array().asInstanceOf[Array[Char]]
+
+  @inline final def arrayOffset(): Int =
+    GenBuffer(this).generic_arrayOffset()
+
+  @inline override def position(newPosition: Int): CharBuffer = { super.position(newPosition); this }
+  @inline override def limit(newLimit: Int): CharBuffer = { super.limit(newLimit); this }
+  @inline override def mark(): CharBuffer = { super.mark(); this }
+  @inline override def reset(): CharBuffer = { super.reset(); this }
+  @inline override def clear(): CharBuffer = { super.clear(); this }
+  @inline override def flip(): CharBuffer = { super.flip(); this }
+  @inline override def rewind(): CharBuffer = { super.rewind(); this }
+
+  def compact(): CharBuffer
+  def isDirect(): Boolean
+
+  @noinline
+  override def hashCode(): Int =
+    GenBuffer(this).generic_hashCode(CharBuffer.HashSeed)
+
+  override def equals(that: Any): Boolean = that match
+    case that: CharBuffer => compareTo(that) == 0
+    case _                => false
+
+  @noinline
+  def compareTo(that: CharBuffer): Int =
+    GenBuffer(this).generic_compareTo(that)(Character.compare(_, _))
+
+  override def toString(): String = {
+    if (_array != null) {
+      new String(_array, position() + _arrayOffset, remaining())
+    } else {
+      val chars = new Array[Char](remaining())
+      val savedPos = position()
+      get(chars)
+      position(savedPos)
+      new String(chars)
+    }
+  }
+
+  final def length(): Int = remaining()
+  final def charAt(index: Int): Char = get(position() + index)
+  def subSequence(start: Int, end: Int): CharSequence
+  def append(csq: CharSequence): CharBuffer = put(csq.toString())
+  def append(csq: CharSequence, start: Int, end: Int): CharBuffer = put(csq.subSequence(start, end).toString())
+  def append(c: Char): CharBuffer = put(c)
+  def order(): ByteOrder
+
+  private[nio] def load(index: Int): Char
+  private[nio] def store(index: Int, elem: Char): Unit
+
+  @inline
+  private[nio] def load(startIndex: Int, dst: Array[Char], offset: Int, length: Int): Unit =
+    GenBuffer(this).loadInto(startIndex, dst, offset, length)
+
+  @inline
+  private[nio] def store(startIndex: Int, src: Array[Char], offset: Int, length: Int): Unit =
+    GenBuffer(this).storeFrom(startIndex, src, offset, length)
+}
