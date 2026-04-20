@@ -2,5 +2,7 @@ partial-utf8:1:true
 partial-utf8-array:1:😀
 mixed:true
 encoding:UTF-8:true
+latin1:2:hé:ISO-8859-1
+ascii:ASCII:US-ASCII
 mark-not-supported:false:true
 closed:true

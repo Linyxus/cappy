@@ -1,0 +1,5 @@
+decode-replace:3:true
+encode-replace:3:104:63:105
+encode-string:63
+utf16-be-bom:254:255:0:104:0:105
+utf16-roundtrip:hi

@@ -82,6 +82,25 @@ final class ByteAtATimeStream(data: Array[Byte]) extends InputStream:
   val encClosed = enc.getEncoding()
   println("encoding:" + encOpen + ":" + (encClosed == null))
 
+  val latin = new InputStreamReader(
+    new ByteAtATimeStream(Array[Byte](104.toByte, -23.toByte)),
+    "ISO-8859-1"
+  )
+  val latinChars = new Array[Char](4)
+  val latinCount = latin.read(latinChars, 0, latinChars.length)
+  println("latin1:" + latinCount + ":" + new String(latinChars, 0, latinCount) + ":" + latin.getEncoding())
+
+  val ascii = new InputStreamReader(
+    new ByteAtATimeStream("ASCII".getBytes("US-ASCII")),
+    "US-ASCII"
+  )
+  val asciiBuf = new StringBuilder()
+  var a = ascii.read()
+  while a != -1 do
+    asciiBuf.appendCodePoint(a)
+    a = ascii.read()
+  println("ascii:" + asciiBuf.toString() + ":" + ascii.getEncoding())
+
   // mark() on InputStreamReader is not supported by our streaming port.
   val markIsr = new InputStreamReader(new ByteArrayInputStream("xyz".getBytes("UTF-8")), "UTF-8")
   val markSup = markIsr.markSupported()

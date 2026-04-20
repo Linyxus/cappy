@@ -1,15 +1,16 @@
 package java.io
 
+import java.nio.{ByteBuffer, CharBuffer}
+import java.nio.charset.Charset
 import java.util.Arrays
-
-import scala.python.runtime.{PyBytes, PyCodecs}
 
 class InputStreamReader(private var in: InputStream | Null, charsetName: String | Null)
     extends Reader {
 
   private val encoding = OutputStreamWriter.normalizeEncoding(charsetName)
-  private val decoder = PyCodecs.newUtf8Decoder()
+  private val charset = Charset.forName(encoding)
   private val readBuffer = new Array[Byte](4096)
+  private var carryBytes = new Array[Byte](0)
 
   private var closed = false
   private var pending: String = ""
@@ -21,13 +22,7 @@ class InputStreamReader(private var in: InputStream | Null, charsetName: String 
     this(in, null)
 
   def getEncoding(): String | Null =
-    // The encoding passed to Python codecs is lowercase ("utf-8"), but
-    // Java's `getEncoding()` contract returns the canonical charset name
-    // — `"UTF-8"` is the Java canonical form, matching what the JDK's
-    // `StandardCharsets.UTF_8.name()` would return.
-    if (closed) null
-    else if (encoding == "utf-8") "UTF-8"
-    else encoding
+    if closed then null else encoding
 
   override def read(): Int = {
     ensureOpen()
@@ -43,17 +38,24 @@ class InputStreamReader(private var in: InputStream | Null, charsetName: String 
     ensureOpen()
     BoundsChecks.checkOffsetCount(off, len, cbuf.length)
     if (len == 0) 0
-    else if (!ensureChars()) -1
     else {
-      val available = pending.length() - pendingPos
-      val toCopy = Math.min(available, len)
-      var i = 0
-      while (i < toCopy) {
-        cbuf(off + i) = pending.charAt(pendingPos + i)
-        i += 1
-      }
-      pendingPos += toCopy
-      toCopy
+      var copied = 0
+      var done = false
+      while !done && copied < len do
+        if !ensureChars() then
+          done = true
+        else
+          val available = pending.length() - pendingPos
+          val toCopy = Math.min(available, len - copied)
+          var i = 0
+          while i < toCopy do
+            cbuf(off + copied + i) = pending.charAt(pendingPos + i)
+            i += 1
+          pendingPos += toCopy
+          copied += toCopy
+          if pendingPos < pending.length() then
+            done = true
+      if copied == 0 then -1 else copied
     }
   }
 
@@ -73,6 +75,7 @@ class InputStreamReader(private var in: InputStream | Null, charsetName: String 
       in = null
       pending = ""
       pendingPos = 0
+      carryBytes = new Array[Byte](0)
     }
   }
 
@@ -82,7 +85,7 @@ class InputStreamReader(private var in: InputStream | Null, charsetName: String 
     pendingPos = 0
     while (pending.length() == 0 && !decoderFlushed)
       if (inputExhausted)
-        pending = decoder.decode(PyBytes.toPyBytes(new Array[Byte](0)), true)
+        pending = decodeChunk(new Array[Byte](0), endOfInput = true)
         decoderFlushed = true
       else
         val n = in.asInstanceOf[InputStream].read(readBuffer)
@@ -92,8 +95,72 @@ class InputStreamReader(private var in: InputStream | Null, charsetName: String 
           val chunk =
             if (n == readBuffer.length) readBuffer
             else Arrays.copyOf(readBuffer, n)
-          pending = decoder.decode(PyBytes.toPyBytes(chunk), false)
+          pending = decodeChunk(chunk, endOfInput = false)
     pending.length() > 0
+  }
+
+  private def decodeChunk(chunk: Array[Byte], endOfInput: Boolean): String = {
+    val combined = combineCarry(chunk)
+    if endOfInput then
+      carryBytes = new Array[Byte](0)
+      return charset.decode(ByteBuffer.wrap(combined)).toString()
+
+    val decoder = charset.newDecoder()
+    val inBuf = ByteBuffer.wrap(combined)
+    var outBuf = CharBuffer.allocate(Math.max(1, combined.length * 2 + 2))
+
+    def grow(current: CharBuffer): CharBuffer = {
+      val next =
+        if (current.capacity() == 0) CharBuffer.allocate(1)
+        else CharBuffer.allocate(current.capacity() * 2)
+      current.flip()
+      next.put(current)
+      next
+    }
+
+    var result = decoder.decode(inBuf, outBuf, endOfInput)
+    while result.isOverflow() do
+      outBuf = grow(outBuf)
+      result = decoder.decode(inBuf, outBuf, endOfInput)
+    if result.isError() then
+      result.throwException()
+
+    if endOfInput then
+      var flushResult = decoder.flush(outBuf)
+      while flushResult.isOverflow() do
+        outBuf = grow(outBuf)
+        flushResult = decoder.flush(outBuf)
+      if flushResult.isError() then
+        flushResult.throwException()
+
+    carryBytes = extractRemaining(inBuf)
+    outBuf.flip()
+    outBuf.toString()
+  }
+
+  private def combineCarry(chunk: Array[Byte]): Array[Byte] =
+    if carryBytes.length == 0 then
+      chunk
+    else if chunk.length == 0 then
+      carryBytes
+    else
+      val combined = new Array[Byte](carryBytes.length + chunk.length)
+      var i = 0
+      while i < carryBytes.length do
+        combined(i) = carryBytes(i)
+        i += 1
+      var j = 0
+      while j < chunk.length do
+        combined(carryBytes.length + j) = chunk(j)
+        j += 1
+      combined
+
+  private def extractRemaining(inBuf: ByteBuffer): Array[Byte] = {
+    val remaining = inBuf.remaining()
+    val out = new Array[Byte](remaining)
+    if remaining > 0 then
+      inBuf.get(out)
+    out
   }
 
   private def ensureOpen(): Unit =

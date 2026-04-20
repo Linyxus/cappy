@@ -40,7 +40,7 @@
 
   val bytesOut = new java.io.ByteArrayOutputStream()
   val osw = new java.io.OutputStreamWriter(bytesOut, "UTF-8")
-  val text = "hi \uD83D\uDE00"
+  val text = "hi " + Character.toString(0x1F600)
   osw.write(text)
   osw.close()
   println("outputstreamwriter:" + (new String(bytesOut.toByteArray(), "UTF-8") == text))
@@ -50,16 +50,37 @@
   val isrCount = isr.read(isrBuf, 0, isrBuf.length)
   println("inputstreamreader:" + isrCount + ":" + (new String(isrBuf, 0, isrCount) == text))
 
-  val writerGate =
+  val latinOut = new java.io.ByteArrayOutputStream()
+  val latinWriter = new java.io.OutputStreamWriter(latinOut, "ISO-8859-1")
+  val latinEncoding = latinWriter.getEncoding()
+  latinWriter.write("hé")
+  latinWriter.close()
+  println(
+    "latin1-roundtrip:" +
+      (new String(latinOut.toByteArray(), "ISO-8859-1") == "hé") +
+      ":" +
+      latinEncoding
+  )
+
+  val latinReader = new java.io.InputStreamReader(
+    new java.io.ByteArrayInputStream(Array[Byte](104.toByte, -23.toByte)),
+    "ISO-8859-1"
+  )
+  val latinBuf = new Array[Char](8)
+  val latinCount = latinReader.read(latinBuf, 0, latinBuf.length)
+  println(
+    "latin1-reader:" +
+      latinCount +
+      ":" +
+      new String(latinBuf, 0, latinCount) +
+      ":" +
+      latinReader.getEncoding()
+  )
+
+  val bogusCharset =
     try
-      new java.io.OutputStreamWriter(new java.io.ByteArrayOutputStream(), "ISO-8859-1")
+      new java.io.OutputStreamWriter(new java.io.ByteArrayOutputStream(), "totally-fake")
       false
     catch
       case _: java.io.UnsupportedEncodingException => true
-  val readerGate =
-    try
-      new java.io.InputStreamReader(new java.io.ByteArrayInputStream(Array[Byte](65)), "ISO-8859-1")
-      false
-    catch
-      case _: java.io.UnsupportedEncodingException => true
-  println("utf8-gate:" + writerGate + ":" + readerGate)
+  println("bogus-charset:" + bogusCharset)

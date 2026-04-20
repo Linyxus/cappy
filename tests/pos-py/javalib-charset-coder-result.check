@@ -1,0 +1,5 @@
+identity:true:true
+cache:true:false:true
+predicates:true:true:true:true:true
+throws:malformed:5:unmappable:2
+actions:REPLACE:REPORT:IGNORE

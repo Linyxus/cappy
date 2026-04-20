@@ -1152,18 +1152,81 @@ object PyIRRuntime:
        |    right = other[ooffset:ooffset + length]
        |    return left.lower() == right.lower() if ignore_case else left == right
        |
+       |def _scpy_codec_lookup(name):
+       |    import encodings
+       |    info = encodings.search_function(name)
+       |    if info is None:
+       |        return None
+       |    return info.name
+       |
+       |def _scpy_codec_decode_step(decoder, data, final_chunk):
+       |    saved_state = decoder.getstate()
+       |    try:
+       |        text = decoder.decode(data, final_chunk)
+       |        state = decoder.getstate()
+       |        buffered = 0
+       |        if state is not None:
+       |            buffered_input = state[0]
+       |            if buffered_input is not None:
+       |                buffered = len(buffered_input)
+       |        consumed = len(data) - buffered
+       |        if buffered > 0:
+       |            decoder.setstate(saved_state)
+       |            prefix = decoder.decode(data[:consumed], False) if consumed > 0 else ''
+       |            return (prefix, consumed, -1, -1, None)
+       |        return (text, len(data), -1, -1, None)
+       |    except UnicodeError as err:
+       |        decoder.setstate(saved_state)
+       |        prefix = decoder.decode(data[:err.start], False) if err.start > 0 else ''
+       |        return (prefix, err.start, err.start, err.end, getattr(err, 'reason', None))
+       |
+       |def _scpy_codec_encode_step(encoder, text, final_chunk):
+       |    saved_state = encoder.getstate()
+       |    try:
+       |        data = encoder.encode(text, final_chunk)
+       |        return (data, len(text), -1, -1, None)
+       |    except UnicodeError as err:
+       |        encoder.setstate(saved_state)
+       |        prefix = encoder.encode(text[:err.start], False) if err.start > 0 else b''
+       |        return (prefix, err.start, err.start, err.end, getattr(err, 'reason', None))
+       |
        |def _scpy_str_get_bytes(s, *encoding):
+       |    # When called with a Charset instance, route through the
+       |    # Charset.encode(String) method so every charset-specific
+       |    # quirk (e.g. UTF-16's big-endian BOM, custom replacement
+       |    # bytes) matches the Java-layer behaviour. The string-named
+       |    # and no-arg overloads stay on the direct `str.encode`
+       |    # fast path.
+       |    if encoding and encoding[0] is not None and (
+       |            hasattr(encoding[0], 'encode__Ljava_lang_String__Ljava_nio_ByteBuffer')
+       |    ):
+       |        bb = encoding[0].encode__Ljava_lang_String__Ljava_nio_ByteBuffer(s)
+       |        remaining = bb.remaining__I()
+       |        out = _scpy_new_array(_scpy_primitive_byte, remaining, 0)
+       |        if remaining > 0:
+       |            bb.get__AB__Ljava_nio_ByteBuffer(out)
+       |        return out
+       |    errors = 'strict'
        |    if not encoding:
-       |        enc = 'utf-8'
+       |        enc = 'UTF-8'
        |    else:
        |        candidate = encoding[0]
-       |        if not isinstance(candidate, str):
-       |            _scpy_unsupported('java.lang.String.getBytes(Charset) pending L8.1 charset port')
-       |        enc = candidate
+       |        if isinstance(candidate, str):
+       |            enc = candidate
+       |        elif candidate is None:
+       |            raise NullPointerException()
+       |        elif hasattr(candidate, 'name__Ljava_lang_String'):
+       |            enc = candidate.name__Ljava_lang_String()
+       |            errors = 'replace'
+       |        elif hasattr(candidate, 'name'):
+       |            enc = candidate.name()
+       |            errors = 'replace'
+       |        else:
+       |            raise UnsupportedCharsetException(_builtins.str(candidate))
        |    try:
-       |        raw = s.encode(enc)
+       |        raw = s.encode(enc, errors)
        |    except LookupError:
-       |        _scpy_unsupported('java.lang.String.getBytes unsupported charset: ' + enc)
+       |        raise UnsupportedCharsetException(enc)
        |    out = _scpy_new_array(_scpy_primitive_byte, len(raw), 0)
        |    for i, b in enumerate(raw):
        |        out[i] = b - 256 if b >= 128 else b
