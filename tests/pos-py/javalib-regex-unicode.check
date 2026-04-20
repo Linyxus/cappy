@@ -1,0 +1,4 @@
+posix:true
+unicode-prop:true
+case-insensitive-unicode:true
+java-whitespace:true

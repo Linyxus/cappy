@@ -861,6 +861,8 @@ private class PyCodeGen()(using genCtx: Context):
       pos: PyPosition
   ): PyTree =
     val name = sym.name.mangledString
+    def regexHelper(helperName: String, helperArgs: List[PyTree]): PyTree =
+      genStringRegexHelperCall(helperName, recv :: helperArgs, resultTpe, pos)
     def attr(attrName: String, callArgs: List[PyTree] = args): PyTree =
       PyApplyDynamic(
         PyAttrAccess(recv, attrName)(PyAnyType, pos),
@@ -912,13 +914,13 @@ private class PyCodeGen()(using genCtx: Context):
       case "isBlank"           => external("_scpy_str_is_blank", Nil)
       case "replace"           => external("_scpy_str_replace")
       case "replaceAll" =>
-        unsupported("java.lang.String.replaceAll pending L5.1 regex")
+        regexHelper("replaceAllRegex", args)
       case "replaceFirst" =>
-        unsupported("java.lang.String.replaceFirst pending L5.1 regex")
+        regexHelper("replaceFirstRegex", args)
       case "matches" =>
-        unsupported("java.lang.String.matches pending L5.1 regex")
+        regexHelper("matchesRegex", args)
       case "split" =>
-        unsupported("java.lang.String.split pending L5.1 regex")
+        regexHelper("splitRegex", args)
       case "regionMatches"     => external("_scpy_str_region_matches")
       case "repeat"            => external("_scpy_str_repeat")
       case "getBytes"          => external("_scpy_str_get_bytes")
@@ -955,6 +957,61 @@ private class PyCodeGen()(using genCtx: Context):
       PySimpleMethodName(sym.name.mangledString),
       sym.info.paramInfoss.flatten.map(encoding.encodeTypeRef),
       encoding.encodeTypeRef(sym.info.finalResultType)
+    )
+    PyApply(
+      PyApplyFlags.empty,
+      PyLoadModule(stringCompanionClassName)(pos),
+      stringCompanionClassName,
+      methodName,
+      args
+    )(resultTpe, pos)
+
+  private def genStringRegexHelperCall(
+      helperName: String,
+      args: List[PyTree],
+      resultTpe: PyType,
+      pos: PyPosition
+  ): PyTree =
+    val (paramRefs, returnRef) =
+      helperName match
+        case "matchesRegex" =>
+          (
+            List(
+              PyClassRef(PyClassName.StringClass),
+              PyClassRef(PyClassName.StringClass)
+            ),
+            PyPrimRef.BooleanRef
+          )
+        case "splitRegex" =>
+          val params =
+            if args.length == 2 then
+              List(
+                PyClassRef(PyClassName.StringClass),
+                PyClassRef(PyClassName.StringClass)
+              )
+            else
+              List(
+                PyClassRef(PyClassName.StringClass),
+                PyClassRef(PyClassName.StringClass),
+                PyPrimRef.IntRef
+              )
+          (params, PyArrayRef(PyClassRef(PyClassName.StringClass), 1))
+        case "replaceAllRegex" | "replaceFirstRegex" =>
+          (
+            List(
+              PyClassRef(PyClassName.StringClass),
+              PyClassRef(PyClassName.StringClass),
+              PyClassRef(PyClassName.StringClass)
+            ),
+            PyClassRef(PyClassName.StringClass)
+          )
+        case other =>
+          report.error(s"Internal error: unknown string regex helper '$other'")
+          (Nil, PyPrimRef.VoidRef)
+    val methodName = PyMethodName(
+      PySimpleMethodName(helperName),
+      paramRefs,
+      returnRef
     )
     PyApply(
       PyApplyFlags.empty,

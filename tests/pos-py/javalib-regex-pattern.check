@@ -1,0 +1,7 @@
+match:true
+flags:34
+flags-bridge:true
+split:a|b||c
+split-limit:a|b,c
+quote:true
+quote-inline:true

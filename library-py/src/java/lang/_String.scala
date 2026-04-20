@@ -10,6 +10,7 @@
 package java.lang
 
 import java.util.Comparator
+import java.util.regex.Pattern
 
 import scala.python.runtime.PyBuiltins
 
@@ -92,6 +93,21 @@ object _String:
   def format(format: String, args: Array[AnyRef]): String =
     val effectiveArgs = normalizeFormatArgs(args)
     new java.util.Formatter().format(format, effectiveArgs).toString()
+
+  def matchesRegex(receiver: String, regex: String): scala.Boolean =
+    Pattern.matches(regex, receiver)
+
+  def splitRegex(receiver: String, regex: String): Array[String] =
+    Pattern.compile(regex).split(receiver)
+
+  def splitRegex(receiver: String, regex: String, limit: Int): Array[String] =
+    Pattern.compile(regex).split(receiver, limit)
+
+  def replaceAllRegex(receiver: String, regex: String, replacement: String): String =
+    Pattern.compile(regex).matcher(receiver).replaceAll(replacement)
+
+  def replaceFirstRegex(receiver: String, regex: String, replacement: String): String =
+    Pattern.compile(regex).matcher(receiver).replaceFirst(replacement)
 
   private def normalizeFormatArgs(args: Array[AnyRef]): Array[AnyRef] = {
     if args.length != 1 || args(0) == null then
