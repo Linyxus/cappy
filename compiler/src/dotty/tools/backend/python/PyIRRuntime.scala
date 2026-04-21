@@ -346,6 +346,7 @@ object PyIRRuntime:
        |# This preamble contains compiler-intrinsic helpers plus thin stubs
        |# for Java-only types (the exception hierarchy, annotation base
        |# classes, etc.) that compiled Scala code extends.
+       |import decimal as _scpy_decimal
        |import struct
        |import builtins as _builtins
        |from typing import Any
@@ -925,6 +926,212 @@ object PyIRRuntime:
        |    if x is False:
        |        return "false"
        |    return _builtins.str(x)
+       |
+       |def _scpy_int_to_string_radix(value, radix):
+       |    if radix < 2 or radix > 36:
+       |        radix = 10
+       |    if value == 0:
+       |        return "0"
+       |    negative = value < 0
+       |    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+       |    value = -value if negative else value
+       |    out = []
+       |    while value:
+       |        value, rem = divmod(value, radix)
+       |        out.append(digits[rem])
+       |    if negative:
+       |        out.append("-")
+       |    out.reverse()
+       |    return "".join(out)
+       |
+       |def _scpy_int_to_signed_bytes(value):
+       |    if value == 0:
+       |        length = 1
+       |    elif value > 0:
+       |        length = (value.bit_length() + 8) // 8
+       |    else:
+       |        length = ((~value).bit_length() + 8) // 8
+       |    return value.to_bytes(length, "big", signed=True)
+       |
+       |def _scpy_int_from_signed_bytes(data):
+       |    return _builtins.int.from_bytes(_builtins.bytes(data), "big", signed=True)
+       |
+       |def _scpy_int_from_unsigned_bytes(data):
+       |    return _builtins.int.from_bytes(_builtins.bytes(data), "big", signed=False)
+       |
+       |def _scpy_int_trunc_div(a, b):
+       |    if b == 0:
+       |        raise ZeroDivisionError()
+       |    quot = abs(a) // abs(b)
+       |    return -quot if (a < 0) ^ (b < 0) else quot
+       |
+       |def _scpy_int_signum(value):
+       |    if value > 0:
+       |        return 1
+       |    if value < 0:
+       |        return -1
+       |    return 0
+       |
+       |def _scpy_int_compare(a, b):
+       |    if a < b:
+       |        return -1
+       |    if a > b:
+       |        return 1
+       |    return 0
+       |
+       |def _scpy_int_bit_length(value):
+       |    if value < 0:
+       |        value = ~value
+       |    return value.bit_length()
+       |
+       |def _scpy_int_bit_count(value):
+       |    if value < 0:
+       |        value = ~value
+       |    return value.bit_count()
+       |
+       |def _scpy_int_lowest_set_bit(value):
+       |    if value == 0:
+       |        return -1
+       |    return (value & -value).bit_length() - 1
+       |
+       |def _scpy_int_test_bit(value, index):
+       |    if index < 0:
+       |        raise ValueError("negative bit index")
+       |    return ((value >> index) & 1) != 0
+       |
+       |def _scpy_int_to_double(value):
+       |    try:
+       |        return _builtins.float(value)
+       |    except OverflowError:
+       |        return _builtins.float("inf") if value > 0 else _builtins.float("-inf")
+       |
+       |def _scpy_decimal_plain_string(value):
+       |    sign, digits, exp = value.as_tuple()
+       |    sign_str = "-" if sign else ""
+       |    digits_str = "".join(_builtins.str(d) for d in digits) or "0"
+       |    if all(d == 0 for d in digits):
+       |        if exp >= 0:
+       |            return sign_str + "0"
+       |        return sign_str + "0." + ("0" * (-exp))
+       |    if exp >= 0:
+       |        return sign_str + digits_str + ("0" * exp)
+       |    point = len(digits) + exp
+       |    if point <= 0:
+       |        return sign_str + "0." + ("0" * (-point)) + digits_str
+       |    return sign_str + digits_str[:point] + "." + digits_str[point:]
+       |
+       |def _scpy_decimal_with_context(precision, rounding, thunk):
+       |    if precision <= 0:
+       |        try:
+       |            return thunk()
+       |        except _scpy_decimal.DecimalException as err:
+       |            raise ArithmeticException(_builtins.str(err))
+       |    ctx = _scpy_decimal.getcontext().copy()
+       |    ctx.prec = precision
+       |    if rounding == "ROUND_UNNECESSARY":
+       |        ctx.rounding = _scpy_decimal.ROUND_HALF_UP
+       |        ctx.traps[_scpy_decimal.Inexact] = True
+       |        ctx.traps[_scpy_decimal.Rounded] = True
+       |    else:
+       |        ctx.rounding = rounding
+       |    with _scpy_decimal.localcontext(ctx):
+       |        try:
+       |            return thunk()
+       |        except _scpy_decimal.DecimalException as err:
+       |            raise ArithmeticException(_builtins.str(err))
+       |
+       |def _scpy_decimal_unary_with_context(op, value, precision, rounding):
+       |    ctx = _scpy_decimal.getcontext().copy()
+       |    ctx.prec = 1 if precision <= 0 else precision
+       |    if rounding == "ROUND_UNNECESSARY":
+       |        ctx.rounding = _scpy_decimal.ROUND_HALF_UP
+       |        ctx.traps[_scpy_decimal.Inexact] = True
+       |        ctx.traps[_scpy_decimal.Rounded] = True
+       |    else:
+       |        ctx.rounding = rounding
+       |    with _scpy_decimal.localcontext(ctx):
+       |        try:
+       |            if op == "plus":
+       |                return +value
+       |            if op == "negate":
+       |                return -value
+       |            raise ValueError(f"unsupported decimal unary op: {op}")
+       |        except _scpy_decimal.DecimalException as err:
+       |            raise ArithmeticException(_builtins.str(err))
+       |
+       |def _scpy_decimal_binary_with_context(op, lhs, rhs, precision, rounding):
+       |    ctx = _scpy_decimal.getcontext().copy()
+       |    ctx.prec = 1 if precision <= 0 else precision
+       |    if rounding == "ROUND_UNNECESSARY":
+       |        ctx.rounding = _scpy_decimal.ROUND_HALF_UP
+       |        ctx.traps[_scpy_decimal.Inexact] = True
+       |        ctx.traps[_scpy_decimal.Rounded] = True
+       |    else:
+       |        ctx.rounding = rounding
+       |    with _scpy_decimal.localcontext(ctx):
+       |        try:
+       |            if op == "add":
+       |                return lhs + rhs
+       |            if op == "subtract":
+       |                return lhs - rhs
+       |            if op == "multiply":
+       |                return lhs * rhs
+       |            if op == "divide":
+       |                return lhs / rhs
+       |            if op == "divideToIntegral":
+       |                return lhs // rhs
+       |            if op == "remainder":
+       |                return lhs % rhs
+       |            if op == "pow":
+       |                return lhs ** rhs
+       |            raise ValueError(f"unsupported decimal binary op: {op}")
+       |        except _scpy_decimal.DecimalException as err:
+       |            raise ArithmeticException(_builtins.str(err))
+       |
+       |def _scpy_decimal_unscaled_and_scale(value):
+       |    sign, digits, exp = value.as_tuple()
+       |    coeff = 0
+       |    for digit in digits:
+       |        coeff = coeff * 10 + digit
+       |    if sign:
+       |        coeff = -coeff
+       |    return (coeff, -exp)
+       |
+       |def _scpy_decimal_precision(value):
+       |    return len(value.as_tuple().digits)
+       |
+       |def _scpy_decimal_quantize(value, scale, rounding):
+       |    exp = _scpy_decimal.Decimal(1).scaleb(-scale)
+       |    ctx = _scpy_decimal.getcontext().copy()
+       |    if rounding == "ROUND_UNNECESSARY":
+       |        ctx.rounding = _scpy_decimal.ROUND_HALF_UP
+       |        ctx.traps[_scpy_decimal.Inexact] = True
+       |        ctx.traps[_scpy_decimal.Rounded] = True
+       |    else:
+       |        ctx.rounding = rounding
+       |    with _scpy_decimal.localcontext(ctx):
+       |        try:
+       |            return value.quantize(exp)
+       |        except _scpy_decimal.DecimalException as err:
+       |            raise ArithmeticException(_builtins.str(err))
+       |
+       |def _scpy_decimal_to_pyint(value):
+       |    return _builtins.int(value)
+       |
+       |def _scpy_decimal_compare(lhs, rhs):
+       |    if lhs < rhs:
+       |        return -1
+       |    if lhs > rhs:
+       |        return 1
+       |    return 0
+       |
+       |def _scpy_decimal_signum(value):
+       |    if value.is_zero():
+       |        return 0
+       |    return -1 if value < 0 else 1
+       |
+       |def _scpy_decimal_to_double(value):
+       |    return _builtins.float(value)
        |
        |def _scpy_identity_hash_code(obj):
        |    if obj is None:

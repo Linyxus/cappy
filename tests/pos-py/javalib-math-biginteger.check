@@ -1,0 +1,9 @@
+arith:12345678aaaaaa9aaaaa:123456788acf13479be0:121fa00ad77d27c28f5bc1e1e494d39:124924924:91a77e44c11
+bitwise:2468acf13579bde2468a0:91a2b3c4d5e6f7891:false:123456789abcdef123c5:39:77
+modular:1:1969:21
+bytes:0,-128,1:-1,0,1:8000
+radix:ff:42:dzyx0571as9nepx
+primality:true:false:101
+exact:123456789:yes
+compare:false:true:0
+equals:true:false

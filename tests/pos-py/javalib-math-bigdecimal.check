@@ -1,0 +1,8 @@
+arith:124.0000:122.9000:67.897500
+divide-rounding:0.33:0.33:-0.34:-0.33:yes
+scale:1.23:1.24:1.2E+3
+tostring:1E+6:1000000:12.345E+9
+unscaled:1234500:4
+context:1.234568E+8:7
+exact:12:yes
+quotrem:3:1.5

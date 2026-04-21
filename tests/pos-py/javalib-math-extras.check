@@ -1,0 +1,13 @@
+valueof-cache:true:true:true:false
+mathcontext-equals:true:true:true
+double-sanity:yes:yes
+equals-noninteger:false:false
+negative-radix:-ff:-1010:-16
+zero-bytes:1:0
+gcd-edge:42:6
+primality-large:true:false
+unary:12.345:12.345:0.001:-1
+move:123:0.00123:12.3
+bd-equals:false:true:0
+exact-divide:yes:0.25
+context-divide:0.3333333
