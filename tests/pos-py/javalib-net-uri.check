@@ -1,0 +1,9 @@
+parse:https:user:pass:example.com:8042:/a/b:x=1:frag
+authority:user:pass@example.com:8042:user:pass@example.com:8042
+parts:https://user%20name@example.com:8042/a%20b?q=1%202#frag%20ment
+resolve:https://example.com/a/d?x=1#f
+relativize:c/d
+normalize:https://example.com/a/c/
+toascii:https://example.com/Gr%C3%B6%C3%9Fe
+bad-space:Illegal character
+bad-escape:Malformed escape pair:20

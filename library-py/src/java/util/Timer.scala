@@ -11,13 +11,19 @@ class Timer() {
 
   def this(name: String, isDaemon: Boolean) = this()
 
-  private def acquire(task: TimerTask): Unit = {
-    if canceled then
-      throw new IllegalStateException("Timer already cancelled.")
-    else if task.owner != null || task.canceled then
-      throw new IllegalStateException("TimerTask already scheduled or canceled.")
-    task.owner = this
-  }
+  private[util] def isCanceled(): Boolean =
+    this.synchronized(canceled)
+
+  private def acquire(task: TimerTask): Unit =
+    this.synchronized {
+      task.synchronized {
+        if canceled then
+          throw new IllegalStateException("Timer already cancelled.")
+        else if task.owner != null || task.canceled then
+          throw new IllegalStateException("TimerTask already scheduled or canceled.")
+        task.owner = this
+      }
+    }
 
   private def checkDelay(delay: Long): Unit = {
     if delay < 0 || delay + System.currentTimeMillis() < 0 then
@@ -43,19 +49,19 @@ class Timer() {
   }
 
   private def schedulePeriodicStep(task: TimerTask, period: Long): Unit = {
-    if !task.canceled && !canceled then
+    if !task.isCanceled() && !isCanceled() then
       val started = System.currentTimeMillis()
       task.doRun()
-      if !task.canceled && !canceled then
+      if !task.isCanceled() && !isCanceled() then
         val elapsed = System.currentTimeMillis() - started
         val nextDelay = Math.max(0L, period - elapsed)
         task.timeout(nextDelay, new FixedDelayStep(task, period))
   }
 
   private def scheduleFixedRateStep(task: TimerTask, period: Long, scheduledTime: Long): Unit = {
-    if !task.canceled && !canceled then
+    if !task.isCanceled() && !isCanceled() then
       task.doRun()
-      if !task.canceled && !canceled then
+      if !task.isCanceled() && !isCanceled() then
         val nextScheduled = scheduledTime + period
         val nextDelay = Math.max(0L, nextScheduled - System.currentTimeMillis())
         task.timeout(nextDelay, new FixedRateStep(task, period, nextScheduled))
@@ -101,13 +107,15 @@ class Timer() {
   }
 
   def cancel(): Unit =
-    canceled = true
+    this.synchronized {
+      canceled = true
+    }
 
   def purge(): Int = 0
 
   private final class RunOnce(task: TimerTask):
     def `__call__`(): Unit =
-      task.scheduledOnceAndStarted = true
+      task.markScheduledOnceStarted()
       task.doRun()
 
   private final class FixedDelayStep(task: TimerTask, period: Long):

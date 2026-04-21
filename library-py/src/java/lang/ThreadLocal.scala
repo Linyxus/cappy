@@ -12,23 +12,50 @@
 
 package java.lang
 
-import scala.compiletime.uninitialized
+import java.util.function.Supplier
+import scala.python.runtime.PyThreading
 
 class ThreadLocal[T]:
-  private var hasValue: scala.Boolean = false
-  private var v: T = uninitialized
+  private val localState = PyThreading.newLocal()
 
   protected def initialValue(): T = null.asInstanceOf[T]
 
   def get(): T =
-    if !hasValue then
-      set(initialValue())
-    v
+    if !hasCurrentValue() then
+      val initial = initialValue()
+      installValue(initial)
+      initial
+    else
+      currentValue()
 
   def set(o: T): Unit =
-    v = o
-    hasValue = true
+    installValue(o)
 
   def remove(): Unit =
-    hasValue = false
-    v = null.asInstanceOf[T]
+    if localState.hasAttr(ThreadLocal.PresentAttr) then
+      localState.delAttr(ThreadLocal.PresentAttr)
+    if localState.hasAttr(ThreadLocal.ValueAttr) then
+      localState.delAttr(ThreadLocal.ValueAttr)
+
+  private[java] final def hasCurrentValue(): scala.Boolean =
+    localState.hasAttr(ThreadLocal.PresentAttr)
+
+  private[java] final def snapshotCurrentValue(): Any =
+    currentValue().asInstanceOf[Any]
+
+  private[java] final def installValue(value: Any): Unit =
+    localState.setAttr(ThreadLocal.ValueAttr, value)
+    localState.setAttr(ThreadLocal.PresentAttr, true)
+
+  private def currentValue(): T =
+    localState.getAttr(ThreadLocal.ValueAttr).asInstanceOf[T]
+
+object ThreadLocal:
+  private final val PresentAttr = "present"
+  private final val ValueAttr = "value"
+
+  def withInitial[T](supplier: Supplier[? <: T]): ThreadLocal[T] =
+    val nnSupplier = ThrowablesSupport.requireNonNull(supplier)
+    new ThreadLocal[T]:
+      override protected def initialValue(): T =
+        nnSupplier.get()

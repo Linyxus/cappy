@@ -1,0 +1,5 @@
+encode-utf8:hello+world%2F%7E*
+decode-utf8:hello world/~*
+encode-unicode:Gr%C3%B6%C3%9Fe+Z%C3%BCrich
+decode-unicode:Größe Zürich
+bad-charset:nope-charset
