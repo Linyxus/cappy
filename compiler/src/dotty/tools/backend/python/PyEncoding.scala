@@ -65,10 +65,7 @@ class PyEncoding(using Context):
     "$bang$eq"   -> "__ne__",
     "$less$eq"   -> "__le__",
     "$greater$eq" -> "__ge__",
-    "$hash$hash" -> "__hash__",
-    "toString"   -> "__str__",
-    "hashCode"   -> "__hash__",
-    "equals"     -> "__eq__"
+    "$hash$hash" -> "__hash__"
   )
 
   def encodeMethodName(sym: Symbol): PyMethodName =
@@ -83,12 +80,26 @@ class PyEncoding(using Context):
       )
     else
       val rawName = sym.name.mangledString
-      val mapped = operatorMap.getOrElse(rawName, sanitizeName(rawName))
+      val mapped =
+        specialMethodNameOf(sym, rawName)
+          .orElse(operatorMap.get(rawName))
+          .getOrElse(sanitizeName(rawName))
       PyMethodName(
         PySimpleMethodName(mapped),
         paramTypeRefsOf(sym),
         encodeTypeRef(sym.info.finalResultType)
       )
+
+  private def specialMethodNameOf(sym: Symbol, rawName: String): Option[String] =
+    rawName match
+      case "toString" if sym.info.paramInfoss.flatten.isEmpty =>
+        Some("__str__")
+      case "hashCode" if sym.info.paramInfoss.flatten.isEmpty =>
+        Some("__hash__")
+      case "equals" if sym.info.paramInfoss.flatten.length == 1 =>
+        Some("__eq__")
+      case _ =>
+        None
 
   private def paramTypeRefsOf(sym: Symbol): List[PyTypeRef] =
     sym.info.paramInfoss.flatten.map(encodeTypeRef)
