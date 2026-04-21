@@ -381,6 +381,9 @@ private class PyCodeGen()(using genCtx: Context):
         val exprTree  = genStat(expr)
         PyBlock(statTrees, exprTree)(pos)
 
+      case app: Apply if isSynchronizedPrimitive(app) =>
+        genSynchronizedStat(app)
+
       case app: Apply =>
         genApply(app)
 
@@ -527,6 +530,9 @@ private class PyCodeGen()(using genCtx: Context):
         PyThis()(encoding.encodeType(tree.tpe), pos)
       case Typed(inner, _) =>
         genExpr(inner)
+
+      case app: Apply if isSynchronizedPrimitive(app) =>
+        genSynchronizedExpr(app)
 
       case app: Apply =>
         genApply(app)
@@ -1062,11 +1068,109 @@ private class PyCodeGen()(using genCtx: Context):
     else if isArrayOp(code) then
       genArrayOp(app, receiver, args, code, pos)
     else if code == SYNCHRONIZED then
-      genExpr(args.head)
+      genNormalApply(app, pos)
     else if isCoercion(code) then
       genCoercion(receiver, code, pos)
     else
       genNormalApply(app, pos)
+
+  private def isSynchronizedPrimitive(app: Apply): Boolean =
+    if primitives.isPrimitive(app) then
+      val receiver = qualifierOf(app.fun)
+      primitives.getPrimitive(app, receiver.tpe) == SYNCHRONIZED
+    else
+      false
+
+  private def genSynchronizedStat(app: Apply): PyTree =
+    val pos = posOf(app)
+    val Apply(fun, List(body)) = app: @unchecked
+    val receiver = qualifierOf(fun)
+    val (receiverLocals, receiverExpr) = genExprWithPending(receiver)
+    val monitorName = freshSynchronizedMonitorName()
+    val monitorVar = PyVarRef(monitorName)(PyAnyType, pos)
+    val monitorDef = PyVarDef(
+      name         = monitorName,
+      originalName = PyOriginalName.NoOriginalName,
+      vtpe         = PyAnyType,
+      mutable      = false,
+      rhs          = PyApplyExternal(
+        PyExternalName("_scpy_monitor_for"),
+        List(receiverExpr)
+      )(PyAnyType, pos)
+    )(pos)
+    val acquire = PyApplyDynamic(
+      PyAttrAccess(monitorVar, "acquire")(PyAnyType, pos),
+      Nil,
+      Nil
+    )(PyAnyType, pos)
+    val release = PyApplyDynamic(
+      PyAttrAccess(monitorVar, "release")(PyAnyType, pos),
+      Nil,
+      Nil
+    )(PyAnyType, pos)
+    val syncStmt = PyTryFinally(genStat(body), release)(pos)
+    val prefix = receiverLocals :+ monitorDef :+ acquire
+    PyBlock(prefix, syncStmt)(pos)
+
+  private def genSynchronizedExpr(app: Apply): PyTree =
+    val pos = posOf(app)
+    val Apply(fun, List(body)) = app: @unchecked
+    val receiver = qualifierOf(fun)
+    val (receiverLocals, receiverExpr) = genExprWithPending(receiver)
+    val monitorName = freshSynchronizedMonitorName()
+    val monitorVar = PyVarRef(monitorName)(PyAnyType, pos)
+    val monitorDef = PyVarDef(
+      name         = monitorName,
+      originalName = PyOriginalName.NoOriginalName,
+      vtpe         = PyAnyType,
+      mutable      = false,
+      rhs          = PyApplyExternal(
+        PyExternalName("_scpy_monitor_for"),
+        List(receiverExpr)
+      )(PyAnyType, pos)
+    )(pos)
+    val acquire = PyApplyDynamic(
+      PyAttrAccess(monitorVar, "acquire")(PyAnyType, pos),
+      Nil,
+      Nil
+    )(PyAnyType, pos)
+    val release = PyApplyDynamic(
+      PyAttrAccess(monitorVar, "release")(PyAnyType, pos),
+      Nil,
+      Nil
+    )(PyAnyType, pos)
+    val prefix = receiverLocals :+ monitorDef :+ acquire
+    val syncBody: PyTree =
+      if encoding.encodeType(app.tpe) == PyVoidType then
+        genStat(body)
+      else
+        val resultTpe = encoding.encodeType(app.tpe)
+        val resultName = freshSynchronizedResultName()
+        val resultVar = PyVarRef(resultName)(resultTpe, pos)
+        val resultDef = PyVarDef(
+          name         = resultName,
+          originalName = PyOriginalName.NoOriginalName,
+          vtpe         = resultTpe,
+          mutable      = true,
+          rhs          = defaultValueFor(resultTpe, pos)
+        )(pos)
+        pendingLocalDefs += resultDef
+        pendingLocalDefs += PyBlock(
+          prefix,
+          PyTryFinally(genAssignFromExpr(resultVar, body, pos), release)(pos)
+        )(pos)
+        return resultVar
+
+    pendingLocalDefs += PyBlock(prefix, PyTryFinally(syncBody, release)(pos))(pos)
+    PyUnitLit()(pos)
+
+  private def genExprWithPending(tree: Tree): (List[PyTree], PyTree) =
+    val saved = pendingLocalDefs
+    pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
+    val expr = genExpr(tree)
+    val locals = pendingLocalDefs.toList
+    pendingLocalDefs = saved
+    (locals, expr)
 
   private def genSimpleOp(
       receiver: Tree, args: List[Tree], code: Int, pos: PyPosition
@@ -1389,6 +1493,16 @@ private class PyCodeGen()(using genCtx: Context):
   private def freshTryResultName(): PyLocalName =
     tryResultCounter += 1
     PyLocalName(s"_scpy_try_result_$tryResultCounter")
+
+  private var synchronizedMonitorCounter = 0
+  private def freshSynchronizedMonitorName(): PyLocalName =
+    synchronizedMonitorCounter += 1
+    PyLocalName(s"_scpy_monitor_$synchronizedMonitorCounter")
+
+  private var synchronizedResultCounter = 0
+  private def freshSynchronizedResultName(): PyLocalName =
+    synchronizedResultCounter += 1
+    PyLocalName(s"_scpy_sync_result_$synchronizedResultCounter")
 
   /** Lower an expression-position `Labeled` to a temp-var assign +
    *  statement-position `PyLabeled`.
@@ -1764,6 +1878,7 @@ private class PyCodeGen()(using genCtx: Context):
 
   private def qualifierOf(tree: Tree): Tree = tree match
     case Select(qualifier, _) => qualifier
+    case TypeApply(inner, _)  => qualifierOf(inner)
     case _                    => EmptyTree
 
   private def genExternRef(binding: ExternBinding, tp: Type, pos: PyPosition): PyExternalRef =

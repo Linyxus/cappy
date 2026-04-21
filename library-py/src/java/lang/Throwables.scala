@@ -47,6 +47,16 @@ private[java] object ThrowablesSupport:
     if value == null then throw new NullPointerException()
     value.asInstanceOf[T]
 
+  // The runtime-preamble `_scpy_require_monitor` delegates here when
+  // the current thread does not own the monitor. Keeping the throw on
+  // the Scala side makes `IllegalMonitorStateException` linker-
+  // reachable wherever `ThrowablesSupport` is (i.e., everywhere — via
+  // `requireNonNull` which every ported class uses). Fixes the
+  // `javalib-object-wait-fresh.scala` regression where
+  // `IllegalMonitorStateException` was undefined at the raise site.
+  def throwIllegalMonitorState(): Unit =
+    throw new IllegalMonitorStateException()
+
   def copyThrowableArray(values: Array[Throwable] | Null): Array[Throwable] =
     if values == null then
       new Array[Throwable](0)

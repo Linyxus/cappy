@@ -293,7 +293,8 @@ object PyIREmitter:
       // `AutoCloseable + Closeable` as direct parents, but Python needs just
       // `Closeable` because it already inherits `AutoCloseable`).
       val redundant = rawBases.flatMap(other => transitiveAncestors(other) - other).toSet
-      rawBases.filterNot(redundant.contains).map(classIdentifier)
+      val bases = rawBases.filterNot(redundant.contains).map(classIdentifier)
+      if bases.isEmpty then List("_scpy_Object") else bases
 
     /** True if `cls` is `java.lang.Throwable` or transitively extends it,
      *  following both in-bundle super/interface links and the

@@ -13,38 +13,55 @@ abstract class TimerTask {
 
   def run(): Unit
 
-  def cancel(): Boolean = {
-    if handle != null then
-      handle.cancel()
+  def cancel(): Boolean =
+    this.synchronized {
+      val currentHandle = handle
       handle = null
+      if currentHandle != null then
+        currentHandle.cancel()
 
-    if canceled || owner == null || scheduledOnceAndStarted then
-      canceled = true
-      false
-    else
-      canceled = true
-      true
-  }
+      if canceled || owner == null || scheduledOnceAndStarted then
+        canceled = true
+        false
+      else
+        canceled = true
+        true
+    }
 
   def scheduledExecutionTime(): Long =
-    lastScheduled
+    this.synchronized(lastScheduled)
 
-  private[util] def timeout(delay: Long, body: Object): Unit = {
-    if !canceled then
-      val timer = scala.python.runtime.PyThreading.timer(delay, body)
-      handle = timer
-      timer.start()
-  }
+  private[util] def isCanceled(): Boolean =
+    this.synchronized(canceled)
 
-  private[util] def doRun(): Unit = {
-    val currentOwner = owner.asInstanceOf[Timer]
-    if !canceled && !currentOwner.canceled then
-      lastScheduled = System.currentTimeMillis()
+  private[util] def markScheduledOnceStarted(): Unit =
+    this.synchronized {
+      scheduledOnceAndStarted = true
+    }
+
+  private[util] def timeout(delay: Long, body: Object): Unit =
+    this.synchronized {
+      if !canceled then
+        val timer = scala.python.runtime.PyThreading.timer(delay, body)
+        handle = timer
+        timer.start()
+    }
+
+  private[util] def doRun(): Unit =
+    val currentOwner =
+      this.synchronized {
+        owner.asInstanceOf[Timer]
+      }
+    if !isCanceled() && currentOwner != null && !currentOwner.isCanceled() then
+      this.synchronized {
+        lastScheduled = System.currentTimeMillis()
+      }
       try
         run()
       catch
         case t: Throwable =>
-          canceled = true
+          this.synchronized {
+            canceled = true
+          }
           throw t
-  }
 }

@@ -12,6 +12,8 @@ class CancellationException(message: String | Null = null) extends IllegalStateE
 
 class TimeoutException(message: String | Null = null) extends Exception(message)
 
+class BrokenBarrierException(message: String | Null = null) extends Exception(message)
+
 class RejectedExecutionException(primary: Any = null, cause: Throwable | Null = null)
     extends RuntimeException(
       ThrowablesSupport.throwableMessage(primary, cause),

@@ -1,0 +1,8 @@
+atomicboolean:true:true:false
+atomicint:15:30:30:3
+atomiclong:107:112:112:9
+atomicref:a!:a!b:true:done
+atomiclongarray:1:true:5:9
+atomicrefarray:x:true:z:done
+atomicint-stress:80000
+longadder:80000:80000:0

@@ -1,0 +1,6 @@
+collection:2:true
+set:2:true
+map:2:2:2:2
+list-stress:1000:499500:true:true
+list-iter:1000:1000:false
+list-after:1001:true

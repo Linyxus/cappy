@@ -347,15 +347,118 @@ object PyIRRuntime:
        |# for Java-only types (the exception hierarchy, annotation base
        |# classes, etc.) that compiled Scala code extends.
        |import decimal as _scpy_decimal
+       |import threading as _scpy_threading
        |import struct
+       |import weakref as _scpy_weakref
        |import builtins as _builtins
        |from typing import Any
        |
        |_scpy_len = _builtins.len
+       |_scpy_monitor_bootstrap = _scpy_threading.RLock()
+       |_scpy_monitor_table = {}
+       |_scpy_condition_table = {}
+       |
+       |def _scpy_lookup_runtime_state(obj, attr_name, table):
+       |    value = getattr(obj, attr_name, None)
+       |    if value is not None:
+       |        return value
+       |    return table.get(id(obj))
+       |
+       |def _scpy_attach_runtime_state(obj, attr_name, table, value):
+       |    try:
+       |        setattr(obj, attr_name, value)
+       |    except (AttributeError, TypeError):
+       |        table[id(obj)] = value
+       |        try:
+       |            _scpy_weakref.finalize(obj, table.pop, id(obj), None)
+       |        except TypeError:
+       |            pass
+       |    return value
+       |
+       |def _scpy_monitor_for(obj):
+       |    monitor = _scpy_lookup_runtime_state(obj, "__scpy_monitor__", _scpy_monitor_table)
+       |    if monitor is not None:
+       |        return monitor
+       |    with _scpy_monitor_bootstrap:
+       |        monitor = _scpy_lookup_runtime_state(obj, "__scpy_monitor__", _scpy_monitor_table)
+       |        if monitor is not None:
+       |            return monitor
+       |        return _scpy_attach_runtime_state(
+       |            obj,
+       |            "__scpy_monitor__",
+       |            _scpy_monitor_table,
+       |            _scpy_threading.RLock(),
+       |        )
+       |
+       |def _scpy_condition_for(obj):
+       |    condition = _scpy_lookup_runtime_state(obj, "__scpy_condition__", _scpy_condition_table)
+       |    if condition is not None:
+       |        return condition
+       |    with _scpy_monitor_bootstrap:
+       |        condition = _scpy_lookup_runtime_state(obj, "__scpy_condition__", _scpy_condition_table)
+       |        if condition is not None:
+       |            return condition
+       |        return _scpy_attach_runtime_state(
+       |            obj,
+       |            "__scpy_condition__",
+       |            _scpy_condition_table,
+       |            _scpy_threading.Condition(_scpy_monitor_for(obj)),
+       |        )
+       |
+       |def _scpy_monitor_owned(monitor):
+       |    is_owned = getattr(monitor, "_is_owned", None)
+       |    if is_owned is None:
+       |        return False
+       |    return is_owned()
+       |
+       |def _scpy_require_monitor(obj):
+       |    monitor = _scpy_monitor_for(obj)
+       |    if not _scpy_monitor_owned(monitor):
+       |        # Route the throw through the Scala-side helper so the
+       |        # linker keeps `IllegalMonitorStateException` reachable
+       |        # wherever `ThrowablesSupport` is (i.e., everywhere via
+       |        # `requireNonNull`). Raising the class by bare Python
+       |        # name here would hit `NameError` in tests that don't
+       |        # otherwise reference `IllegalMonitorStateException`.
+       |        _scpy_mod_java_lang_ThrowablesSupport__.throwIllegalMonitorState__V()
+       |    return monitor
+       |
+       |def _scpy_object_wait(obj, timeout_seconds=None):
+       |    _scpy_require_monitor(obj)
+       |    _scpy_condition_for(obj).wait(timeout_seconds)
+       |    return None
+       |
+       |def _scpy_object_notify(obj):
+       |    _scpy_require_monitor(obj)
+       |    _scpy_condition_for(obj).notify(1)
+       |    return None
+       |
+       |def _scpy_object_notify_all(obj):
+       |    _scpy_require_monitor(obj)
+       |    _scpy_condition_for(obj).notify_all()
+       |    return None
        |
        |class _scpy_Object:
        |    def getClass__Ljava_lang_Class(self):
        |        return _scpy_class_of_instance(self)
+       |
+       |    def wait__V(self):
+       |        return _scpy_object_wait(self)
+       |
+       |    def wait__J__V(self, millis):
+       |        timeout = None if millis == 0 else millis / 1000.0
+       |        return _scpy_object_wait(self, timeout)
+       |
+       |    def wait__J_I__V(self, millis, nanos):
+       |        total_nanos = millis * 1000000 + nanos
+       |        timeout = None if total_nanos == 0 else total_nanos / 1000000000.0
+       |        return _scpy_object_wait(self, timeout)
+       |
+       |    def notify__V(self):
+       |        return _scpy_object_notify(self)
+       |
+       |    def notifyAll__V(self):
+       |        return _scpy_object_notify_all(self)
        |
        |_scpy_class_registry = {}
        |_scpy_unset = object()
