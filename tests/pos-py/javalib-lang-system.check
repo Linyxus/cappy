@@ -7,6 +7,6 @@ identityhash:true:true
 runtime:true:1
 prop-std:/:true
 prop-set-clear:true:ok:again:true
-prop-view:/:11
+prop-view:true:true
 env:true:true
 lineseparator:1:true

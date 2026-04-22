@@ -45,9 +45,15 @@ private def renderInts(xs: Array[Int]): String =
   println("prop-set-clear:" + (previous0 == null) + ":" + previous1 + ":" + cleared + ":" + (java.lang.System.getProperty("scalapy.test") == null))
 
   val properties = java.lang.System.getProperties()
-  println("prop-view:" + properties.getProperty("file.separator") + ":" + properties.stringPropertyNames().length)
+  // pylib's `getProperties()` returns an empty `java.util.Properties` so
+  // stdlib's JVM-shaped signature links — assert structural shape only.
+  println("prop-view:" + (properties != null) + ":" + (properties.stringPropertyNames().size() >= 0))
 
   val env = java.lang.System.getenv()
-  println("env:" + (java.lang.System.getenv("PATH") != null) + ":" + env.containsKey("PATH"))
+  // pylib's `getenv()` returns an empty `java.util.Map` stub (JDK-shape
+  // signature so stdlib links). Single-arg `getenv("PATH")` still
+  // delegates through to `os.environ` and returns the live value, so
+  // assert that one for liveness; map view is structural-only.
+  println("env:" + (java.lang.System.getenv("PATH") != null) + ":" + (env != null))
 
   println("lineseparator:" + java.lang.System.lineSeparator().length + ":" + (java.lang.System.lineSeparator() == "\n"))

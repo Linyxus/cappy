@@ -71,10 +71,25 @@ private[lang] object StackTrace:
    *  `fillInStackTrace` method are not misidentified as internal.
    */
   private def isCaptureScaffold(owner: String, methodName: String): scala.Boolean =
+    // Match the Python class identifiers the emitter generates. The
+    // FQN-mangling change (see `PyIREmitter.classIdentifier`) makes
+    // user-emitted classes use mangled FQNs like `java_lang_StackTrace_`,
+    // while a few entries in `PyIREmitter.PythonReservedShortNames`
+    // remap names that would clash with Python builtins —
+    // `java.lang.Throwable -> _scpy_java_Throwable`, etc. The Python
+    // qualname surfaces whichever identifier was used at definition
+    // time, so the matcher accepts all known shapes.
+    val capturePyError = methodName == "capturePyError"
+    val getCurrentStackTrace = methodName == "getCurrentStackTrace"
+    val fillInStackTrace = methodName == "fillInStackTrace"
     (owner == "PyStackTrace_" && methodName == "capture") ||
-      (owner == "StackTrace_" && methodName == "capturePyError") ||
-      (owner == "StackTrace_" && methodName == "getCurrentStackTrace") ||
-      (owner == "Throwable" && methodName == "fillInStackTrace")
+      (owner == "scala_python_runtime_PyStackTrace_" && methodName == "capture") ||
+      ((owner == "StackTrace_" || owner == "java_lang_StackTrace_")
+        && (capturePyError || getCurrentStackTrace)) ||
+      ((owner == "Throwable"
+          || owner == "java_lang_Throwable"
+          || owner == "_scpy_java_Throwable")
+        && fillInStackTrace)
 
   def getCurrentStackTrace(): Array[StackTraceElement] =
     extract(PyStackTrace.capture())

@@ -676,6 +676,14 @@ private class PyCodeGen()(using genCtx: Context):
               PyLoadModule(stringCompanionClassName)(pos),
               PyFieldName(stringCompanionClassName, PySimpleFieldName(sym.name.mangledString))
             )(encoding.encodeType(tree.tpe), pos)
+          else if isSystemStreamStaticFieldRef(sym) then
+            // The qualifier is whatever resolved to `java.lang.System` —
+            // for stdlib (typed against the JVM JDK) it's the class
+            // symbol itself, not a Scala module, so the
+            // `isStaticOwnerRef` guard would falsely reject it. The
+            // owner+name check in `isSystemStreamStaticFieldRef` is
+            // already specific enough that no user code can hit it.
+            genStaticFieldGetter(sym, tree.tpe, pos)
           else if sym.is(Module) then
             if isStringCompanionModule(sym) then PyLoadModule(stringCompanionClassName)(pos)
             else PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
@@ -694,6 +702,8 @@ private class PyCodeGen()(using genCtx: Context):
             if sym.is(Module) then
               if isStringCompanionModule(sym) then PyLoadModule(stringCompanionClassName)(pos)
               else PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
+            else if isSystemStreamStaticFieldRef(sym) then
+              genStaticFieldGetter(sym, tree.tpe, pos)
             else if sym.owner.is(ModuleClass) && !sym.is(Method) && !sym.is(Module)
                 && !sym.is(Package)
             then
@@ -1237,6 +1247,51 @@ private class PyCodeGen()(using genCtx: Context):
 
   private def isStringStaticField(sym: Symbol): Boolean =
     (sym.owner == defn.StringClass || sym.owner == defn.StringModule) && !sym.is(Method)
+
+  /** Stdlib code is typechecked against the JDK shape of `java.lang.System`,
+   *  where `out` / `err` / `in` are static fields. In pylib they are backed
+   *  by live getters, so rewrite just those field reads to zero-arg static
+   *  getter calls on the synthetic `java.lang.System` forwarder.
+   *
+   *  Owner check covers both `defn.SystemClass` (the JVM Java class) and
+   *  its synthetic linked module class (`SystemClass.linkedClass.moduleClass`)
+   *  — Scala 3 creates the latter as the term-side handle for static
+   *  members of Java classes, so `System.out` references can land on
+   *  either depending on access shape. */
+  private def isSystemStreamStaticFieldRef(sym: Symbol): Boolean =
+    val ownerOk =
+      sym.exists && {
+        val owner = sym.owner
+        owner == defn.SystemClass ||
+          (defn.SystemModule.exists && owner == defn.SystemModule.moduleClass)
+      }
+    ownerOk &&
+      !sym.is(Method) &&
+      !sym.is(Module) &&
+      !sym.is(Package) &&
+      (sym.name.mangledString == "out" ||
+        sym.name.mangledString == "err" ||
+        sym.name.mangledString == "in")
+
+  private def isStaticOwnerRef(tree: Tree): Boolean = tree match
+    case Ident(_) =>
+      tree.symbol.is(Module) && tree.symbol.moduleClass.isStaticOwner
+    case Select(qual, _) =>
+      isStaticOwnerRef(qual) && tree.symbol.is(Module) && tree.symbol.moduleClass.isStaticOwner
+    case _ =>
+      false
+
+  private def genStaticFieldGetter(sym: Symbol, resultTp: Type, pos: PyPosition): PyTree =
+    PyApplyStatic(
+      PyApplyFlags.empty,
+      encoding.encodeClassName(sym.owner),
+      PyMethodName(
+        PySimpleMethodName(encoding.encodeFieldName(sym).simple.name),
+        Nil,
+        encoding.encodeTypeRef(resultTp)
+      ),
+      Nil
+    )(encoding.encodeType(resultTp), pos)
 
   // --- TypeApply (isInstanceOf / asInstanceOf) -----------------------
 

@@ -33,7 +33,7 @@ class ScalaPyCompilationTests:
     implicit val testGroup: TestGroup = TestGroup("negScalaPy")
     cleanScalaPyOutput(testGroup)
     aggregateTests(
-      compileFilesInDir("tests/neg-py", scalaPyOptions),
+      compileFilesInDir("tests/neg-py", scalaPyNegOptions),
     ).checkExpectedErrors()
 
 object ScalaPyCompilationTests extends ParallelTesting:

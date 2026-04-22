@@ -849,6 +849,12 @@ object PyIRRuntime:
        |def _scpy_class_of_instance(value):
        |    if value is None:
        |        raise NullPointerException()
+       |    # `_scpy_LazyModule` is a transparent proxy — unwrap to the
+       |    # actual module-class instance before reading its registered
+       |    # class. Without this, `_scpy_class_of_instance(lazyMod)`
+       |    # returns the LazyModule type and instanceof-checks fail.
+       |    if isinstance(value, _scpy_LazyModule):
+       |        value = value._scpy_ensure()
        |    if isinstance(value, _scpy_Array):
        |        return value._scpy_class
        |    py_cls = getattr(value.__class__, "_scpy_class", None)
@@ -1067,9 +1073,15 @@ object PyIRRuntime:
        |    def __str__(self):
        |        return "()"
        |
+       |# Stdlib accesses `BoxedUnit.UNIT` as a static field via
+       |# `LoadModule(BoxedUnit) + Select(UNIT)`. Bind the static field
+       |# on the class itself, then expose the same instance under the
+       |# emitter's `_scpy_mod_*_` naming convention so all callers
+       |# (LoadModule, ApplyStatic) hit it.
        |BoxedUnit.UNIT = BoxedUnit()
        |BoxedUnit.TYPE = _scpy_primitive_void
        |_scpy_mod_scala_runtime_BoxedUnit_ = BoxedUnit
+       |_scpy_mod_scala_runtime_BoxedUnit__ = BoxedUnit
        |
        |class _scpy_IntModule(_scpy_Object):
        |    def toChar__I__C(self, value):

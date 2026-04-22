@@ -94,6 +94,12 @@ object TestConfiguration {
     mkClasspath(List(Properties.scalaLibrary, Properties.scalaPylibPy, Properties.scalaLibraryPy))
   lazy val scalaPyOptions =
     defaultOptions.and("-scalapy").withClasspath(scalaPyClasspath).withRunClasspath(scalaPyClasspath)
+  /** Like `scalaPyOptions` but skips link-time bundling. Used by neg-py
+   *  so the test only counts typecheck-level errors and isn't perturbed
+   *  by stdlib link diagnostics (e.g. a fixture's transitive
+   *  reachability turning up an unresolved JDK reference). */
+  lazy val scalaPyNegOptions =
+    scalaPyOptions.and("-scpy-ir-only")
   val allowDeepSubtypes = defaultOptions `without` "-Yno-deep-subtypes"
   val allowDoubleBindings = defaultOptions `without` "-Yno-double-bindings"
   val picklingOptions = defaultOptions `and` (

@@ -1,6 +1,6 @@
 package java.lang
 
-import java.io.PrintStream
+import java.io.{InputStream, PrintStream}
 
 import scala.python.{PyAny, extern, name, native}
 import scala.python.runtime.{PyOs, PySys, PyTime}
@@ -34,7 +34,7 @@ object System:
     def containsKey(key: String): scala.Boolean =
       get(key) != null
 
-  private var inRef: Object | Null = null
+  private var inRef: InputStream | Null = null
   private var outRef = PrintStream.stdout()
   private var errRef = PrintStream.stderr()
   private val propertiesView = new _SystemProperties()
@@ -47,17 +47,18 @@ object System:
 
   // JDK exposes these as `public static final` fields on `class System`
   // (encoded `in_` because `in` is a Python keyword — see
-  // PyEncoding.sanitizeName). Stdlib code typechecked against the JDK
-  // emits `Select(System, in/out/err)` as a field access, so we expose
-  // them as `val` here. The static-field forwarder pass replicates them
-  // onto the synthetic `java.lang.System` class.
-  val in: Object | Null = inRef
+  // PyEncoding.sanitizeName). Stdlib code still types against that
+  // field shape, but GenPython rewrites those JVM-static field reads to
+  // zero-arg getter calls on the synthetic `java.lang.System` forwarder.
+  // Keeping these as defs means every `System.out`/`err`/`in` read sees
+  // the current mutable backing ref after `setOut`/`setErr`/`setIn`.
+  def in: InputStream | Null = inRef
 
-  val out: PrintStream = outRef
+  def out: PrintStream = outRef
 
-  val err: PrintStream = errRef
+  def err: PrintStream = errRef
 
-  def setIn(in: Object | Null): Unit =
+  def setIn(in: InputStream | Null): Unit =
     inRef = in
 
   def setOut(out: PrintStream): Unit =
@@ -140,24 +141,21 @@ object System:
       propertySize -= 1
       previous
 
-  // JDK shape: stdlib calls `System.getProperties()` expecting
-  // `java.util.Properties`. Empty stub — pos-py tests don't read sys
-  // props. Internal callers should use the `_SystemProperties` view
-  // exposed via `propertiesView` directly.
+  // JDK shape so stdlib's `System.getProperties(): Properties`
+  // links. Returns an empty Properties since pos-py tests don't
+  // actually exercise sys-props through the JDK API.
   def getProperties(): java.util.Properties = new java.util.Properties()
-
-  def systemProperties(): _SystemProperties =
-    ensurePropertiesInitialized()
-    propertiesView
 
   def getenv(name: String): String | Null =
     PyOs.getenv(ThrowablesSupport.requireNonNull(name))
 
-  // JDK shape: empty Map.
+  // JDK shape — stdlib references `getenv():Map[String, String]`.
+  // Returns an empty map; tests that need the pylib `_SystemEnv` view
+  // should call `getenvView()` instead.
   def getenv(): java.util.Map[String, String] =
     new java.util.HashMap[String, String]()
 
-  def systemEnv(): _SystemEnv =
+  def getenvView(): _SystemEnv =
     envView
 
   def exit(status: scala.Int): Unit =
