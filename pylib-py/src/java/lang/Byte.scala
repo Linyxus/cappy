@@ -34,7 +34,7 @@ final class Byte private () extends Number with Comparable[Byte] with Constable 
 }
 
 object Byte {
-  def TYPE: Class[?] = scala.Predef.classOf[scala.Byte]
+  val TYPE: Class[?] = scala.Predef.classOf[scala.Byte]
 
   final val SIZE = 8
   final val BYTES = 1

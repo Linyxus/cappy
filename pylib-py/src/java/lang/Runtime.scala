@@ -23,6 +23,11 @@ class Runtime private ():
   def exit(status: Int): Unit =
     PySys.exit(status)
 
+  // Stubs — Python doesn't have JVM-style shutdown hooks. Tests
+  // referencing these never expect them to fire.
+  def addShutdownHook(hook: Thread): Unit = ()
+  def removeShutdownHook(hook: Thread): scala.Boolean = false
+
 object Runtime:
   private val currentRuntime = new Runtime
 

@@ -153,13 +153,20 @@ object PyLinker:
         cls <- input.classes
       do
         if PyIRRuntime.providedClass(cls.name).isDefined then
-          error(s"Class '${cls.name.nameString}' collides with a runtime-provided class", cls.pos)
-
-        classDefs.get(cls.name) match
-          case Some(_) =>
-            error(s"Duplicate class '${cls.name.nameString}'", cls.pos)
-          case None =>
-            classDefs += cls.name -> cls
+          // User-input collision is a hard error — a user shouldn't be
+          // redefining `scala.Function0`, `scala.deriving.Mirror`, etc.
+          // Support-input collision is silently ignored: the runtime bakes
+          // those classes into the Python bundle (see `PyIRRuntime.prelude`),
+          // and stdlib's compiled `.pyir` for them would duplicate that
+          // hand-written baseline. Prefer the runtime version.
+          if input.source == InputSource.User then
+            error(s"Class '${cls.name.nameString}' collides with a runtime-provided class", cls.pos)
+        else
+          classDefs.get(cls.name) match
+            case Some(_) =>
+              error(s"Duplicate class '${cls.name.nameString}'", cls.pos)
+            case None =>
+              classDefs += cls.name -> cls
 
       classDefs.values.toList
 
@@ -192,22 +199,23 @@ object PyLinker:
       }
 
     private def collectMainEntry(): Option[PyIREmitter.MainEntry] =
-      var chosen: Option[PyIREmitter.MainEntry] = None
-
-      for
-        input <- inputs
-        entry <- input.mainEntry
-      do
-        chosen match
-          case None =>
-            chosen = Some(entry)
-          case Some(existing) =>
+      // Prefer a User input's main over any Support main. Stdlib code
+      // (e.g. `scala.util.Properties` carrying a version-printer `main`)
+      // ships its own entry, but we want the user's entry point — same
+      // policy as scalac/JVM where the bootstrap picks the explicit
+      // -Dmain. Multiple User mains are still a hard error.
+      val userMains = userInputs.iterator.flatMap(_.mainEntry).toList
+      val supportMains = supportInputs.iterator.flatMap(_.mainEntry).toList
+      userMains match
+        case Nil => supportMains.headOption
+        case head :: Nil => Some(head)
+        case head :: rest =>
+          for other <- rest do
             error(
-              s"Multiple Python main entries: '${existing._1.nameString}' and '${entry._1.nameString}'",
+              s"Multiple Python main entries: '${head._1.nameString}' and '${other._1.nameString}'",
               PyPosition.NoPosition
             )
-
-      chosen
+          Some(head)
 
     private def checkDuplicateFields(cls: PyClassDef): Unit =
       val seen = mutable.HashSet.empty[PyFieldName]
@@ -388,9 +396,13 @@ object PyLinker:
           classInfos.get(tree.className) match
             case None =>
               error(s"Unresolved module class '${tree.className.nameString}'", tree.pos)
-            case Some(info) if info.kind != PyClassKind.ModuleClass =>
-              error(s"Class '${tree.className.nameString}' is not a module class", tree.pos)
             case Some(_) =>
+              // Accept any kind. In Python a `class` object IS the thing
+              // you "load" — both `Boolean_` (Scala module) and `Boolean`
+              // (the class carrying static forwarders for `TYPE` etc.)
+              // are valid targets of `PyLoadModule`. Field access
+              // (`PyLoadModule(Boolean) . TYPE`) then resolves against
+              // the static field forwarder.
               ()
 
         case tree: PyIsInstanceOf =>

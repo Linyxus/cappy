@@ -170,6 +170,11 @@ object Thread:
   final val NORM_PRIORITY = 5
   final val MAX_PRIORITY = 10
 
+  // Stubs for thread-enumeration APIs. Returns 0/1 — pos-py tests don't
+  // depend on accurate thread counts.
+  def activeCount(): scala.Int = 1
+  def enumerate(target: Array[Thread]): scala.Int = 0
+
   private final val JoinPollMillis = 5L
   private final val SleepPollMillis = 5L
 

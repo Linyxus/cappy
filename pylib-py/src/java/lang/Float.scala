@@ -43,7 +43,7 @@ final class Float private ()
 }
 
 object Float {
-  def TYPE: Class[?] = scala.Predef.classOf[scala.Float]
+  val TYPE: Class[?] = scala.Predef.classOf[scala.Float]
 
   final val POSITIVE_INFINITY = 1.0f / 0.0f
   final val NEGATIVE_INFINITY = 1.0f / -0.0f

@@ -89,6 +89,17 @@ class Throwable (
   def this() =
     this(null, null, true, true)
 
+  // JDK-shaped ctor overloads. Scala's default-args don't generate
+  // these as distinct PyIR signatures; stdlib (typechecked against JVM)
+  // references them by JVM-style signatures like `<init>(Ljava_lang_String)`.
+  // The `: Any` ascription on `message`/`cause` forces chained-call
+  // resolution to the primary ctor rather than recursing.
+  def this(message: String) = this(message: Any, null, true, true)
+  def this(message: String, cause: Throwable) = this(message: Any, cause, true, true)
+  def this(cause: Throwable) = this(null, cause, true, true)
+  def this(message: String, cause: Throwable, enableSuppression: scala.Boolean, writableStackTrace: scala.Boolean) =
+    this(message: Any, cause, enableSuppression, writableStackTrace)
+
   private val message: String | Null =
     ThrowablesSupport.throwableMessage(primary, e)
 
@@ -229,7 +240,15 @@ class AssertionError(detailMessage: Any = null, cause: Throwable | Null = null)
     extends Error(
       ThrowablesSupport.stringValueOf(detailMessage),
       ThrowablesSupport.assertionErrorCause(detailMessage, cause)
-    )
+    ):
+  def this(message: String) = this(message: Any, null)
+  def this(message: Object) = this(message: Any, null)
+  def this(message: scala.Boolean) = this(message: Any, null)
+  def this(message: scala.Char) = this(message: Any, null)
+  def this(message: scala.Int) = this(message: Any, null)
+  def this(message: scala.Long) = this(message: Any, null)
+  def this(message: scala.Float) = this(message: Any, null)
+  def this(message: scala.Double) = this(message: Any, null)
 
 class BootstrapMethodError(primary: Any = null, cause: Throwable | Null = null)
     extends LinkageError(primary, cause)
@@ -247,6 +266,9 @@ class Error (
 :
   def this() =
     this(null, null, true, true)
+  def this(message: String) = this(message: Any, null, true, true)
+  def this(message: String, cause: Throwable) = this(message: Any, cause, true, true)
+  def this(cause: Throwable) = this(null, cause, true, true)
 
 class ExceptionInInitializerError(detail: Any = null)
     extends LinkageError(
@@ -289,14 +311,19 @@ abstract class VirtualMachineError(primary: Any = null, cause: Throwable | Null 
 
 /* java.lang.*Exception.java */
 
-class ArithmeticException(primary: Any = null) extends RuntimeException(primary)
+class ArithmeticException(primary: Any = null) extends RuntimeException(primary):
+  def this(message: String) = this(message: Any)
 
 class ArrayIndexOutOfBoundsException(detail: Any = null)
-    extends IndexOutOfBoundsException(ThrowablesSupport.indexMessage("Array index out of range: ", detail))
+    extends IndexOutOfBoundsException(ThrowablesSupport.indexMessage("Array index out of range: ", detail)):
+  def this() = this(null: Any)
+  def this(message: String) = this(message: Any)
+  def this(index: scala.Int) = this(index: Any)
 
 class ArrayStoreException(primary: Any = null) extends RuntimeException(primary)
 
-class ClassCastException(primary: Any = null) extends RuntimeException(primary)
+class ClassCastException(primary: Any = null) extends RuntimeException(primary):
+  def this(message: String) = this(message: Any)
 
 class ClassNotFoundException(message: String | Null = null, private val exception: Throwable | Null = null)
     extends ReflectiveOperationException(message, exception):
@@ -319,6 +346,9 @@ class Exception (
 :
   def this() =
     this(null, null, true, true)
+  def this(message: String) = this(message: Any, null, true, true)
+  def this(message: String, cause: Throwable) = this(message: Any, cause, true, true)
+  def this(cause: Throwable) = this(null, cause, true, true)
 
 class IllegalAccessException(primary: Any = null) extends ReflectiveOperationException(primary)
 
@@ -327,6 +357,9 @@ class IllegalArgumentException(primary: Any = null, cause: Throwable | Null = nu
 :
   def this() =
     this(null, null)
+  def this(message: String) = this(message: Any, null)
+  def this(message: String, cause: Throwable) = this(message: Any, cause)
+  def this(cause: Throwable) = this(null, cause)
 
 class IllegalMonitorStateException(primary: Any = null) extends RuntimeException(primary)
 
@@ -335,25 +368,35 @@ class IllegalStateException(primary: Any = null, cause: Throwable | Null = null)
 :
   def this() =
     this(null, null)
+  def this(message: String) = this(message: Any, null)
+  def this(message: String, cause: Throwable) = this(message: Any, cause)
+  def this(cause: Throwable) = this(null, cause)
 
 class IllegalThreadStateException(primary: Any = null) extends IllegalArgumentException(primary)
 
 class IndexOutOfBoundsException(detail: Any = null)
-    extends RuntimeException(ThrowablesSupport.indexMessage("Index out of range: ", detail))
+    extends RuntimeException(ThrowablesSupport.indexMessage("Index out of range: ", detail)):
+  def this(message: String) = this(message: Any)
+  def this(index: scala.Int) = this(index: Any)
+  def this(index: scala.Long) = this(index: Any)
 
 class InstantiationException(primary: Any = null) extends ReflectiveOperationException(primary)
 
-class InterruptedException(primary: Any = null) extends Exception(primary)
+class InterruptedException(primary: Any = null) extends Exception(primary):
+  def this(message: String) = this(message: Any)
 
-class NegativeArraySizeException(primary: Any = null) extends RuntimeException(primary)
+class NegativeArraySizeException(primary: Any = null) extends RuntimeException(primary):
+  def this(message: String) = this(message: Any)
 
 class NoSuchFieldException(primary: Any = null) extends ReflectiveOperationException(primary)
 
 class NoSuchMethodException(primary: Any = null) extends ReflectiveOperationException(primary)
 
-class NullPointerException() extends RuntimeException()
+class NullPointerException() extends RuntimeException():
+  def this(message: String) = this()
 
-class NumberFormatException(primary: Any = null) extends IllegalArgumentException(primary)
+class NumberFormatException(primary: Any = null) extends IllegalArgumentException(primary):
+  def this(message: String) = this(message: Any)
 
 class ReflectiveOperationException(primary: Any = null, cause: Throwable | Null = null)
     extends Exception(primary, cause)
@@ -367,12 +410,20 @@ class RuntimeException (
 :
   def this() =
     this(null, null, true, true)
+  def this(message: String) = this(message: Any, null, true, true)
+  def this(message: String, cause: Throwable) = this(message: Any, cause, true, true)
+  def this(cause: Throwable) = this(null, cause, true, true)
+  def this(message: String, cause: Throwable, enableSuppression: scala.Boolean, writableStackTrace: scala.Boolean) =
+    this(message: Any, cause, enableSuppression, writableStackTrace)
 
 class SecurityException(primary: Any = null, cause: Throwable | Null = null)
     extends RuntimeException(primary, cause)
 :
   def this() =
     this(null, null)
+  def this(message: String) = this(message: Any, null)
+  def this(message: String, cause: Throwable) = this(message: Any, cause)
+  def this(cause: Throwable) = this(null, cause)
 
 class StringIndexOutOfBoundsException(detail: Any = null)
     extends IndexOutOfBoundsException(ThrowablesSupport.indexMessage("String index out of range: ", detail))
@@ -386,3 +437,6 @@ class UnsupportedOperationException(primary: Any = null, cause: Throwable | Null
 :
   def this() =
     this(null, null)
+  def this(message: String) = this(message: Any, null)
+  def this(message: String, cause: Throwable) = this(message: Any, cause)
+  def this(cause: Throwable) = this(null, cause)

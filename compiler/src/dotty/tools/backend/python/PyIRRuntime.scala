@@ -88,6 +88,36 @@ object PyIRRuntime:
   private val IntCompanionClass = PyClassName("scala.Int_")
   private val CharCompanionClass = PyClassName("scala.Char_")
 
+  // VarHandle / MethodHandles / MethodHandles$Lookup — referenced by
+  // stdlib's atomic/concurrent specializations. We don't shadow them in
+  // pylib because declaring `class MethodHandles { class Lookup }`
+  // trips the typer's inner-class resolver while loading
+  // `java.lang.String.sig` (which references `MethodHandles$Lookup` in
+  // its own signatures). Treat them as javaProvided runtime-baseline so
+  // the linker accepts any signature; they're never reached at runtime
+  // in pos-py tests.
+  private val VarHandleClass         = PyClassName("java.lang.invoke.VarHandle")
+  private val MethodHandlesClass     = PyClassName("java.lang.invoke.MethodHandles")
+  private val MethodHandlesLookupClass = PyClassName("java.lang.invoke.MethodHandles_Lookup")
+
+  // JDK / scalalib classes referenced by stdlib but not implemented in
+  // pylib. Same "linker-only stub" treatment as the invoke classes
+  // above. None are exercised at runtime by pos-py tests.
+  private val ObjectInputStreamClass     = PyClassName("java.io.ObjectInputStream")
+  private val ObjectOutputStreamClass    = PyClassName("java.io.ObjectOutputStream")
+  private val AbstractStringBuilderClass = PyClassName("java.lang.AbstractStringBuilder")
+  private val ReflectMethodClass         = PyClassName("java.lang.reflect.Method")
+  private val ReflectFieldClass          = PyClassName("java.lang.reflect.Field")
+  private val ReflectAccessibleObjClass  = PyClassName("java.lang.reflect.AccessibleObject")
+  private val SpliteratorClass           = PyClassName("java.util.Spliterator")
+  private val RefReferenceClass          = PyClassName("java.lang.ref.Reference")
+  private val RefWeakReferenceClass      = PyClassName("java.lang.ref.WeakReference")
+  private val ScalaNumberClass           = PyClassName("scala.math.ScalaNumber")
+  private val PrimitiveIteratorClass     = PyClassName("java.util.PrimitiveIterator")
+  private val PrimitiveIteratorOfIntClass    = PyClassName("java.util.PrimitiveIterator_OfInt")
+  private val PrimitiveIteratorOfLongClass   = PyClassName("java.util.PrimitiveIterator_OfLong")
+  private val PrimitiveIteratorOfDoubleClass = PyClassName("java.util.PrimitiveIterator_OfDouble")
+
   private val ObjectCtor =
     PyMethodName(
       PySimpleMethodName.Constructor,
@@ -138,9 +168,12 @@ object PyIRRuntime:
             "getSuperclass", "getInterfaces", "getComponentType",
             "isPrimitive", "isInterface", "isArray",
             "isInstance", "isAssignableFrom",
-            "getClassLoader"
+            "getClassLoader",
+            "getDeclaredMethods", "getDeclaredFields", "getMethods", "getFields",
+            "getDeclaredMethod", "getDeclaredField", "getMethod", "getField"
           )
-        )
+        ),
+        staticMethods = MethodMatcher(simpleNamePrefixes = Set("forName"))
       ),
     ClassLoaderClass ->
       ProvidedClass(
@@ -171,21 +204,29 @@ object PyIRRuntime:
         kind = PyClassKind.Interface,
         superClass = None,
         javaProvided = true,
-        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("apply"))
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("apply", "__str__"))
       ),
     Function1Class ->
       ProvidedClass(
         kind = PyClassKind.Interface,
         superClass = None,
         javaProvided = true,
-        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("apply"))
+        // `compose`, `andThen`, `__str__` (= `toString`) are instance methods
+        // stdlib references. Runtime Function1 is a Python callable; missing
+        // attributes get sane defaults via Python's attribute lookup, so
+        // declaring them here only costs a linker-side match.
+        instanceMethods = MethodMatcher(
+          simpleNamePrefixes = Set("apply", "compose", "andThen", "__str__")
+        )
       ),
     Function2Class ->
       ProvidedClass(
         kind = PyClassKind.Interface,
         superClass = None,
         javaProvided = true,
-        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("apply"))
+        instanceMethods = MethodMatcher(
+          simpleNamePrefixes = Set("apply", "curried", "tupled", "__str__")
+        )
       ),
     AnnotationClass ->
       ProvidedClass(
@@ -227,6 +268,149 @@ object PyIRRuntime:
         superClass = Some(AnnotationClass),
         javaProvided = true,
         constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
+      ),
+    VarHandleClass ->
+      // Stdlib's atomic specializations reference VarHandle for
+      // memory-fence semantics. Empty matcher with javaProvided=true
+      // accepts any signature.
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("")),  // accept all
+        staticMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    MethodHandlesClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("")),
+        staticMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    MethodHandlesLookupClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("")),
+        staticMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ObjectInputStreamClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ObjectOutputStreamClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    AbstractStringBuilderClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ReflectAccessibleObjClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ReflectMethodClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(ReflectAccessibleObjClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ReflectFieldClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(ReflectAccessibleObjClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    SpliteratorClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    RefReferenceClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    RefWeakReferenceClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(RefReferenceClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ScalaNumberClass ->
+      // Java-defined in stdlib (`scala/math/ScalaNumber.java`) but our
+      // pylib pipeline doesn't compile .java files — so the linker would
+      // see it missing. Treat as javaProvided.
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    PrimitiveIteratorClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    PrimitiveIteratorOfIntClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        interfaces = List(PrimitiveIteratorClass),
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    PrimitiveIteratorOfLongClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        interfaces = List(PrimitiveIteratorClass),
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    PrimitiveIteratorOfDoubleClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        interfaces = List(PrimitiveIteratorClass),
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
       ),
     ComparableClass ->
       // No source port — keeping our own would clash with dotc's

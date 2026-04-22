@@ -30,7 +30,7 @@ final class Boolean private ()
 }
 
 object Boolean {
-  def TYPE: Class[?] = scala.Predef.classOf[scala.Boolean]
+  val TYPE: Class[?] = scala.Predef.classOf[scala.Boolean]
 
   @inline def TRUE: Boolean = valueOf(true)
   @inline def FALSE: Boolean = valueOf(false)
@@ -45,6 +45,10 @@ object Boolean {
 
   @inline def parseBoolean(s: String): scala.Boolean =
     (s != null) && s.equalsIgnoreCase("true")
+
+  // Stub: stdlib references it for system-property bool flags. Returns
+  // false unconditionally; pos-py tests don't exercise system props.
+  @inline def getBoolean(name: String): scala.Boolean = false
 
   @inline def toString(b: scala.Boolean): String =
     "" + b

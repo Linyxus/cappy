@@ -7,6 +7,14 @@ trait CharSequence:
   def toString(): String
   def isEmpty(): scala.Boolean = length() == 0
 
+  // JDK default methods. Stdlib references these by name; no pos-py test
+  // actually consumes the stream. Throwing default suffices for linking.
+  def chars(): java.util.stream.IntStream =
+    throw new UnsupportedOperationException("CharSequence.chars() is a link-time stub")
+
+  def codePoints(): java.util.stream.IntStream =
+    throw new UnsupportedOperationException("CharSequence.codePoints() is a link-time stub")
+
 object CharSequence:
   def ofArray(array: Array[Char]): CharSequence =
     new CharSequence:

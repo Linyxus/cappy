@@ -252,13 +252,22 @@ class PyEncoding(using Context):
   def isValidPyAttrName(name: String): Boolean =
     pyIdentifierRegex.matches(name) && !pythonKeywords.contains(name)
 
+  /** Python identifiers that aren't keywords but DO clash with our
+   *  emission conventions: `self` is the implicit instance receiver in
+   *  every instance method / constructor, `cls` is the convention for
+   *  classmethods. A user param named `self` (e.g. value-class accessors
+   *  after erasure: `def ->(self: A, ...)`) collides with the synthetic
+   *  receiver, producing `def __init__(self, self)` which Python rejects.
+   *  Rename them here so the conflict can never arise. */
+  private val pythonReservedConventions = Set("self", "cls")
+
   private def sanitizeName(name: String): String =
     val cleaned = name.replace('$', '_')
     if cleaned.startsWith("_scpy_") then
       report.warning(
         s"Scala identifier '$name' maps to Python name '$cleaned' which uses " +
         s"the reserved '_scpy_' prefix. This may collide with compiler-generated names.")
-    if pythonKeywords.contains(cleaned) then cleaned + "_"
+    if pythonKeywords.contains(cleaned) || pythonReservedConventions.contains(cleaned) then cleaned + "_"
     else cleaned
 
   private def annotationCarrierSymbols(sym: Symbol): List[Symbol] =
