@@ -14,5 +14,5 @@ final class Void private () extends AnyRef {
 }
 
 object Void {
-  def TYPE: Class[?] = scala.Predef.classOf[scala.Unit]
+  val TYPE: Class[?] = scala.Predef.classOf[scala.Unit]
 }

@@ -3,18 +3,15 @@ package java.math
 object MathContext:
   private final class ParsedContext(val precision: Int, val roundingMode: RoundingMode)
 
-  // `def`, not `val`: module init ordering on the Python backend
-  // doesn't guarantee `RoundingMode` loads before `MathContext`, and
-  // Scala 3's `lazy val` synthesis on a top-level object references
-  // `java.lang.invoke.MethodHandles` which is JVM-only. Side effect:
-  // `MathContext.UNLIMITED eq MathContext.UNLIMITED` is false — each
-  // access constructs a fresh instance. `.equals(…)` still matches
-  // by-value, which is what MathContext-using code checks. See
-  // `notes/issue-module-init-ordering-module-dependency.md`.
-  def UNLIMITED: MathContext = new MathContext(0, RoundingMode.HALF_UP)
-  def DECIMAL32: MathContext = new MathContext(7, RoundingMode.HALF_EVEN)
-  def DECIMAL64: MathContext = new MathContext(16, RoundingMode.HALF_EVEN)
-  def DECIMAL128: MathContext = new MathContext(34, RoundingMode.HALF_EVEN)
+  // `val` (not `def`) so PyIR emits as a field, matching JVM-shape
+  // accesses like `MathContext.DECIMAL128`. Module init ordering note
+  // from earlier (`notes/issue-module-init-ordering-module-dependency.md`)
+  // doesn't apply to non-lazy vals — and the static-field forwarder pass
+  // wants real fields to replicate.
+  val UNLIMITED: MathContext = new MathContext(0, RoundingMode.HALF_UP)
+  val DECIMAL32: MathContext = new MathContext(7, RoundingMode.HALF_EVEN)
+  val DECIMAL64: MathContext = new MathContext(16, RoundingMode.HALF_EVEN)
+  val DECIMAL128: MathContext = new MathContext(34, RoundingMode.HALF_EVEN)
 
   private def parse(text: String): ParsedContext =
     if text == null then

@@ -90,6 +90,10 @@ private class PyCodeGen()(using genCtx: Context):
 
     val allTypeDefs = collectTypeDefs(cunit.tpdTree)
 
+    // Track (sym, classDef) pairs so the forwarder post-pass can map a
+    // module-class PyClassDef back to its originating ClassSymbol.
+    val emitted = mutable.ListBuffer.empty[(ClassSymbol, PyClassDef)]
+
     for td <- allTypeDefs do
       val sym = td.symbol
       if encoding.hasExternAnnotation(sym) then
@@ -106,9 +110,194 @@ private class PyCodeGen()(using genCtx: Context):
           else if isStaticModule(sym) then PyClassKind.ModuleClass
           else PyClassKind.Class
         val classDef = genClassDef(td, kind)
-        generatedClasses += classDef
+        emitted += ((sym.asClass, classDef))
         if genCtx.platform.hasMainMethod(sym) then
           mainEntry = Some((classDef.name, kind))
+
+    emitWithStaticForwarders(emitted.toList)
+
+  /** Append `emitted` classes to `generatedClasses`, weaving in static
+   *  forwarders for top-level Scala `object`s.
+   *
+   *  Mirrors Scala.js's static-forwarder mechanism (see
+   *  `inbox/scala-js/.../GenJSCode.scala:723-759, 1253-1308`). Stdlib code
+   *  typechecked against the JVM JDK references `java.util.Arrays.copyOf`
+   *  as a static method on the bare `java.util.Arrays` class, but our
+   *  pylib defines `object Arrays` which encodes to `java.util.Arrays_`.
+   *  Synthesizing a forwarder class named `java.util.Arrays` whose static
+   *  methods delegate to the module bridges the two encodings without
+   *  changing either side.
+   *
+   *  When the module has a companion class in this CU
+   *  (`object Integer` + `class Integer`), forwarders are merged into the
+   *  companion class rather than emitting a duplicate. */
+  private def emitWithStaticForwarders(emitted: List[(ClassSymbol, PyClassDef)]): Unit =
+    // Map each candidate module class to (target ownerName, method + field forwarders).
+    // Target ownerName is the companion class name when one exists, else
+    // the module-class name with the trailing `_` stripped.
+    case class Plan(
+        ownerName:  PyClassName,
+        methods:    List[PyMethodDef],
+        fields:     List[PyFieldDef],
+        pos:        PyPosition
+    )
+    val planByModule = mutable.LinkedHashMap.empty[PyClassName, Plan]
+
+    val byName: Map[PyClassName, PyClassDef] =
+      emitted.iterator.map { case (_, cd) => cd.name -> cd }.toMap
+
+    for (sym, classDef) <- emitted do
+      if classDef.kind == PyClassKind.ModuleClass && isForwarderCandidate(sym) then
+        val ownerName = forwarderTargetName(sym, classDef)
+        val companion = byName.get(ownerName)
+        val existingMethodNames =
+          companion.map(_.methods.map(_.name).toSet).getOrElse(Set.empty[PyMethodName])
+        val existingFieldNames =
+          companion.map(_.fields.map(_.name).toSet).getOrElse(Set.empty[PyFieldName])
+        val methodFwds = genStaticForwarders(classDef, existingMethodNames)
+        val fieldFwds  = genStaticFieldForwarders(classDef, ownerName, existingFieldNames)
+        if methodFwds.nonEmpty || fieldFwds.nonEmpty then
+          planByModule(classDef.name) = Plan(ownerName, methodFwds, fieldFwds, classDef.pos)
+
+    // Index plans by their target ownerName so we can fold forwarders into
+    // an emitted companion class on first encounter.
+    val planByOwner: Map[PyClassName, Plan] = planByModule.values.iterator.map(p => p.ownerName -> p).toMap
+    val foldedOwners = mutable.HashSet.empty[PyClassName]
+
+    for (sym, classDef) <- emitted do
+      planByOwner.get(classDef.name) match
+        case Some(plan) if !foldedOwners.contains(classDef.name) =>
+          // Companion class entry — append method + field forwarders.
+          generatedClasses += classDef.copy(
+            fields  = classDef.fields  ::: plan.fields,
+            methods = classDef.methods ::: plan.methods
+          )
+          foldedOwners += classDef.name
+        case _ =>
+          generatedClasses += classDef
+
+      // After a module class with no in-CU companion, emit a synthetic
+      // forwarder class right after it so the final `.pyir` keeps the
+      // forwarder beside its module.
+      if classDef.kind == PyClassKind.ModuleClass then
+        planByModule.get(classDef.name) match
+          case Some(plan) if !foldedOwners.contains(plan.ownerName) =>
+            generatedClasses += mkSyntheticForwarderClass(plan.ownerName, plan.fields, plan.methods, plan.pos)
+            foldedOwners += plan.ownerName
+          case _ => ()
+
+  /** Top-level Scala `object`s only — matches scalac's JVM default for
+   *  `BCodeHelpers.addForwarders`. Inner objects (e.g. private helpers
+   *  nested in a top-level `object`) are not the source of stdlib link
+   *  errors, and forwarding them risks unintended name collisions in the
+   *  Python output. */
+  private def isForwarderCandidate(sym: Symbol): Boolean =
+    sym.is(ModuleClass) && !sym.isAnonymousClass && sym.owner.is(Package)
+
+  private def forwarderTargetName(moduleSym: ClassSymbol, moduleClassDef: PyClassDef): PyClassName =
+    val linked = moduleSym.linkedClass
+    if linked.exists then encoding.encodeClassName(linked)
+    else stripModuleSuffix(moduleClassDef.name)
+
+  /** `java.util.Arrays_` → `java.util.Arrays`. Scala module classes
+   *  encode with a trailing `_` (PyEncoding.sanitizeName turns the
+   *  Scala `$` suffix into `_`). The Scala.js analogue is
+   *  `nameString.stripSuffix("$")` at GenJSCode.scala:735. */
+  private def stripModuleSuffix(name: PyClassName): PyClassName =
+    val s = name.nameString
+    if s.endsWith("_") then PyClassName(s.dropRight(1)) else name
+
+  /** Synthetic forwarder class for a module that has no companion in this
+   *  CU. Holds only `PublicStatic` fields and methods that delegate into
+   *  the module. */
+  private def mkSyntheticForwarderClass(
+      name:    PyClassName,
+      fields:  List[PyFieldDef],
+      methods: List[PyMethodDef],
+      pos:     PyPosition
+  ): PyClassDef =
+    PyClassDef(
+      name         = name,
+      originalName = PyOriginalName.NoOriginalName,
+      kind         = PyClassKind.Class,
+      superClass   = None,
+      interfaces   = Nil,
+      fields       = fields,
+      methods      = methods,
+      pos          = pos
+    )
+
+  /** Mirror of Scala.js's `genStaticForwardersFromModuleClass`
+   *  (GenJSCode.scala:1253-1308): for each public instance method on the
+   *  module, mint a `PublicStatic` forwarder whose body loads the module
+   *  and dispatches the same method on it. Skips constructors, abstract
+   *  members, private members, and any method whose signature already
+   *  exists on the target owner (companion class case). */
+  private def genStaticForwarders(
+      moduleClassDef: PyClassDef,
+      existingMethodNames: Set[PyMethodName]
+  ): List[PyMethodDef] =
+    val moduleName = moduleClassDef.name
+    moduleClassDef.methods.flatMap { m =>
+      val ns = m.flags.namespace
+      if ns != PyMemberNamespace.Public then None
+      else if m.body.isEmpty then None  // abstract — can't forward
+      else if existingMethodNames.contains(m.name) then None  // already on owner
+      else
+        val paramRefs: List[PyTree] = m.args.map(p => PyVarRef(p.name)(p.ptpe, p.pos))
+        val body = PyApply(
+          flags     = PyApplyFlags.empty,
+          receiver  = PyLoadModule(moduleName)(m.pos),
+          className = moduleName,
+          method    = m.name,
+          args      = paramRefs
+        )(m.resultType, m.pos)
+        // Body is just the dispatch expression — `emitMethodDef` wraps the
+        // last statement of a non-void method in `return` automatically
+        // (see `PyIREmitter.emitMethodBody`).
+        Some(PyMethodDef(
+          flags        = PyMemberFlags.empty.withNamespace(PyMemberNamespace.PublicStatic),
+          name         = m.name,
+          originalName = m.originalName,
+          args         = m.args,
+          resultType   = m.resultType,
+          body         = Some(body),
+          pos          = m.pos
+        ))
+    }
+
+  /** Static field forwarders for top-level module fields. Stdlib code
+   *  typechecked against the JVM JDK sees primitives' `TYPE` as a static
+   *  field on the bare class (e.g. `java.lang.Boolean.TYPE`), but pylib
+   *  declares it on the Scala `object` (encoded `java.lang.Boolean_`).
+   *  Replicating each module field as a `PublicStatic` field on the
+   *  companion/synthetic class satisfies the JVM-style access pattern.
+   *
+   *  Crucially, `PyFieldName` carries an `owner` in its identity (unlike
+   *  `PyMethodName`), so the new field name is rebuilt with the target
+   *  ownerName — otherwise a stdlib `Select(Boolean, TYPE)` looking for
+   *  `PyFieldName(java.lang.Boolean, TYPE)` wouldn't match the copied
+   *  `PyFieldName(java.lang.Boolean_, TYPE)`. */
+  private def genStaticFieldForwarders(
+      moduleClassDef: PyClassDef,
+      ownerName: PyClassName,
+      existingFieldNames: Set[PyFieldName]
+  ): List[PyFieldDef] =
+    moduleClassDef.fields.flatMap { f =>
+      val ns = f.flags.namespace
+      if ns != PyMemberNamespace.Public then None
+      else
+        val newName = PyFieldName(ownerName, f.name.simple)
+        if existingFieldNames.contains(newName) then None
+        else
+          Some(PyFieldDef(
+            flags        = PyMemberFlags.empty.withNamespace(PyMemberNamespace.PublicStatic),
+            name         = newName,
+            originalName = f.originalName,
+            ftpe         = f.ftpe,
+            pos          = f.pos
+          ))
+    }
 
   /** For each `@extern`-annotated class/object, check that no two members
    *  resolve to the same Python name. Python has no overloading, so

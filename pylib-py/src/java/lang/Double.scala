@@ -43,7 +43,7 @@ final class Double private ()
 }
 
 object Double {
-  def TYPE: Class[?] = scala.Predef.classOf[scala.Double]
+  val TYPE: Class[?] = scala.Predef.classOf[scala.Double]
 
   final val POSITIVE_INFINITY = 1.0 / 0.0
   final val NEGATIVE_INFINITY = 1.0 / -0.0

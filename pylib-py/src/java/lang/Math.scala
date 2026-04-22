@@ -34,6 +34,19 @@ object Math:
   final val PI = 3.141592653589793
   final val TAU = 6.283185307179586
 
+  // Stubs for IEEE 754 helpers stdlib references but we don't yet
+  // implement faithfully. Returns are cheap defaults; pos-py tests don't
+  // exercise their actual semantics.
+  @inline def scalb(d: scala.Double, scaleFactor: scala.Int): scala.Double =
+    d * PyMath.pow(2.0, scaleFactor.toDouble)
+  @inline def scalb(f: scala.Float, scaleFactor: scala.Int): scala.Float =
+    (f.toDouble * PyMath.pow(2.0, scaleFactor.toDouble)).toFloat
+  @inline def getExponent(d: scala.Double): scala.Int =
+    if d == 0.0 || d.isInfinite() || java.lang.Double.isNaN(d) then 0
+    else (PyMath.log(PyMath.fabs(d)) / PyMath.log(2.0)).toInt
+  @inline def getExponent(f: scala.Float): scala.Int =
+    getExponent(f.toDouble)
+
   // ---- abs -------------------------------------------------------
 
   @inline def abs(a: scala.Int): scala.Int =

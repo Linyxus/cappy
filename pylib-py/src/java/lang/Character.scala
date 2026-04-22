@@ -35,7 +35,7 @@ class Character private ()
 }
 
 object Character {
-  def TYPE: Class[?] = scala.Predef.classOf[scala.Char]
+  val TYPE: Class[?] = scala.Predef.classOf[scala.Char]
 
   final val MIN_VALUE = '\u0000'
   final val MAX_VALUE = '\uffff'

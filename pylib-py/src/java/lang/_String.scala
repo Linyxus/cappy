@@ -100,6 +100,12 @@ object _String:
     val effectiveArgs = normalizeFormatArgs(args)
     new java.util.Formatter().format(format, effectiveArgs).toString()
 
+  // JDK overload taking a Locale. We ignore the locale (Python's
+  // formatter is locale-agnostic) but keep the signature so stdlib's
+  // `String.format(locale, fmt, args)` calls link.
+  def format(l: java.util.Locale, fmt: String, args: Array[AnyRef]): String =
+    format(fmt, args)
+
   def matchesRegex(receiver: String, regex: String): scala.Boolean =
     Pattern.matches(regex, receiver)
 

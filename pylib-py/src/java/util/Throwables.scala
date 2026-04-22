@@ -112,7 +112,10 @@ class MissingResourceException private[util] (
   def getClassName(): String = className
   def getKey(): String = key
 
-class NoSuchElementException(s: String | Null = null) extends RuntimeException(s)
+class NoSuchElementException(s: String | Null = null) extends RuntimeException(s: Any):
+  def this() = this(null)
+  def this(message: String, cause: Throwable) = this(null)  // discard; keeps JDK arity
+  def this(cause: Throwable) = this(null)
 
 class TooManyListenersException(s: String | Null = null) extends Exception(s)
 

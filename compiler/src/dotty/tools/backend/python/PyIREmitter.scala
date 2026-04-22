@@ -1073,7 +1073,14 @@ object PyIREmitter:
       case PyTryFinally(block, _)     => exprToStr(block)
 
       case other =>
-        s"None  # TODO: ${other.getClass.getSimpleName}"
+        // Fall-through: emit a bare `None` so the surrounding expression
+        // remains syntactically valid Python. Previously this included a
+        // `# TODO: <node>` comment, but `#` runs to end-of-line and
+        // breaks subsequent tokens on the same line — e.g. the `else`
+        // arm of a ternary. Diagnostic is dropped here; if you need to
+        // hunt down which node hit this branch, set a breakpoint in
+        // PyIREmitter.exprToStr or wrap with a runtime trap helper.
+        "None"
 
     /** Wrap an expression in parentheses if its precedence requires it. */
     private def parenthesize(tree: PyTree): String = tree match

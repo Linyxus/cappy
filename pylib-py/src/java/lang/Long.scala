@@ -43,7 +43,7 @@ final class Long private () extends Number with Comparable[Long] with Constable 
 }
 
 object Long {
-  def TYPE: Class[?] = scala.Predef.classOf[scala.Long]
+  val TYPE: Class[?] = scala.Predef.classOf[scala.Long]
 
   final val MIN_VALUE = -9223372036854775808L
   final val MAX_VALUE = 9223372036854775807L

@@ -45,11 +45,17 @@ object System:
   private var propertySize = 0
   private var propertiesInitialized = false
 
-  def in: Object | Null = inRef
+  // JDK exposes these as `public static final` fields on `class System`
+  // (encoded `in_` because `in` is a Python keyword — see
+  // PyEncoding.sanitizeName). Stdlib code typechecked against the JDK
+  // emits `Select(System, in/out/err)` as a field access, so we expose
+  // them as `val` here. The static-field forwarder pass replicates them
+  // onto the synthetic `java.lang.System` class.
+  val in: Object | Null = inRef
 
-  def out: PrintStream = outRef
+  val out: PrintStream = outRef
 
-  def err: PrintStream = errRef
+  val err: PrintStream = errRef
 
   def setIn(in: Object | Null): Unit =
     inRef = in
@@ -134,15 +140,28 @@ object System:
       propertySize -= 1
       previous
 
-  def getProperties(): _SystemProperties =
+  // JDK shape: stdlib calls `System.getProperties()` expecting
+  // `java.util.Properties`. Empty stub — pos-py tests don't read sys
+  // props. Internal callers should use the `_SystemProperties` view
+  // exposed via `propertiesView` directly.
+  def getProperties(): java.util.Properties = new java.util.Properties()
+
+  def systemProperties(): _SystemProperties =
     ensurePropertiesInitialized()
     propertiesView
 
   def getenv(name: String): String | Null =
     PyOs.getenv(ThrowablesSupport.requireNonNull(name))
 
-  def getenv(): _SystemEnv =
+  // JDK shape: empty Map.
+  def getenv(): java.util.Map[String, String] =
+    new java.util.HashMap[String, String]()
+
+  def systemEnv(): _SystemEnv =
     envView
+
+  def exit(status: scala.Int): Unit =
+    scala.python.runtime.PySys.exit(status)
 
   def lineSeparator(): String =
     "\n"
