@@ -54,12 +54,14 @@ inScope(Global)(Build.globalSettings)
 
 // The Scala.py backend
 val pyCompilerTests = Build.pyCompilerTests
+val `scala-pylib-py` = Build.`scala-pylib-py`
 val `scala-library-py` = Build.`scala-library-py`
-// Run every test for Python backend. Builds scala-library-py jar first
-// so that the test classpath includes .pyir artifacts.
+// Run every test for Python backend. Builds the javalib + library-py jars
+// first so that the test classpath includes their .pyir artifacts.
 addCommandAlias(
   "testPyCompilation",
-  "; scala-library-py/Compile/packageBin" +
+  "; scala-pylib-py/Compile/packageBin" +
+  " ; scala-library-py/Compile/packageBin" +
   " ; pyCompilerTests/Test/compile" +
   " ; scala3-compiler-bootstrapped/testOnly dotty.tools.backend.python.PyLinkerTest dotty.tools.backend.python.ir.pyir.serialization.PyIRSerializationTests" +
   " ; pyCompilerTests/test"
