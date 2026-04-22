@@ -2613,7 +2613,15 @@ object Build {
           s"-Ddotty.tests.classes.scalaAsm=${findArtifactPath(externalDeps, "scala-asm")}",
           s"-Ddotty.tools.dotc.semanticdb.test=${(ThisBuild / baseDirectory).value/"tests"/"semanticdb"}",
           s"-Ddotty.tests.classes.scalaLibraryPy=${(`scala-library-py` / Compile / packageBin).value}",
-          s"-Ddotty.tests.classes.scalaPylibPy=${(`scala-pylib-py` / Compile / packageBin).value}",
+          // Tests need the UNFILTERED pylib — the `packageBin`
+          // mapping drops `java/**.class` + `.tasty` so stdlib typecheck
+          // stays JDK-anchored, but user tests directly reference pylib-
+          // defined types like `java.math.RoundingMode.pythonName` or
+          // `java.lang.CharSequence.ofArray`. Pointing at the raw class
+          // directory keeps those TASTy entries visible; `.pyir` files
+          // are written into the same directory (see `-scpy-ir-only`
+          // semantics) so link-time loading still works.
+          s"-Ddotty.tests.classes.scalaPylibPy=${(`scala-pylib-py` / Compile / classDirectory).value}",
         )
       },
       bootstrappedScalaInstanceSettings,

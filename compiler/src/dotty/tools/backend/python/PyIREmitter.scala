@@ -47,6 +47,36 @@ object PyIREmitter:
     "java.lang.Object"    -> "_scpy_Object",
     "java.lang.String"    -> "str",
     "java.lang.Class"     -> "_scpy_Class",
+    // Pylib exception classes referenced by the runtime prelude (e.g.
+    // `_scpy_str_repeat` raises `IllegalArgumentException`). The prelude
+    // uses the simple name because it was hand-written; aliasing here
+    // makes the emitter's FQN-mangled identifier match those references
+    // when the class is defined downstream in the bundle.
+    "java.lang.NullPointerException"        -> "NullPointerException",
+    "java.lang.IllegalArgumentException"    -> "IllegalArgumentException",
+    "java.lang.IllegalStateException"       -> "IllegalStateException",
+    "java.lang.IndexOutOfBoundsException"   -> "IndexOutOfBoundsException",
+    "java.lang.ArrayIndexOutOfBoundsException" -> "ArrayIndexOutOfBoundsException",
+    "java.lang.ArithmeticException"         -> "ArithmeticException",
+    "java.lang.UnsupportedOperationException" -> "UnsupportedOperationException",
+    "java.lang.ClassCastException"          -> "ClassCastException",
+    "java.lang.NumberFormatException"       -> "NumberFormatException",
+    "java.lang.RuntimeException"            -> "RuntimeException",
+    "java.lang.Throwable"                   -> "_scpy_java_Throwable",
+    "java.lang.Error"                       -> "_scpy_java_Error",
+    "java.lang.AssertionError"              -> "AssertionError",
+    "java.lang.OutOfMemoryError"            -> "OutOfMemoryError",
+    "java.lang.StackOverflowError"          -> "StackOverflowError",
+    "java.lang.NoSuchFieldException"        -> "NoSuchFieldException",
+    "java.lang.NoSuchMethodException"       -> "NoSuchMethodException",
+    "java.lang.CloneNotSupportedException"  -> "CloneNotSupportedException",
+    "java.lang.IllegalAccessException"      -> "IllegalAccessException",
+    "java.lang.InterruptedException"        -> "InterruptedException",
+    "java.lang.SecurityException"           -> "SecurityException",
+    "java.lang.NegativeArraySizeException"  -> "NegativeArraySizeException",
+    "java.lang.StringIndexOutOfBoundsException" -> "StringIndexOutOfBoundsException",
+    "java.util.NoSuchElementException"      -> "NoSuchElementException",
+    "java.util.ConcurrentModificationException" -> "ConcurrentModificationException",
   )
 
   /** Entry point for a "main" method: the class where it lives plus
@@ -1036,7 +1066,7 @@ object PyIREmitter:
         // Same rerouting policy as PyLoadModule: stdlib's static method
         // calls on `java.util.Arrays` (a bare class) need to land on
         // pylib's `java.util.Arrays_` module singleton.
-        s"${moduleVarName(routeToModuleVar(className))}.${method.encoded}($argsStr)"
+        s"${moduleAccessExpr(routeToModuleVar(className))}.${method.encoded}($argsStr)"
 
       case PyApplyExternal(callee, args) =>
         val argsStr = args.map(exprToStr).mkString(", ")
@@ -1062,7 +1092,7 @@ object PyIREmitter:
         s"${classIdentifier(className)}($argsStr)"
 
       case PyLoadModule(className) =>
-        moduleVarName(routeToModuleVar(className))
+        moduleAccessExpr(routeToModuleVar(className))
 
       // Type tests / casts
       case PyIsInstanceOf(expr, testType) =>
@@ -1378,6 +1408,13 @@ object PyIREmitter:
      *  simple name in different packages don't collide. */
     private def moduleVarName(cn: PyClassName): String =
       s"${Prefix}mod_${cn.segments.map(sanitizeIdent).mkString("_")}_"
+
+    /** Always go through the moduleVarName for now; the prelude
+     *  already binds `_scpy_mod_*_` for runtime-provided ModuleClasses
+     *  (Int_, Char_, BoxedUnit) so the variable name resolves at
+     *  runtime. */
+    private def moduleAccessExpr(cn: PyClassName): String =
+      moduleVarName(cn)
 
     /** Rewrite a class-style ClassName to its module-class counterpart
      *  when only the latter has a singleton in this bundle. Stdlib
