@@ -91,7 +91,7 @@ object TestConfiguration {
   lazy val scalaJSOptions =
     defaultOptions.and("-scalajs").withClasspath(scalaJSClasspath).withRunClasspath(scalaJSClasspath)
   lazy val scalaPyClasspath =
-    mkClasspath(List(Properties.scalaLibrary, Properties.scalaLibraryPy))
+    mkClasspath(List(Properties.scalaLibrary, Properties.scalaPylibPy, Properties.scalaLibraryPy))
   lazy val scalaPyOptions =
     defaultOptions.and("-scalapy").withClasspath(scalaPyClasspath).withRunClasspath(scalaPyClasspath)
   val allowDeepSubtypes = defaultOptions `without` "-Yno-deep-subtypes"

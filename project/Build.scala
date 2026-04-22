@@ -673,6 +673,7 @@ object Build {
     sjsJUnitTests,
     sjsCompilerTests,
     pyCompilerTests,
+    `scala-pylib-py`,
     `scala-library-py`,
     `community-build`,
     dist,
@@ -1261,7 +1262,7 @@ object Build {
       Compile / unmanagedSourceDirectories   := Seq(baseDirectory.value / "src"),
       Compile / unmanagedSourceDirectories   += baseDirectory.value / "src-bootstrapped",
       // `scala.python.*` facades (PyAny, @extern, @name, etc.) live in the
-      // sidecar project `scala-library-py`, not here. The Python backend's
+      // sidecar project `scala-pylib-py`, not here. The Python backend's
       // compiler code resolves them by string (`requiredClassRef("scala.python.PyAny")`,
       // see PyDefinitions.scala) and only under `-scalapy`, so the main stdlib
       // classpath needn't contain them. Mirrors how scala.js keeps
@@ -2606,6 +2607,7 @@ object Build {
           s"-Ddotty.tests.classes.scalaAsm=${findArtifactPath(externalDeps, "scala-asm")}",
           s"-Ddotty.tools.dotc.semanticdb.test=${(ThisBuild / baseDirectory).value/"tests"/"semanticdb"}",
           s"-Ddotty.tests.classes.scalaLibraryPy=${(`scala-library-py` / Compile / packageBin).value}",
+          s"-Ddotty.tests.classes.scalaPylibPy=${(`scala-pylib-py` / Compile / packageBin).value}",
         )
       },
       bootstrappedScalaInstanceSettings,
@@ -2614,23 +2616,80 @@ object Build {
       bspEnabled := false,
     )
 
+  /** Foundational Python-backend support library, compiled to PyIR.
+   *
+   *  Holds the platform layer the Scala stdlib will compile against:
+   *    - `java.**` reimplementations (the javalib),
+   *    - `scala.python.{PyAny, PyDynamic, Dynamic, native, @extern, @name}` facades,
+   *    - `scala.python.runtime.{PyDict, PyMonitors, PyRegex, ...}` wrappers around
+   *      Python primitives.
+   *
+   *  Compiled separately from `scala-library-py` so that by the time the real
+   *  Scala stdlib is typed, `java.lang.Double` etc. are resolved as binary
+   *  classes — analogous to scala-js's `javalib` project
+   *  (`inbox/scala-js/project/Build.scala` ~line 1593) fused with `library`,
+   *  collapsed to a single project since we don't publish and javalib+facades
+   *  have circular source-level references here.
+   */
+  lazy val `scala-pylib-py` = project.in(file("pylib-py"))
+    .dependsOn(`scala3-library-bootstrapped`)
+    .settings(
+      name         := "scala-pylib-py",
+      scalaVersion := dottyNonBootstrappedVersion,
+      Compile / unmanagedSourceDirectories := Seq(baseDirectory.value / "src"),
+      Compile / scalacOptions ++= Seq("-scalapy", "-scpy-ir-only"),
+      target := target.value / "scala-pylib-py",
+      autoScalaLibrary := false,
+      bootstrappedScalaInstanceSettings,
+      publish / skip := true,
+      bspEnabled := false,
+    )
+
   /** Scala standard library compiled for the Python backend.
    *
    *  Produces a jar containing `.class`/`.tasty` (for downstream typechecking)
-   *  and `.pyir` (for the Python linker). Modeled on `scala-library-sjs`.
+   *  and `.pyir` (for the Python linker). Compiles the hand-written stdlib
+   *  shims under library-py/src/scala/ (Predef, Console, runtime/..., etc.)
+   *  that the Python backend relies on at link time — these ship today.
+   *
+   *  Infra for pulling the real Scala stdlib sources (`library/src` +
+   *  `library/src-bootstrapped`) is in place, modeled on `scala-library-sjs`
+   *  (see ~line 1339): set `enableStdlibSourcePull` to `true` to stack stdlib
+   *  sources underneath, with a same-shape filter that auto-shadows any file
+   *  re-declared under `library-py/src/<pkg>/<name>`. Kept OFF by default
+   *  until the stdlib actually compiles under `-scalapy` (API gaps in
+   *  javalib: `Arrays.fill` overloads, `System.currentTimeMillis` arity,
+   *  `Thread` inner classes like `UncaughtExceptionHandler`, etc.).
+   *
+   *  Depends on `scala-pylib-py` so handwritten `java.*` and
+   *  `scala.python.*` are resolved as binary at typer time.
    */
   lazy val `scala-library-py` = project.in(file("library-py"))
-    .dependsOn(`scala3-library-bootstrapped`)
+    .dependsOn(`scala3-library-bootstrapped`, `scala-pylib-py`)
     .settings(
       name          := "scala-library-py",
       scalaVersion  := dottyNonBootstrappedVersion,
-      // Everything lives under src/: stdlib overrides at src/scala/*.scala
-      // and src/java/** plus scala.python.* facades at src/scala/python/.
-      // scala-library-bootstrapped selectively pulls in just the facades via
-      // the `unmanagedSources` setting on that project (see above).
-      Compile / unmanagedSourceDirectories := Seq(
-        baseDirectory.value / "src",
-      ),
+      // library-py/src/ holds future stdlib overrides only; javalib + facades
+      // live in `scala-pylib-py`.
+      Compile / unmanagedSourceDirectories := Seq(baseDirectory.value / "src"),
+      // Pull in the real stdlib sources (library/src + library/src-bootstrapped)
+      // and shadow any file overridden under library-py/src/. Mirrors
+      // scala-library-sjs (see Build.scala ~line 1385). Gated off by default
+      // until the stdlib actually compiles under -scalapy.
+      Compile / unmanagedSourceDirectories ++= {
+        val enableStdlibSourcePull = false
+        if (enableStdlibSourcePull)
+          (`scala-library-bootstrapped` / Compile / unmanagedSourceDirectories).value
+        else Nil
+      },
+      Compile / sources := {
+        val files = (Compile / sources).value
+        val overrideBase = baseDirectory.value / "src"
+        val overwrittenSources = files.flatMap(_.relativeTo(overrideBase)).toSet
+        files.filterNot(file =>
+          file.relativeTo((`scala-library-bootstrapped` / baseDirectory).value / "src")
+              .exists(overwrittenSources.contains))
+      },
       // Compile to PyIR without linking or emitting .py bundles.
       // The linker is skipped because stdlib CUs have cross-references that
       // only resolve at final user-code link time.
