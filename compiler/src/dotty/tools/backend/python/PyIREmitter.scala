@@ -43,7 +43,10 @@ object PyIREmitter:
    *  through.
    */
   private val PythonReservedShortNames: Map[String, String] = Map(
-    "java.lang.Exception" -> "_scpy_java_Exception"
+    "java.lang.Exception" -> "_scpy_java_Exception",
+    "java.lang.Object"    -> "_scpy_Object",
+    "java.lang.String"    -> "str",
+    "java.lang.Class"     -> "_scpy_Class",
   )
 
   /** Entry point for a "main" method: the class where it lives plus
@@ -156,10 +159,43 @@ object PyIREmitter:
       // synthetic classes emitted later in the same bundle (e.g. Scala 3
       // enum case implementations); eager per-class initialization would
       // see those names before they exist.
-      for cls <- orderedClasses if cls.kind == PyClassKind.ModuleClass do
-        line(s"# -- init ${cls.name.nameString} --")
+      //
+      // Two-phase init breaks reference cycles between modules. Without
+      // this, e.g. `Console.__init__` accesses `_scpy_mod_System_` —
+      // which doesn't exist yet if Console is processed first by the
+      // class-inheritance topo sort. Phase 1 creates every singleton via
+      // `__new__` so the variable name resolves; Phase 2 runs the real
+      // `__init__`s. Within Phase 2 we still keep `orderedClasses` order;
+      // any cross-module access that relies on the *initialized* state
+      // of another module remains brittle (would need a per-module-init
+      // dependency graph) — but bare-name resolution works.
+      // Only top-level module classes are eligible for singleton init.
+      // Inner module classes (e.g. `object Enumeration.ValueSet` whose
+      // companion is `scala.Enumeration.ValueSet_`) take an `_outer`
+      // argument and can't be instantiated without one. Detect by
+      // looking for a no-arg constructor — top-level Scala objects have
+      // one; inner objects don't.
+      val moduleClasses = orderedClasses.filter { cls =>
+        cls.kind == PyClassKind.ModuleClass &&
+          cls.methods.exists(m =>
+            m.flags.namespace == PyMemberNamespace.Constructor && m.args.isEmpty
+          )
+      }
+
+      if moduleClasses.nonEmpty then
+        // Lazy module init: every singleton is allocated via `__new__`
+        // (no ctor call). Each module's `__init__` is wrapped so it
+        // runs at most once on first attribute access (via a `__getattr__`
+        // hook installed below). This breaks the module-init dependency
+        // cascade — modules that nothing in user code touches never
+        // initialize, and modules that DO get touched chain their inits
+        // in the order accesses happen.
+        line("# -- module singletons (lazy-init) --")
         emptyLine()
-        emitModuleSingletonInit(cls)
+        for cls <- moduleClasses do
+          val modVar = moduleVarName(cls.name)
+          val clsId  = classIdentifier(cls.name)
+          line(s"$modVar = _scpy_lazy_module($clsId)")
         emptyLine()
 
       mainEntry.foreach(entry => emitMainGuard(entry, orderedClasses))
@@ -182,6 +218,17 @@ object PyIREmitter:
 
       spacer()
       emitClassMetadata(cls)
+
+      // For module classes (singleton state), emit class-level None
+      // defaults for every field. Two-phase init creates singletons via
+      // `__new__` first, then runs `__init__` in topo order; cross-module
+      // accesses during another module's `__init__` may hit a not-yet-
+      // initialized field — Python would raise AttributeError. Java's
+      // semantics for uninitialized static fields are "null", so a class-
+      // level `None` default matches and breaks the cascade.
+      if cls.kind == PyClassKind.ModuleClass && cls.fields.nonEmpty then
+        for f <- cls.fields do
+          line(s"${f.name.simple.name} = None")
 
       // Emit constructor dispatcher (if any) or synthesize a field-init __init__
       if ctorMethods.nonEmpty then
@@ -986,7 +1033,10 @@ object PyIREmitter:
 
       case PyApplyStatic(_, className, method, args) =>
         val argsStr = args.map(exprToStr).mkString(", ")
-        s"${moduleVarName(className)}.${method.encoded}($argsStr)"
+        // Same rerouting policy as PyLoadModule: stdlib's static method
+        // calls on `java.util.Arrays` (a bare class) need to land on
+        // pylib's `java.util.Arrays_` module singleton.
+        s"${moduleVarName(routeToModuleVar(className))}.${method.encoded}($argsStr)"
 
       case PyApplyExternal(callee, args) =>
         val argsStr = args.map(exprToStr).mkString(", ")
@@ -1012,7 +1062,7 @@ object PyIREmitter:
         s"${classIdentifier(className)}($argsStr)"
 
       case PyLoadModule(className) =>
-        moduleVarName(className)
+        moduleVarName(routeToModuleVar(className))
 
       // Type tests / casts
       case PyIsInstanceOf(expr, testType) =>
@@ -1307,13 +1357,44 @@ object PyIREmitter:
     private def classIdentifier(cn: PyClassName): String =
       PyIREmitter.PythonReservedShortNames.get(cn.nameString) match
         case Some(alias) => alias
-        case None        => sanitizeIdent(cn.simpleName)
+        case None =>
+          // Runtime-provided classes keep the simple name so they line
+          // up with hand-written declarations in the prelude
+          // (`class Function1`, `class Mirror`, etc.). User-emitted
+          // classes use the mangled FQN to avoid collisions when
+          // multiple packages export classes with the same simple name
+          // (e.g. `scala.collection.SortedSetOps` vs
+          // `scala.collection.mutable.SortedSetOps` vs
+          // `scala.collection.immutable.SortedSetOps` — all three would
+          // otherwise emit as `class SortedSetOps:` and shadow each
+          // other, breaking Python MRO).
+          if PyIRRuntime.providedClass(cn).isDefined then
+            sanitizeIdent(cn.simpleName)
+          else
+            cn.segments.map(sanitizeIdent).mkString("_")
 
     /** Python variable holding the singleton of a Scala `object`.
      *  Uses the full qualified path so two modules with the same
      *  simple name in different packages don't collide. */
     private def moduleVarName(cn: PyClassName): String =
       s"${Prefix}mod_${cn.segments.map(sanitizeIdent).mkString("_")}_"
+
+    /** Rewrite a class-style ClassName to its module-class counterpart
+     *  when only the latter has a singleton in this bundle. Stdlib
+     *  emits `LoadModule(java.util.Arrays)` (the synthetic forwarder
+     *  class) for static-method access, but our singletons live on
+     *  `java.util.Arrays_` (the Scala module class). Returns `cn`
+     *  unchanged if either (a) `cn` is itself a ModuleClass or
+     *  (b) there's no `_`-suffixed counterpart. Used by both
+     *  `PyLoadModule` and `PyApplyStatic` emission. */
+    private def routeToModuleVar(cn: PyClassName): PyClassName =
+      classByName.get(cn) match
+        case Some(c) if c.kind == PyClassKind.ModuleClass => cn
+        case _ =>
+          val underscored = PyClassName(cn.nameString + "_")
+          classByName.get(underscored) match
+            case Some(c) if c.kind == PyClassKind.ModuleClass => underscored
+            case _ => cn
 
     /** Replace `$` with `_`, escape Python keywords. */
     private def sanitizeIdent(s: String): String =

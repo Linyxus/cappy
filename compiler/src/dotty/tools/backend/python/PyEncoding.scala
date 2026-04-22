@@ -116,12 +116,57 @@ class PyEncoding(using Context):
     )
 
   // --- Locals / labels -----------------------------------------------
+  //
+  // Per-method scoping: two distinct symbols can mangle to the same Scala
+  // string (e.g. `x$1` from an outer anonfun and `x$1` from an inner
+  // anonfun lifted into the same static helper). Without scoping, both
+  // would emit as the same Python identifier — Python rejects duplicate
+  // parameter names, and a function body would silently shadow.
+  //
+  // Mirrors Scala.js's `withNewLocalNameScope` + `freshName` mechanism
+  // (`inbox/scala-js/.../JSEncoding.scala:67-156`). The scope is a
+  // `(usedNames, symToName)` pair pushed by `withLocalScope` and consumed
+  // by `encodeLocalName` / `encodeLabelName`. When no scope is active
+  // we fall back to the raw mangled name (used by call sites that build
+  // synthetic locals during forwarder synthesis, etc.).
+
+  private case class LocalScope(
+      usedLocals:     scala.collection.mutable.Set[String]               = scala.collection.mutable.Set.empty,
+      localBySymbol:  scala.collection.mutable.Map[Symbol, PyLocalName]  = scala.collection.mutable.Map.empty,
+      usedLabels:     scala.collection.mutable.Set[String]               = scala.collection.mutable.Set.empty,
+      labelBySymbol:  scala.collection.mutable.Map[Symbol, PyLabelName]  = scala.collection.mutable.Map.empty
+  )
+  private var currentLocalScope: LocalScope | Null = null
+
+  def withLocalScope[A](body: => A): A =
+    val saved = currentLocalScope
+    currentLocalScope = LocalScope()
+    try body
+    finally currentLocalScope = saved
+
+  private def freshUnique(base: String, used: scala.collection.mutable.Set[String]): String =
+    if !used.contains(base) then
+      used += base; base
+    else
+      var n = 2
+      while used.contains(s"${base}_${n}") do n += 1
+      val out = s"${base}_${n}"
+      used += out
+      out
 
   def encodeLocalName(sym: Symbol): PyLocalName =
-    PyLocalName(sanitizeName(sym.name.mangledString))
+    val raw = sanitizeName(sym.name.mangledString)
+    currentLocalScope match
+      case null => PyLocalName(raw)
+      case scope =>
+        scope.localBySymbol.getOrElseUpdate(sym, PyLocalName(freshUnique(raw, scope.usedLocals)))
 
   def encodeLabelName(sym: Symbol): PyLabelName =
-    PyLabelName(sanitizeName(sym.name.mangledString))
+    val raw = sanitizeName(sym.name.mangledString)
+    currentLocalScope match
+      case null => PyLabelName(raw)
+      case scope =>
+        scope.labelBySymbol.getOrElseUpdate(sym, PyLabelName(freshUnique(raw, scope.usedLabels)))
 
   // --- Type encoding -------------------------------------------------
 
