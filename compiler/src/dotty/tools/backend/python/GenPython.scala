@@ -559,6 +559,15 @@ private class PyCodeGen()(using genCtx: Context):
         pendingLocalDefs += doGenStat(tr)
         PyUnitLit()(pos)
 
+      case _: (WhileDo | Assign) =>
+        // `WhileDo` and `Assign` are Unit-typed and routinely appear in
+        // expression position in stdlib code (typically as a case-arm
+        // RHS, e.g. `case xs: Array[Int] => while (...) { ... }`). Emit
+        // the side effect as a pending statement and supply a Unit
+        // value in its place.
+        pendingLocalDefs += doGenStat(tree)
+        PyUnitLit()(pos)
+
       case EmptyTree =>
         PyUnitLit()(pos)
 
