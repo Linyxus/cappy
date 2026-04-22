@@ -42,7 +42,12 @@ object PyRun:
             "uv", "run",
             "--project", projectRoot.getAbsolutePath,
             "--no-sync",
-            "python", pyFile.getAbsolutePath
+            // -W ignore suppresses Python SyntaxWarnings ("`is` with int
+            // literal" etc.) so they don't pollute test output. The
+            // backend's emitted code occasionally trips these (the
+            // semantics are correct — `is` on a small int interns and
+            // works — but the warning text is noise on stdout/stderr).
+            "python", "-W", "ignore", pyFile.getAbsolutePath
           ),
           outDir,
           projectRoot

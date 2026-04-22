@@ -944,6 +944,41 @@ object PyIRRuntime:
        |class Serializable(_scpy_Object):
        |    pass
        |
+       |# Scala `FunctionN` interfaces. Stdlib classes like `Set`, `Map`, etc.
+       |# extend `Function1` (e.g. `trait Set[A] extends ... with (A => Boolean)`)
+       |# — so Python must have a base class to inherit from at class-definition
+       |# time. Runtime dispatch goes through `_scpy_Fn` for closures; these
+       |# declarations are nominal bases only.
+       |class Function0(_scpy_Object):
+       |    pass
+       |
+       |class Function1(_scpy_Object):
+       |    pass
+       |
+       |class Function2(_scpy_Object):
+       |    pass
+       |
+       |# Linker-only nominal stubs. Stdlib references them by name (some as
+       |# bases — Stepper/Spliterator path), so Python must have a class to
+       |# inherit from. Empty bodies — runtime never executes their methods.
+       |class VarHandle(_scpy_Object): pass
+       |class MethodHandles(_scpy_Object): pass
+       |class MethodHandles_Lookup(_scpy_Object): pass
+       |class ObjectInputStream(_scpy_Object): pass
+       |class ObjectOutputStream(_scpy_Object): pass
+       |class AbstractStringBuilder(_scpy_Object): pass
+       |class AccessibleObject(_scpy_Object): pass
+       |class Method(AccessibleObject): pass
+       |class Field(AccessibleObject): pass
+       |class Spliterator(_scpy_Object): pass
+       |class Reference(_scpy_Object): pass
+       |class WeakReference(Reference): pass
+       |class ScalaNumber(_scpy_Object): pass
+       |class PrimitiveIterator(_scpy_Object): pass
+       |class PrimitiveIterator_OfInt(PrimitiveIterator): pass
+       |class PrimitiveIterator_OfLong(PrimitiveIterator): pass
+       |class PrimitiveIterator_OfDouble(PrimitiveIterator): pass
+       |
        |class Mirror(_scpy_Object):
        |    pass
        |
@@ -1061,6 +1096,26 @@ object PyIRRuntime:
        |_scpy_register_class(_scpy_Class, "java.lang.Class", "class", "java.lang.Object")
        |_scpy_register_class(ClassLoader, "java.lang.ClassLoader", "class", "java.lang.Object")
        |_scpy_register_class(ClassValue, "java.lang.ClassValue", "class", "java.lang.Object")
+       |_scpy_register_class(Function0, "scala.Function0", "interface", None)
+       |_scpy_register_class(Function1, "scala.Function1", "interface", None)
+       |_scpy_register_class(Function2, "scala.Function2", "interface", None)
+       |_scpy_register_class(VarHandle, "java.lang.invoke.VarHandle", "class", "java.lang.Object")
+       |_scpy_register_class(MethodHandles, "java.lang.invoke.MethodHandles", "class", "java.lang.Object")
+       |_scpy_register_class(MethodHandles_Lookup, "java.lang.invoke.MethodHandles_Lookup", "class", "java.lang.Object")
+       |_scpy_register_class(ObjectInputStream, "java.io.ObjectInputStream", "class", "java.lang.Object")
+       |_scpy_register_class(ObjectOutputStream, "java.io.ObjectOutputStream", "class", "java.lang.Object")
+       |_scpy_register_class(AbstractStringBuilder, "java.lang.AbstractStringBuilder", "class", "java.lang.Object")
+       |_scpy_register_class(AccessibleObject, "java.lang.reflect.AccessibleObject", "class", "java.lang.Object")
+       |_scpy_register_class(Method, "java.lang.reflect.Method", "class", "java.lang.reflect.AccessibleObject")
+       |_scpy_register_class(Field, "java.lang.reflect.Field", "class", "java.lang.reflect.AccessibleObject")
+       |_scpy_register_class(Spliterator, "java.util.Spliterator", "interface", None)
+       |_scpy_register_class(Reference, "java.lang.ref.Reference", "class", "java.lang.Object")
+       |_scpy_register_class(WeakReference, "java.lang.ref.WeakReference", "class", "java.lang.ref.Reference")
+       |_scpy_register_class(ScalaNumber, "scala.math.ScalaNumber", "class", "java.lang.Object")
+       |_scpy_register_class(PrimitiveIterator, "java.util.PrimitiveIterator", "interface", None)
+       |_scpy_register_class(PrimitiveIterator_OfInt, "java.util.PrimitiveIterator_OfInt", "interface", None, ("java.util.PrimitiveIterator",))
+       |_scpy_register_class(PrimitiveIterator_OfLong, "java.util.PrimitiveIterator_OfLong", "interface", None, ("java.util.PrimitiveIterator",))
+       |_scpy_register_class(PrimitiveIterator_OfDouble, "java.util.PrimitiveIterator_OfDouble", "interface", None, ("java.util.PrimitiveIterator",))
        |_scpy_register_class(Annotation, "scala.annotation.Annotation", "class", "java.lang.Object")
        |_scpy_register_class(StaticAnnotation, "scala.annotation.StaticAnnotation", "class", "scala.annotation.Annotation")
        |_scpy_register_class(Comparable, "java.lang.Comparable", "interface", None)
@@ -1084,6 +1139,48 @@ object PyIRRuntime:
        |_scpy_register_class(None, "java.lang.Long", "class", "java.lang.Number", ("java.lang.Comparable", "java.io.Serializable"))
        |_scpy_register_class(None, "java.lang.Float", "class", "java.lang.Number", ("java.lang.Comparable", "java.io.Serializable"))
        |_scpy_register_class(None, "java.lang.Double", "class", "java.lang.Number", ("java.lang.Comparable", "java.io.Serializable"))
+       |
+       |# -- lazy module init --
+       |# Wraps a module class so its `__init__` runs at most once on
+       |# first attribute access. Breaks Python's strict left-to-right
+       |# class-init order: modules with cross-references (Console →
+       |# System.out, MapNode → ClassTag.Any, …) only initialize when
+       |# user code actually accesses them, not when their class is
+       |# defined.
+       |#
+       |# Implementation: a transparent proxy. `__getattr__` triggers
+       |# init then delegates. Direct attribute writes go straight to
+       |# the underlying instance so `__init__` body works normally
+       |# (it sets `self.x = ...` which goes through the proxy's
+       |# `__setattr__`).
+       |class _scpy_LazyModule:
+       |    __slots__ = ("_scpy_cls", "_scpy_inst", "_scpy_init_started")
+       |    def __init__(self, cls):
+       |        object.__setattr__(self, "_scpy_cls", cls)
+       |        object.__setattr__(self, "_scpy_inst", cls.__new__(cls))
+       |        object.__setattr__(self, "_scpy_init_started", False)
+       |    def _scpy_ensure(self):
+       |        if not object.__getattribute__(self, "_scpy_init_started"):
+       |            object.__setattr__(self, "_scpy_init_started", True)
+       |            inst = object.__getattribute__(self, "_scpy_inst")
+       |            inst.__init__()
+       |        return object.__getattribute__(self, "_scpy_inst")
+       |    def __getattr__(self, name):
+       |        # __getattr__ runs only when normal lookup fails — so the
+       |        # __slots__ above are reached via __getattribute__ and
+       |        # don't recurse here.
+       |        inst = self._scpy_ensure()
+       |        return getattr(inst, name)
+       |    def __setattr__(self, name, value):
+       |        inst = object.__getattribute__(self, "_scpy_inst")
+       |        setattr(inst, name, value)
+       |    def __call__(self, *args, **kw):
+       |        return self._scpy_ensure()(*args, **kw)
+       |    def __repr__(self):
+       |        return f"<LazyModule {object.__getattribute__(self, '_scpy_cls').__name__}>"
+       |
+       |def _scpy_lazy_module(cls):
+       |    return _scpy_LazyModule(cls)
        |
        |# -- scala.FunctionN wrapper --
        |# `PyClosure` emits `_scpy_Fn(lambda params: body)`. Callers that

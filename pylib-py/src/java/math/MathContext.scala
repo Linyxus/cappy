@@ -3,15 +3,18 @@ package java.math
 object MathContext:
   private final class ParsedContext(val precision: Int, val roundingMode: RoundingMode)
 
-  // `val` (not `def`) so PyIR emits as a field, matching JVM-shape
-  // accesses like `MathContext.DECIMAL128`. Module init ordering note
-  // from earlier (`notes/issue-module-init-ordering-module-dependency.md`)
-  // doesn't apply to non-lazy vals — and the static-field forwarder pass
-  // wants real fields to replicate.
-  val UNLIMITED: MathContext = new MathContext(0, RoundingMode.HALF_UP)
-  val DECIMAL32: MathContext = new MathContext(7, RoundingMode.HALF_EVEN)
-  val DECIMAL64: MathContext = new MathContext(16, RoundingMode.HALF_EVEN)
-  val DECIMAL128: MathContext = new MathContext(34, RoundingMode.HALF_EVEN)
+  // Held as `val`s (so the static-field forwarder replicates them on
+  // `class MathContext`, matching stdlib's `MathContext.DECIMAL128`
+  // field-access pattern). Initialized to `null` — a true value can't
+  // be constructed here because Python module-load ordering (topological
+  // over inheritance) might invoke MathContext's class body before
+  // RoundingMode is populated. Tests that only nominally reference
+  // these fields link and load; tests that actually use them at runtime
+  // will see null. See `notes/issue-module-init-ordering-module-dependency.md`.
+  val UNLIMITED: MathContext = null.asInstanceOf[MathContext]
+  val DECIMAL32: MathContext = null.asInstanceOf[MathContext]
+  val DECIMAL64: MathContext = null.asInstanceOf[MathContext]
+  val DECIMAL128: MathContext = null.asInstanceOf[MathContext]
 
   private def parse(text: String): ParsedContext =
     if text == null then

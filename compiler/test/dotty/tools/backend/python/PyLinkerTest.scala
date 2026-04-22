@@ -51,8 +51,11 @@ class PyLinkerTest:
     val emitted = PyIREmitter.emitToString(bundle.classes, bundle.mainEntry)
 
     assertEquals(List(classA, moduleMain), bundle.classes)
-    assertTrue(emitted.contains("class A"))
-    assertTrue(emitted.contains("class Main"))
+    // User classes are emitted with mangled FQN identifiers (to avoid
+    // simple-name collisions across packages). Runtime-provided classes
+    // keep their simple names. See `PyIREmitter.classIdentifier`.
+    assertTrue(emitted.contains("class example_A"))
+    assertTrue(emitted.contains("class example_Main"))
     assertTrue(emitted.contains("if __name__ == \"__main__\":"))
 
   @Test def acceptsJavaProvidedObjectCtorAndMethods(): Unit =

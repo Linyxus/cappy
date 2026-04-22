@@ -400,20 +400,22 @@ private class PyCodeGen()(using genCtx: Context):
     val ctorSym = dd.symbol
     currentMethodSym = ctorSym
     val ctorPos = posOf(dd)
-    val params = dd.termParamss.flatten.map(genParamDef)
-    val body =
-      if dd.rhs.isEmpty then Some(PySkip()(ctorPos))
-      else Some(stmtsToBody(flattenToStmts(genStat(dd.rhs)), ctorPos))
+    encoding.withLocalScope {
+      val params = dd.termParamss.flatten.map(genParamDef)
+      val body =
+        if dd.rhs.isEmpty then Some(PySkip()(ctorPos))
+        else Some(stmtsToBody(flattenToStmts(genStat(dd.rhs)), ctorPos))
 
-    Some(PyMethodDef(
-      flags        = PyMemberFlags.empty.withNamespace(PyMemberNamespace.Constructor),
-      name         = encoding.encodeMethodName(ctorSym),
-      originalName = encoding.originalNameOf(ctorSym),
-      args         = params,
-      resultType   = PyVoidType,
-      body         = body,
-      pos          = ctorPos
-    ))
+      Some(PyMethodDef(
+        flags        = PyMemberFlags.empty.withNamespace(PyMemberNamespace.Constructor),
+        name         = encoding.encodeMethodName(ctorSym),
+        originalName = encoding.originalNameOf(ctorSym),
+        args         = params,
+        resultType   = PyVoidType,
+        body         = body,
+        pos          = ctorPos
+      ))
+    }
 
   private def defaultValueFor(tpe: PyType, pos: PyPosition): PyTree = tpe match
     case PyBooleanType => PyBooleanLit(false)(pos)
@@ -439,33 +441,35 @@ private class PyCodeGen()(using genCtx: Context):
     currentMethodSym = sym
     val pos = posOf(dd)
 
-    val params = dd.termParamss.flatten.map(genParamDef)
-    val resultType = encoding.encodeType(sym.info.finalResultType)
+    encoding.withLocalScope {
+      val params = dd.termParamss.flatten.map(genParamDef)
+      val resultType = encoding.encodeType(sym.info.finalResultType)
 
-    // A Scala `object` is a singleton instance, not a true static namespace.
-    // Keep module-class methods as instance methods in PyIR so inherited
-    // trait defaults can use normal receiver semantics (`super()`, `self`, ...).
-    val isStatic = sym.is(JavaStatic)
-    val namespace = (isStatic, sym.is(Private)) match
-      case (true,  true)  => PyMemberNamespace.PrivateStatic
-      case (true,  false) => PyMemberNamespace.PublicStatic
-      case (false, true)  => PyMemberNamespace.Private
-      case (false, false) => PyMemberNamespace.Public
+      // A Scala `object` is a singleton instance, not a true static namespace.
+      // Keep module-class methods as instance methods in PyIR so inherited
+      // trait defaults can use normal receiver semantics (`super()`, `self`, ...).
+      val isStatic = sym.is(JavaStatic)
+      val namespace = (isStatic, sym.is(Private)) match
+        case (true,  true)  => PyMemberNamespace.PrivateStatic
+        case (true,  false) => PyMemberNamespace.PublicStatic
+        case (false, true)  => PyMemberNamespace.Private
+        case (false, false) => PyMemberNamespace.Public
 
-    val body: Option[PyTree] =
-      if sym.is(Deferred) then None
-      else if dd.rhs.isEmpty then Some(PySkip()(pos))
-      else Some(stmtsToBody(flattenToStmts(genStat(dd.rhs)), pos))
+      val body: Option[PyTree] =
+        if sym.is(Deferred) then None
+        else if dd.rhs.isEmpty then Some(PySkip()(pos))
+        else Some(stmtsToBody(flattenToStmts(genStat(dd.rhs)), pos))
 
-    Some(PyMethodDef(
-      flags        = PyMemberFlags.empty.withNamespace(namespace),
-      name         = encoding.encodeMethodName(sym),
-      originalName = encoding.originalNameOf(sym),
-      args         = params,
-      resultType   = resultType,
-      body         = body,
-      pos          = pos
-    ))
+      Some(PyMethodDef(
+        flags        = PyMemberFlags.empty.withNamespace(namespace),
+        name         = encoding.encodeMethodName(sym),
+        originalName = encoding.originalNameOf(sym),
+        args         = params,
+        resultType   = resultType,
+        body         = body,
+        pos          = pos
+      ))
+    }
 
   private def genParamDef(p: ValDef): PyParamDef =
     val sym = p.symbol
