@@ -77,3 +77,29 @@ object ScalaRunTime:
   def wrapUnitArray(xs: Array[Unit]): ArraySeq[Unit] =
     if xs == null then null.asInstanceOf[ArraySeq[Unit]]
     else ArraySeq.unsafeWrapArray(xs)
+
+  /** Generic array indexing — stdlib dispatches on element type for
+   *  primitive boxing on the JVM. Python has no boxed-vs-unboxed
+   *  distinction, so a single cast suffices.
+   */
+  def array_apply(xs: AnyRef, idx: Int): Any =
+    xs.asInstanceOf[Array[Any]](idx)
+
+  def array_update(xs: AnyRef, idx: Int, value: Any): Unit =
+    xs.asInstanceOf[Array[Any]](idx) = value
+
+  def array_clone(xs: AnyRef): AnyRef =
+    xs.asInstanceOf[Array[Any]].clone()
+
+  def array_length(xs: AnyRef): Int =
+    xs.asInstanceOf[Array[Any]].length
+
+  def isArray(a: Any, atLevel: Int = 1): Boolean =
+    a != null && a.isInstanceOf[Array[?]]
+
+  /** Inline helpers used by stdlib `Predef.locally`/`mapNull` etc. Must
+   *  match the stdlib signature so call sites inline correctly. */
+  inline def mapNull[A, B](a: A, inline f: B): B =
+    if a == null then null.asInstanceOf[B] else f
+
+  inline def nullForGC[T]: T = null.asInstanceOf[T]

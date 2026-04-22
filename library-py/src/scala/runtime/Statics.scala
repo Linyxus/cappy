@@ -36,3 +36,15 @@ object Statics:
 
   def ioobe[T](n: Int): T =
     throw new IndexOutOfBoundsException(n.toString)
+
+  /** Sentinel value for partial-function fall-through inside the stdlib
+   *  collections. Identity-compared via `eq`, so just needs to be a fresh
+   *  unique reference.
+   */
+  val pfMarker: AnyRef = new Object()
+
+  /** No-op on Python — the JVM uses `VarHandle.releaseFence()` for the
+   *  publication of immutable collection internals; Python's single-thread
+   *  / GIL semantics make it unnecessary.
+   */
+  def releaseFence(): Unit = ()

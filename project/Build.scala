@@ -2638,6 +2638,17 @@ object Build {
       scalaVersion := dottyNonBootstrappedVersion,
       Compile / unmanagedSourceDirectories := Seq(baseDirectory.value / "src"),
       Compile / scalacOptions ++= Seq("-scalapy", "-scpy-ir-only"),
+      // Strip `.class`/`.tasty` for `java/**` from the published jar so that
+      // when downstream projects (scala-library-py) put this jar on their
+      // typecheck classpath, our handwritten Scala-defined `java.*` classes
+      // do NOT shadow the real JDK at typer time. `.pyir` for `java/**` is
+      // preserved — it's needed at link time. `scala.python.**` keeps both
+      // class/tasty (typer needs them) and pyir.
+      Compile / packageBin / mappings := {
+        (Compile / packageBin / mappings).value.filterNot { case (_, path) =>
+          path.startsWith("java/") && (path.endsWith(".class") || path.endsWith(".tasty"))
+        }
+      },
       target := target.value / "scala-pylib-py",
       autoScalaLibrary := false,
       bootstrappedScalaInstanceSettings,
@@ -2648,27 +2659,40 @@ object Build {
   /** Scala standard library compiled for the Python backend.
    *
    *  Produces a jar containing `.class`/`.tasty` (for downstream typechecking)
-   *  and `.pyir` (for the Python linker). Compiles the hand-written stdlib
-   *  shims under library-py/src/scala/ (Predef, Console, runtime/..., etc.)
-   *  that the Python backend relies on at link time — these ship today.
+   *  and `.pyir` (for the Python linker). Stacks the real Scala stdlib
+   *  sources (`library/src` + `library/src-bootstrapped`, pulled from
+   *  `scala-library-bootstrapped`) under `library-py/src/` and shadows any
+   *  file re-declared under `library-py/src/<pkg>/<name>` (basename-stem
+   *  match, so a `.scala` override can shadow a `.java` original). Modeled
+   *  on `scala-library-sjs` (see ~line 1339).
    *
-   *  Infra for pulling the real Scala stdlib sources (`library/src` +
-   *  `library/src-bootstrapped`) is in place, modeled on `scala-library-sjs`
-   *  (see ~line 1339): set `enableStdlibSourcePull` to `true` to stack stdlib
-   *  sources underneath, with a same-shape filter that auto-shadows any file
-   *  re-declared under `library-py/src/<pkg>/<name>`. Kept OFF by default
-   *  until the stdlib actually compiles under `-scalapy` (API gaps in
-   *  javalib: `Arrays.fill` overloads, `System.currentTimeMillis` arity,
-   *  `Thread` inner classes like `UncaughtExceptionHandler`, etc.).
+   *  Typechecks against the JVM stdlib (transitive JDK included) only — NOT
+   *  against `scala-pylib-py`. Rationale: stdlib code was written against
+   *  the real JDK API. Our handwritten `java.*` in pylib is Scala source,
+   *  so Scala 3 would apply its strict empty-paren / overload rules instead
+   *  of the arity bridge the JDK gets. Treating pylib as a typecheck
+   *  dependency forced perfect-match discipline on handwritten sources;
+   *  treating it as a *link-time peer* is more honest — the Python linker
+   *  walks `.pyir` from both jars, and pylib is responsible for providing
+   *  runtime bodies whose signatures match the JDK API it claims to
+   *  implement. Scala.js javalib lives with the same discipline.
    *
-   *  Depends on `scala-pylib-py` so handwritten `java.*` and
-   *  `scala.python.*` are resolved as binary at typer time.
+   *  `enableStdlibSourcePull` stays as a kill switch while the architecture
+   *  settles.
    */
   lazy val `scala-library-py` = project.in(file("library-py"))
-    .dependsOn(`scala3-library-bootstrapped`, `scala-pylib-py`)
+    .dependsOn(`scala3-library-bootstrapped`)
     .settings(
       name          := "scala-library-py",
       scalaVersion  := dottyNonBootstrappedVersion,
+      // We can't use `dependsOn(scala-pylib-py)` because that would put pylib's
+      // unpacked classes dir on the classpath (with all .class/.tasty for
+      // `java.**`), shadowing JDK and bringing back arity-bridge issues.
+      // Instead consume pylib's *packaged* jar, which we filter to drop
+      // `java/**.class` and `java/**.tasty` so only `scala.python.**` types
+      // are typer-visible. PyIR for everything (including `java.**`) is
+      // preserved in the jar for link-time use.
+      Compile / unmanagedJars += (`scala-pylib-py` / Compile / packageBin).value,
       // library-py/src/ holds future stdlib overrides only; javalib + facades
       // live in `scala-pylib-py`.
       Compile / unmanagedSourceDirectories := Seq(baseDirectory.value / "src"),
@@ -2677,7 +2701,7 @@ object Build {
       // scala-library-sjs (see Build.scala ~line 1385). Gated off by default
       // until the stdlib actually compiles under -scalapy.
       Compile / unmanagedSourceDirectories ++= {
-        val enableStdlibSourcePull = false
+        val enableStdlibSourcePull = true
         if (enableStdlibSourcePull)
           (`scala-library-bootstrapped` / Compile / unmanagedSourceDirectories).value
         else Nil
@@ -2685,10 +2709,19 @@ object Build {
       Compile / sources := {
         val files = (Compile / sources).value
         val overrideBase = baseDirectory.value / "src"
-        val overwrittenSources = files.flatMap(_.relativeTo(overrideBase)).toSet
+        val stdlibBase = (`scala-library-bootstrapped` / baseDirectory).value / "src"
+        // Match overrides against stdlib by basename (extension stripped) so
+        // that, e.g., library-py/src/scala/runtime/BoxesRunTime.scala shadows
+        // library/src/scala/runtime/BoxesRunTime.java. Mirrors the explicit
+        // .java exclusions in scala-library-sjs (Build.scala ~line 1394).
+        def stem(f: java.io.File): String = {
+          val p = f.getPath
+          val i = p.lastIndexOf('.')
+          if (i >= 0) p.substring(0, i) else p
+        }
+        val overrideStems = files.flatMap(_.relativeTo(overrideBase)).map(stem).toSet
         files.filterNot(file =>
-          file.relativeTo((`scala-library-bootstrapped` / baseDirectory).value / "src")
-              .exists(overwrittenSources.contains))
+          file.relativeTo(stdlibBase).exists(rel => overrideStems.contains(stem(rel))))
       },
       // Compile to PyIR without linking or emitting .py bundles.
       // The linker is skipped because stdlib CUs have cross-references that
