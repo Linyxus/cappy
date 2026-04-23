@@ -4,95 +4,107 @@ This file provides guidance to coding agents when working with code in this repo
 
 ## Project focus
 
-This branch (`scala-py`) develops an experimental **Python backend** for the Scala 3 compiler, enabled by the `-scalapy` flag. It hooks into the compiler's phase pipeline at the same point as the JVM (GenBCode) and Scala.js (GenSJSIR) backends and emits `.py` files.
+This branch develops an experimental Python backend for the Scala 3 compiler. It is enabled with `-scalapy`, installs `ScalaPyPlatform`, runs alongside the Scala.js and JVM backend phases, emits one `.pyir` file per compilation unit, and then links those IR files plus classpath support IR into a bundled `.py` file unless `-scpy-ir-only` is set.
+
+The current backend is no longer a direct "typed tree to one Python file" experiment. Treat it as: post-erasure Scala trees -> typed PyIR -> serialized `.pyir` artifacts -> classpath loader -> reachability/link validation -> bundled Python source.
 
 ## Commands
 
 ```bash
-# Run the full ScalaPy test suite (positive + negative).
-sbt --client "pyCompilerTests/test"
-
-# Convenience command for running all ScalaPy related tests
+# Build the Python support libraries, compiler-side tests, and all py tests.
 sbt --client "testPyCompilation"
 
-# Run the compilation suite and its methods.
+# Run only the Python test harness. Requires support jars to already be built.
+sbt --client "pyCompilerTests/test"
+
+# Rebuild support jars explicitly.
+sbt --client "scala-pylib-py/Compile/packageBin"
+sbt --client "scala-library-py/Compile/packageBin"
+
+# Run py compiler harness suites.
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests"
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests -- --tests=runScalaPy"
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests -- --tests=negScalaPy"
-
-# Run the suite for testing pylib-specific behaviours.
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PylibTest"
-
-# Unit tests for the PyRun helper.
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PyRunTest"
 
-# Ad-hoc: compile a file with the backend and inspect output.
+# Compiler-side Python backend unit tests.
+sbt --client "scala3-compiler-bootstrapped/testOnly dotty.tools.backend.python.PyLinkerTest dotty.tools.backend.python.PyReachabilityTest dotty.tools.backend.python.ir.pyir.serialization.PyIRSerializationTests"
+
+# Ad hoc: compile a source to .pyir + bundled .py.
 sbt --client "scala3-compiler-bootstrapped/runMain dotty.tools.dotc.Main -scalapy -d /tmp/out foo.scala"
 
-# Execute generated Python via the repo's pinned uv project.
-uv sync --frozen            # once, to populate .venv from uv.lock
+# Ad hoc: emit .pyir only, useful for support-library style debugging.
+sbt --client "scala3-compiler-bootstrapped/runMain dotty.tools.dotc.Main -scalapy -scpy-ir-only -d /tmp/out foo.scala"
+
+# Execute generated Python through the repo's pinned uv project.
+uv sync --frozen
 uv run --project . --no-sync python /tmp/out/foo.py
 ```
 
-Generated Python must always be executed through `uv run --project <repo-root> --no-sync python`: never bare `python3`. `PyRun.scala` already does this; keep new harness code consistent.
+Generated Python must run through `uv run --project <repo-root> --no-sync python`, never bare `python3`. `PyRun.scala` enforces this and checks `uv sync --frozen --check` before running harness output.
 
-## Architecture
+## Backend Architecture
 
-The backend lives in three places:
+The compiler backend lives under `compiler/src/dotty/tools/backend/python/`.
 
-### 1. Compiler phase — `compiler/src/dotty/tools/backend/python/`
+- `GenPython.scala` is the backend phase. It forces `PyDefinitions`, lowers post-erasure `TypeDef`s to `PyClassDef`s, skips `@extern` facades, synthesizes static forwarders for top-level module classes, writes the current CU's `.pyir`, and invokes the linker unless `-scpy-ir-only` is set.
+- `PyEncoding.scala` is the symbol/type/name boundary. It owns class, method, field, local, label, type, facade, `@extern`, and `@name` encoding. Do not duplicate string-based name logic elsewhere.
+- `PyDefinitions.scala` caches symbols for `scala.python.*` and validates that they are real classpath entries, not stub symbols. Match on these symbols, not on `showFullName`.
+- `PyClasspathLoader.scala` deserializes `.pyir` files from the compile classpath and the output directory. It tags all loaded inputs as `Support`; the current CU is passed to the linker in memory as `User`.
+- `PyLinker.scala` validates nominal references, partitions `User` vs `Support`, applies reachability pruning, resolves main entries, drops runtime-provided class collisions from support inputs, and orders classes so Python base classes are defined first.
+- `PyReachability.scala` is link-time DCE. User classes are preserved as roots; support classes are retained only when reached. It tracks reachable classes, instantiated classes, reachable methods/fields, virtual dispatch logs, module loads, and prelude call seeds from `PyIRRuntime.preludeCalls`.
+- `PyIREmitter.scala` renders the linked bundle to Python. It emits the runtime prelude, extern imports, class definitions, class metadata/registration, lazy module singletons, constructor dispatch, closures, labels/non-local returns, and the main guard.
+- `PyIRRuntime.scala` is the hand-written runtime contract and prelude. It now keeps only irreducible runtime/JDK-provided classes in `providedClasses`; most Scala/JDK surface is supplied by `.pyir` from the support libraries.
 
-Pipeline: Scala typed AST → **PyIR** → Python source.
+PyIR nodes live in `compiler/src/dotty/tools/backend/python/ir/pyir/`. `PyIR.scala` defines the sealed tree hierarchy; `PyNames.scala`, `PyTypes.scala`, `PyOps.scala`, and `PyPosition.scala` hold supporting value types; `PyIRPrinter.scala` is diagnostic output. `ir/pyir/serialization/` owns the stable binary format (`PyIRFormat`, `PyIRTags`, `PyIRSerializer`, `PyIRDeserializer`). Add new serialized node variants by appending tags and bumping the format version as directed in `PyIRTags.scala`.
 
-- **`GenPython.scala`** — the `GenPython` phase. `genCompilationUnit` walks `TypeDef`s; `genExpr`/`genStat` recurse over post-erasure trees; `genApply` dispatches method calls; `genPrimitiveOp` maps `ScalaPrimitivesOps` codes to Python IR.
-- **`PyEncoding.scala`** — Scala symbol/type → Python name/type mapping, plus facade machinery: `externBindingOf`, `externMemberNameOf`, `hasExternAnnotation`, `isFacadeSymbol`, `isValidPyAttrName`, `validateFacadeMemberNames`, deduped malformed-extern reporter.
-- **`PyDefinitions.scala`** — symbol cache for `scala.python.*` (analogous to `jsdefn`). Force it with `PyDefinitions.force()` during phase setup; downstream code pattern-matches on symbol identity (never on `showFullName`).
-- **`PyIREmitter.scala`** — pretty-prints PyIR to Python source. Also collects extern-import aliases via a pre-traversal walker and renders them at the top of the bundle.
-- **`PyLinker.scala`** — whole-bundle validation. `PyExternalRef`, `PyApplyDynamic`, and `PyAttrAccess` are **linker-opaque leaves** — no class/member existence checks. Facade classes never reach the linker because `genCompilationUnit` skips them.
-- **`PyIRRuntime.scala`** — the runtime class whitelist (`providedClass`).
+Two IR worlds are intentionally separate:
 
-PyIR nodes live in `ir/pyir/` (`PyIR.scala`, `PyNames.scala`, `PyOps.scala`, `PyTypes.scala`, `PyPosition.scala`). Statements and expressions are separate enums (Python enforces the distinction); `ExprStmt` bridges into statement position.
+- `PyApplyExternal` + `PyExternalName` are flat calls to runtime helpers and Python builtins such as `_scpy_i32`, `hash`, and `_scpy_to_str`. Do not use them for user code or facade references.
+- `PyExternalRef(module, path)`, `PyApplyDynamic`, and `PyAttrAccess` model structured Python interop for `@extern` facades and `scala.python.Dynamic`. They are linker-opaque leaves except for walking argument/value subtrees.
 
-**Two IR worlds, don't mix them:**
-- `PyApplyExternal` + `PyExternalName` — flat, runtime-intrinsic-only (`_scpy_i32`, `hash`, `_scpy_to_str`, …). Do **not** add facade/user-code things here.
-- `PyExternalRef(module, path)` + `PyApplyDynamic(callee, args, kwargs)` + `PyAttrAccess(obj, name)` — structured, for facades and `scala.python.Dynamic` interop. Opaque to the linker; emitter renders as `<alias>.<path…>` / `<obj>.<name>` / call form.
+## Libraries
 
-### 2. Sidecar library `library-py/src/scala/python/`
+There are two Python-side library projects in `project/Build.scala`.
 
-`PyAny`, `PyDynamic`, `Dynamic`, `@extern`/`@name`, `def native`. These live only in the `scala-library-py` sidecar project (see `project/Build.scala` ~line 2621), not in `scala-library-bootstrapped`. The Python backend's compiler code resolves them by string lookup at `-scalapy` time (`PyDefinitions.requiredClassRef("scala.python.PyAny")`), so the main compiler JAR never needs them on its compile classpath. Mirrors how Scala.js keeps `scala.scalajs.*` in `scala-library-sjs`.
+- `scala-pylib-py` sources live in `pylib-py/`. This is the foundational platform layer compiled with `-scalapy -scpy-ir-only`: `scala.python.{PyAny, PyDynamic, Dynamic, native, @extern, @name}`, `scala.python.runtime.*` wrappers, and handwritten `java.**`/javalib implementations. Its packaged jar strips `java/**.class` and `java/**.tasty` so downstream typechecking still sees the real JDK, while preserving `java/**.pyir` for link time.
+- `scala-library-py` sources live in `library-py/`. It compiles the Scala standard library sources plus local overrides to `.pyir`, consuming the packaged `scala-pylib-py` jar only as an unmanaged jar. It intentionally does not `dependsOn(scala-pylib-py)`, because the raw class directory would shadow JDK classes during typer.
 
-Facades declare bindings like:
+`PathResolver` gives `-scalapy` classpath precedence over the JDK so ported `java.*` classes can shadow JRT classes where needed. The test classpath is assembled in `compiler/test/dotty/tools/vulpix/TestConfiguration.scala` as `scalaPyOptions`, `scalaPyRawPylibOptions`, and `scalaPyNegOptions`.
+
+Facades are Scala declarations typechecked by the frontend but not emitted as Python classes:
 
 ```scala
+import scala.python.*
+
 @extern("numpy") object np extends PyAny:
   @name("zeros_like") def zerosLike(a: PyAny): PyAny = native
 ```
 
-Facades are type-checked by the frontend but never emitted as Python classes — `genCompilationUnit` skips any `TypeDef` whose symbol (or an override) carries `@extern`.
+`@extern("module", "path", ...)` becomes a `PyExternalRef`; member calls and `Dynamic.module`/`Dynamic.attr` lower to `PyApplyDynamic`/`PyAttrAccess`. `applyDynamicNamed` requires literal-string keyword names that are valid Python identifiers.
 
-### 3. Test harness — `py-compiler-tests/`
+## Tests
 
-- **`ScalaPyCompilationTests.scala`** — filtered-pylib JUnit entry. `runScalaPy` compiles and runs the regular ScalaPy positive tests, including case-class coverage, against the packaged `scala-pylib-py` jar; `negScalaPy` compiles everything in `tests/neg-py/` expecting errors.
-- **`PylibTest.scala`** — raw-pylib JUnit entry for the positive tests that intentionally depend on the unfiltered `scala-pylib-py` class directory at typer time.
-- **`PyRun.scala`** — executes generated Python. Always through `uv run --project <repo-root> --no-sync python`. Requires `uv sync --frozen` to have populated `.venv`.
-- **`PyRunTest.scala`** — unit tests for the helper.
-- sbt project key: `pyCompilerTests` (defined in `project/Build.scala` ~line 2579, depends on `scala3-compiler-bootstrapped`).
+`py-compiler-tests/` contains the JUnit harness.
 
-The `-scalapy` flag is registered in `compiler/src/dotty/tools/dotc/config/ScalaSettings.scala`; the extra compile flags used by the test harness live in `compiler/test/dotty/tools/vulpix/TestConfiguration.scala:93` as `scalaPyOptions`.
+- `ScalaPyCompilationTests.scala` compiles and runs positive tests in `tests/pos-py/` against the packaged pylib jar, excluding cases that need the raw pylib class directory. Its `negScalaPy` path compiles `tests/neg-py/` with `-scpy-ir-only` so negative tests are not polluted by link-time diagnostics.
+- `PylibTest.scala` runs the raw-pylib subset listed in `PylibTest.rawPylibEntries`.
+- `ScalaPyTestSuite.scala` integrates with Vulpix and delegates execution to `PyRun`.
+- `PyRun.scala` finds the generated bundled `.py`, validates the locked uv environment, and executes it with `uv run --project <repo-root> --no-sync python -W ignore`.
 
-## Test layout
+`tests/pos-py/` is now broad coverage, not just facade smoke tests. It includes basics, case classes, functions, labels/matches, module initialization, Python facades/dynamic calls/kwargs, and many javalib areas: `java.lang`, `java.io`, `java.math`, `java.net`, `java.nio`, `java.util`, regex, functions, collections, concurrency, atomics, timers, charsets, and runtime wrappers. Directory-style tests are supported when a scenario has multiple source files.
 
-- `tests/pos-py/` — positive tests. Each scenario is a `<name>.scala` (runnable, with an entry point) plus a `<name>.check` containing the exact expected stdout. Current coverage: hello, test1–3, facade0, facade-builtins, facade-ctor, extern-def-builtins, dynamic-builtin, dynamic-attr, update-dynamic, multipath-extern, keyword-attrs, kwargs-basic, kwargs-mixed, nested-facade.
-- `tests/neg-py/` — compile-error tests: `duplicate-extern-name`, `kwargs-non-literal`, `malformed-extern`.
+Positive tests normally pair runnable `.scala` sources with `.check` expected stdout files. `.check.out` files are generated/updated comparison artifacts; do not treat their presence as a new fixture format. Negative tests currently cover malformed externs, duplicate facade names, and non-literal keyword arguments.
 
-When adding a test: run it standalone via `sbt … runMain dotty.tools.dotc.Main -scalapy -d /tmp/out <file>.scala`, execute the `.py` through `uv run`, paste the real output into `.check`, then add it to the harness run to confirm.
+When adding or updating a positive test, compile it with `-scalapy`, run the generated bundle through `uv run --project . --no-sync python`, update the `.check` from real output, then confirm through the harness. Prefer `testPyCompilation` when touching linker/runtime/library behavior because it rebuilds support jars before running tests.
 
-## Repo layout caveats
+## Repo Caveats
 
-- The `scala-py` branch accumulates scratch files at the repo root (e.g. `hello*.scala`, `test*.scala`, `cc-fluid-*`, `inbox/`, `notes/`, `mkissue.sh`). These are in-progress exploration — **do not clean up** without being asked.
-- Other active notes live in `notes/` (phase reports, interop plan, issue write-ups). They're historical but useful context for ongoing work.
-- This branch also contains the unrelated `compiler-js/` Scala.js-compiler experiment. Don't confuse the two: Python backend work never touches `compiler-js/`.
+- The branch contains scratch files and working notes at the repo root, `inbox/`, `notes/`, `out/`, and similar directories. Do not clean them up unless asked.
+- `notes/dce-improvement-plan.md` records the current DCE status and remaining reachability work.
+- Scala.js-related projects such as `library-js/`, `sjs-compiler-tests/`, and `scaladoc-js/` are unrelated to the Python backend except as architectural references.
 
 ## Important Instructions
 
-- When asked to make a issue note, always follow the template in notes/issue-template.md
+- When asked to make an issue note, follow the template in `notes/issue-template.md`.
