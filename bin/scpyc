@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" >& /dev/null && pwd)/.."
+
+# Mirror the ScalaPy test-suite classpath so standalone compiles see the same
+# stdlib, javalib/facade runtime, and link-time .pyir support jars.
+scala_library_root="$ROOT/library/target/scala-library-bootstrapped"
+scala_pylib_py_root="$ROOT/pylib-py/target/scala-pylib-py"
+scala_library_py_root="$ROOT/library-py/target/scala-library-py"
+
+find_jar() {
+  find "$1" -type f -name "$2" ! -name "*-sources.jar" ! -name "*-javadoc.jar" | LC_ALL=C sort | head -1
+}
+
+resolve_scala_py_classpath() {
+  local scala_library
+  local scala_pylib_py
+  local scala_library_py
+
+  scala_library="$(find_jar "$scala_library_root" "scala-library-*.jar")"
+  scala_pylib_py="$(find_jar "$scala_pylib_py_root" "scala-pylib-py_3-*.jar")"
+  scala_library_py="$(find_jar "$scala_library_py_root" "scala-library-py_3-*.jar")"
+
+  if [ -z "$scala_library" ] || [ ! -f "$scala_library" ] ||
+     [ -z "$scala_pylib_py" ] || [ ! -f "$scala_pylib_py" ] ||
+     [ -z "$scala_library_py" ] || [ ! -f "$scala_library_py" ]; then
+    echo "Building ScalaPy support jars (required for scpyc) ..." >&2
+    (
+      cd "$ROOT" &&
+      sbt --client "scala-library-bootstrapped/Compile/packageBin; scala-pylib-py/Compile/packageBin; scala-library-py/Compile/packageBin"
+    ) >&2 || exit 1
+
+    scala_library="$(find_jar "$scala_library_root" "scala-library-*.jar")"
+    scala_pylib_py="$(find_jar "$scala_pylib_py_root" "scala-pylib-py_3-*.jar")"
+    scala_library_py="$(find_jar "$scala_library_py_root" "scala-library-py_3-*.jar")"
+  fi
+
+  if [ -z "$scala_library" ] || [ ! -f "$scala_library" ]; then
+    echo "Could not locate scala-library jar under $scala_library_root" >&2
+    exit 1
+  fi
+  if [ -z "$scala_pylib_py" ] || [ ! -f "$scala_pylib_py" ]; then
+    echo "Could not locate scala-pylib-py jar under $scala_pylib_py_root" >&2
+    exit 1
+  fi
+  if [ -z "$scala_library_py" ] || [ ! -f "$scala_library_py" ]; then
+    echo "Could not locate scala-library-py jar under $scala_library_py_root" >&2
+    exit 1
+  fi
+
+  printf '%s:%s:%s\n' "$scala_library" "$scala_pylib_py" "$scala_library_py"
+}
+
+need_scalapy_flag=1
+for arg in "$@"; do
+  case "$arg" in
+    -scalapy|--scalapy)
+      need_scalapy_flag=0
+      break
+      ;;
+  esac
+done
+
+scala_py_classpath="$(resolve_scala_py_classpath)"
+
+# Append ScalaPy support jars to any user-provided classpath so project-local
+# outputs stay first, matching bin/scalac's merge behavior.
+merged=()
+injected=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -classpath|-cp)
+      if [[ $# -lt 2 ]]; then
+        merged+=("$1")
+        shift
+      else
+        if [ -n "$2" ]; then
+          merged+=("$1" "$2:$scala_py_classpath")
+        else
+          merged+=("$1" "$scala_py_classpath")
+        fi
+        shift 2
+        injected=1
+      fi
+      ;;
+    *)
+      merged+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [ "$injected" = "0" ]; then
+  set -- -classpath "$scala_py_classpath" "${merged[@]}"
+else
+  set -- "${merged[@]}"
+fi
+
+if [ "$need_scalapy_flag" = "1" ]; then
+  set -- -scalapy "$@"
+fi
+
+"$ROOT/bin/common" "scalac" "$@"
