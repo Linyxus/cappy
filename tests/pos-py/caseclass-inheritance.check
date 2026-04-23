@@ -1,0 +1,7 @@
+rect:2:3|square:4|rect:1:5
+27
+rect:21
+True
+False
+shape=Rect(2,3)
+Tagged(Square(4),shape)

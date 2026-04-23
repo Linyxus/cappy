@@ -511,7 +511,13 @@ object PyIREmitter:
       indent()
       method.body match
         case None =>
-          line("raise NotImplementedError()")
+          methodPyName match
+            case "__eq__" if method.args.nonEmpty =>
+              line(s"return self is ${method.args.head.name.name}")
+            case "__hash__" =>
+              line("return _scpy_identity_hash_code(self)")
+            case _ =>
+              line("raise NotImplementedError()")
         case Some(body) =>
           val stmts = flattenBlock(body)
           val isVoidReturn = method.resultType == PyVoidType

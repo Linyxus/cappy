@@ -1,0 +1,7 @@
+(1,two,true)
+a|b|c
+1|two|True
+Triple(1,two,True)
+True
+(Triple(1,two,True),2)
+Wrapper(Triple(1,two,True),5)

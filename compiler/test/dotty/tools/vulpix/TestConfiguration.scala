@@ -92,8 +92,12 @@ object TestConfiguration {
     defaultOptions.and("-scalajs").withClasspath(scalaJSClasspath).withRunClasspath(scalaJSClasspath)
   lazy val scalaPyClasspath =
     mkClasspath(List(Properties.scalaLibrary, Properties.scalaPylibPy, Properties.scalaLibraryPy))
+  lazy val scalaPyRawPylibClasspath =
+    mkClasspath(List(Properties.scalaLibrary, Properties.scalaPylibPyRaw, Properties.scalaLibraryPy))
   lazy val scalaPyOptions =
     defaultOptions.and("-scalapy").withClasspath(scalaPyClasspath).withRunClasspath(scalaPyClasspath)
+  lazy val scalaPyRawPylibOptions =
+    defaultOptions.and("-scalapy").withClasspath(scalaPyRawPylibClasspath).withRunClasspath(scalaPyRawPylibClasspath)
   /** Like `scalaPyOptions` but skips link-time bundling. Used by neg-py
    *  so the test only counts typecheck-level errors and isn't perturbed
    *  by stdlib link diagnostics (e.g. a fixture's transitive

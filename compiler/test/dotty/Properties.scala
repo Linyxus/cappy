@@ -87,6 +87,9 @@ object Properties {
   /** scala-pylib-py jar (Python backend javalib + scala.python.* with .pyir artifacts) */
   def scalaPylibPy: String = sys.props("dotty.tests.classes.scalaPylibPy")
 
+  /** Raw scala-pylib-py class directory with the shadow javalib classes and TASTy intact. */
+  def scalaPylibPyRaw: String = sys.props("dotty.tests.classes.scalaPylibPyRaw")
+
   // TODO: Remove this once we migrate the test suite
   def usingScalaLibraryCCTasty: Boolean = true
 

@@ -1,4 +1,4 @@
 decimal32:7:ROUND_HALF_EVEN
 unlimited:0:HALF_UP
 custom:9:HALF_DOWN:precision=5 roundingMode=CEILING
-equals-hashcode:false:true
+equals-hashcode:true:true

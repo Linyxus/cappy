@@ -1,0 +1,7 @@
+Token(tok,7)
+Token(tok+zip,9)
+token:tok:7
+packet:zip:2:9
+Token(tok,7)
+Packet(Token(tok,7),9)
+True
