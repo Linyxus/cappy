@@ -4,15 +4,30 @@ import scala.collection.immutable.ArraySeq
 
 /** Minimal ScalaRunTime for the Python backend.
  *
+ *  Important: downstream ScalaPy compilation typechecks against the JVM
+ *  stdlib `scala.runtime.ScalaRunTime`, while link-time PyIR comes from this
+ *  shadow implementation. Signatures for any overridden helpers therefore
+ *  need to stay ABI-compatible with the real stdlib surface.
+ *
  *  Case-class synthesis and other compiler-generated code calls
  *  `ScalaRunTime._toString`, `_hashCode`, `_equals`.
  */
 object ScalaRunTime:
-  def _toString(x: Any): String =
-    if x == null then "null" else x.toString
+  def _toString(x: Product): String =
+    x.productIterator.mkString(x.productPrefix + "(", ",", ")")
 
-  def _hashCode(x: Any): Int =
-    if x == null then 0 else x.hashCode
+  def _hashCode(x: Product): Int =
+    scala.util.hashing.MurmurHash3.caseClassHash(x)
+
+  def typedProductIterator[T](x: Product): Iterator[T] =
+    new scala.collection.AbstractIterator[T]:
+      private var c: Int = 0
+      private val cmax = x.productArity
+      def hasNext: Boolean = c < cmax
+      def next(): T =
+        val result = x.productElement(c)
+        c += 1
+        result.asInstanceOf[T]
 
   def _equals(x: Any, y: Any): Boolean =
     if x == null then y == null
