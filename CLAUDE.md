@@ -15,12 +15,12 @@ sbt --client "pyCompilerTests/test"
 # Convenience command for running all ScalaPy related tests
 sbt --client "testPyCompilation"
 
-# Run the filtered-pylib suite and its methods.
+# Run the compilation suite and its methods.
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests"
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests -- --tests=runScalaPy"
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests -- --tests=negScalaPy"
 
-# Run the raw-pylib suite.
+# Run the suite for testing pylib-specific behaviours.
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PylibTest"
 
 # Unit tests for the PyRun helper.
