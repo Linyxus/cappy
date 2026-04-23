@@ -1,0 +1,10 @@
+The point is: Point(10,10)
+True
+Point(10,20)
+Labeled(Point(10,10),origin)
+Labeled(Point(1,2),moved)
+Labeled
+point
+label
+Marker()
+True

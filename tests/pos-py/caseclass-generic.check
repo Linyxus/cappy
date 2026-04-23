@@ -1,0 +1,8 @@
+Pair(1,x)
+Pair(x,1)
+True
+Pair(1,y)
+Box(Pair(2,z),1)
+Pair(2,z):1
+Box(Pair(2,z),3)
+Box(plain,2)

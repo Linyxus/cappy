@@ -10,14 +10,18 @@ This branch (`scala-py`) develops an experimental **Python backend** for the Sca
 
 ```bash
 # Run the full ScalaPy test suite (positive + negative).
-sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests"
+sbt --client "pyCompilerTests/test"
 
 # Convenience command for running all ScalaPy related tests
 sbt --client "testPyCompilation"
 
-# Run a single method of the suite.
+# Run the filtered-pylib suite and its methods.
+sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests"
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests -- --tests=runScalaPy"
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests -- --tests=negScalaPy"
+
+# Run the raw-pylib suite.
+sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PylibTest"
 
 # Unit tests for the PyRun helper.
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PyRunTest"
@@ -68,7 +72,8 @@ Facades are type-checked by the frontend but never emitted as Python classes —
 
 ### 3. Test harness — `py-compiler-tests/`
 
-- **`ScalaPyCompilationTests.scala`** — JUnit entry. `runScalaPy` compiles and runs every `.scala` in `tests/pos-py/` and diffs against the matching `.check`; `negScalaPy` compiles everything in `tests/neg-py/` expecting errors.
+- **`ScalaPyCompilationTests.scala`** — filtered-pylib JUnit entry. `runScalaPy` compiles and runs the regular ScalaPy positive tests, including case-class coverage, against the packaged `scala-pylib-py` jar; `negScalaPy` compiles everything in `tests/neg-py/` expecting errors.
+- **`PylibTest.scala`** — raw-pylib JUnit entry for the positive tests that intentionally depend on the unfiltered `scala-pylib-py` class directory at typer time.
 - **`PyRun.scala`** — executes generated Python. Always through `uv run --project <repo-root> --no-sync python`. Requires `uv sync --frozen` to have populated `.venv`.
 - **`PyRunTest.scala`** — unit tests for the helper.
 - sbt project key: `pyCompilerTests` (defined in `project/Build.scala` ~line 2579, depends on `scala3-compiler-bootstrapped`).

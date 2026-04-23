@@ -41,7 +41,7 @@ class PyRunTest:
   @Test def syncFailureMessageMentionsRecoveryCommand(): Unit =
     val message = PyRun.formatSyncFailure(repoRoot, "mock uv output")
     assertTrue(message.contains("uv sync --frozen"))
-    assertTrue(message.contains("pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests"))
+    assertTrue(message.contains("pyCompilerTests/test"))
     assertTrue(message.contains("mock uv output"))
 
   private def projectPythonMajorMinor: String =

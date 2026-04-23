@@ -5,5 +5,5 @@ bytes:0,-128,1:-1,0,1:8000
 radix:ff:42:dzyx0571as9nepx
 primality:true:false:101
 exact:123456789:yes
-compare:false:true:0
+compare:true:true:0
 equals:true:false

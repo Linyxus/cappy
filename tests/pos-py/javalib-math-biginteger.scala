@@ -89,9 +89,5 @@ import java.math.BigInteger
 
   val c1 = new BigInteger("123456789abcdef", 16)
   val c2 = new BigInteger("123456789abcdef", 16)
-  // `c1 == c2` is expected `false` because Scala `==` on AnyRef lowers
-  // to Python `is` (reference identity) on ScalaPy — see
-  // `notes/issue-universal-eq-lowers-to-refeq.md`. `.equals` + hash +
-  // compareTo all return the correct value-equal results.
   println("compare:" + (c1 == c2) + ":" + (c1.hashCode() == c2.hashCode()) + ":" + c1.compareTo(c2))
   println("equals:" + c1.equals(c2) + ":" + c1.equals(new BigInteger("0")))

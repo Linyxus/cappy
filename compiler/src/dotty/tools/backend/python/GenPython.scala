@@ -1338,6 +1338,15 @@ private class PyCodeGen()(using genCtx: Context):
     else
       false
 
+  private def genBoxesRunTimeEquals(lhs: PyTree, rhs: PyTree, pos: PyPosition): PyTree =
+    val moduleClass = defn.BoxesRunTimeModule.moduleClass
+    PyApplyStatic(
+      PyApplyFlags.empty,
+      encoding.encodeClassName(moduleClass),
+      encoding.encodeMethodName(defn.BoxesRunTimeModule_externalEquals),
+      List(lhs, rhs)
+    )(PyBooleanType, pos)
+
   private def genSynchronizedStat(app: Apply): PyTree =
     val pos = posOf(app)
     val Apply(fun, List(body)) = app: @unchecked
@@ -1457,6 +1466,17 @@ private class PyCodeGen()(using genCtx: Context):
       // Binary operations
       case List(rhs) =>
         val rhsExpr = genExpr(rhs)
+        val usesUniversalEquality =
+          !encoding.isIntType(receiverType) &&
+            !encoding.isLongType(receiverType) &&
+            !encoding.isFloatType(receiverType) &&
+            !encoding.isDoubleType(receiverType) &&
+            !encoding.isBooleanType(receiverType) &&
+            !encoding.isStringType(receiverType)
+        if code == EQ && usesUniversalEquality then
+          return genBoxesRunTimeEquals(lhs, rhsExpr, pos)
+        if code == NE && usesUniversalEquality then
+          return PyUnaryOp(BoolNot, genBoxesRunTimeEquals(lhs, rhsExpr, pos))(pos)
         // For arithmetic and comparison, Scala/JVM promotes Int→Long→Float→Double
         // based on the widest operand. Using only the receiver type produces
         // `int / 2.0 → int // int = int`, so derive a dominant type from both sides.

@@ -76,7 +76,7 @@ object PyRun:
         |  ${projectRoot.getAbsolutePath}
         |
         |Run `uv sync --frozen` in the repo root, then rerun:
-        |  sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests"
+        |  sbt --client "pyCompilerTests/test"
         |
         |uv sync --check output:
         |$renderedOutput
