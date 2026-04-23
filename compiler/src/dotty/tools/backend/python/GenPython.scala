@@ -2028,11 +2028,9 @@ private class PyCodeGen()(using genCtx: Context):
     val irFileName = deriveIrFileName(sourceName)
 
     // Write this CU's `.pyir` first, containing only its own classes.
-    // Mirrors Scala.js `JSCodeGen.genIRFile`: the filesystem is the
-    // source of truth for IR. The linker below reads back from the
-    // output directory (via PyClasspathLoader) rather than reusing the
-    // in-memory `generatedClasses`, so a repeat compile sees exactly one
-    // copy of each class regardless of classpath/output-dir overlap.
+    // Mirrors Scala.js `JSCodeGen.genIRFile`: the filesystem stays the
+    // source of truth for downstream compiles, even though we hand the
+    // current compile's classes to the linker in-memory below.
     val irFile = outputDirectory.fileNamed(irFileName)
     val irOut  = irFile.bufferedOutput
     try PyIRSerializer.serialize(generatedClasses.toList, mainEntry, irOut)
@@ -2040,14 +2038,18 @@ private class PyCodeGen()(using genCtx: Context):
 
     if irOnly then return
 
-    // Pick up the fresh `.pyir` (just written) plus any library `.pyir`
-    // reachable via `-classpath`. User inputs (output-dir) are kept in
-    // full; support inputs (classpath) are subject to link-time DCE.
-    val inputs = PyClasspathLoader.loadInputs
-    val (userInputs, supportInputs) =
-      inputs.partition(_.source == PyLinker.InputSource.User)
+    // Roots of reachability are exactly the classes the code generator
+    // just produced. Anything else on the classpath — or leftover in the
+    // output dir from a previous compile — is Support, subject to DCE.
+    val userInput = PyLinker.Input(
+      classes   = generatedClasses.toList,
+      mainEntry = mainEntry,
+      source    = PyLinker.InputSource.User
+    )
+    val irFileJava = Option(irFile.jpath).map(_.toFile.nn)
+    val supportInputs = PyClasspathLoader.loadSupportInputs(excludeOutputFile = irFileJava)
     val linkedBundle =
-      try PyLinker.link(userInputs, supportInputs)
+      try PyLinker.link(List(userInput), supportInputs)
       catch
         case err: PyLinkingException =>
           reportLinkerErrors(err.errors)
