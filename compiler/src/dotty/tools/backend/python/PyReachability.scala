@@ -4,37 +4,71 @@ import dotty.tools.backend.python.ir.pyir.*
 
 import scala.collection.mutable
 
-/** Class-level link-time reachability analysis.
+/** Link-time reachability analysis for PyIR.
  *
- *  Seeds from the user compilation unit(s) + the main entry and walks
- *  the PyIR of every reached class, enqueueing any transitively named
- *  class. Runtime-provided classes (see [[PyIRRuntime]]) are opaque —
- *  the emitter does not produce them, so they are never added to the
- *  reachable set.
+ *  Tracks four facts per class:
  *
- *  Modeled on Scala.js's `Analyzer` (simplified for a single-pass,
- *  single-threaded, class-level pass). Shaped so V2 method-level DCE
- *  can slot in without changing the public signature: [[Result]] is a
- *  case class that will grow per-method/per-field fields, and
- *  `PyLinker.applyReachability` maps over it as a single hook.
+ *   1. **`isReachable`** — the class header appears in the output; its
+ *      name is referenced somewhere in the kept graph. Class is either
+ *      instantiated, a static receiver, an ancestor of a kept class, or
+ *      named in a nominal type test.
+ *   2. **`isInstantiated`** — an instance of this exact class is ever
+ *      constructed via `PyNew` (or the class is a `ModuleClass` whose
+ *      singleton is loaded). Gates survival of instance fields and
+ *      non-constructor instance methods.
+ *   3. **`reachableMethods`** — which specific method signatures on the
+ *      class are known to be called. The linker uses this to prune
+ *      unused methods from kept classes.
+ *   4. **`reachableFields`** — which specific fields are read or
+ *      written. The linker prunes dead fields.
  *
- *  V1 scope:
- *    - Preserve every class in `userClasses` verbatim.
- *    - Preserve the main entry class.
- *    - Preserve the superclass chain + interfaces of every preserved class.
- *    - Preserve any class named by a reference site in a preserved class's
- *      method bodies.
- *    - Skip type-annotation-only references (`resultType`, `ptpe`, etc.)
- *      — stays consistent with `PyLinker.validateTypeRef`'s "descriptive
- *      only" stance for type references.
+ *  Virtual dispatch uses the Scala.js dispatch-log technique (see
+ *  `inbox/scala-js/.../analyzer/Analyzer.scala`): a virtual call on a
+ *  static-receiver class `C` is logged against `C` and every ancestor;
+ *  each time a class `D` becomes instantiated, every logged call on an
+ *  ancestor of `D` is resolved on `D`'s vtable and the target marked
+ *  reachable. This replaces "mark every override in every subclass"
+ *  with "mark overrides only for actually-instantiated subclasses", the
+ *  main win over class-level-only DCE.
+ *
+ *  Runtime-provided classes ([[PyIRRuntime.providedClass]]) are opaque:
+ *  they never enter the reachable set, never get methods analyzed, and
+ *  the emitter replaces them with hand-written shims.
+ *
+ *  Seeding policy for V1: **preserve user classes verbatim.** Every
+ *  `PyClassDef` in `userClasses` has all its methods and fields
+ *  seeded; module classes are additionally forced to instantiated.
+ *  Support classes (classpath `.pyir`) live or die on the edges
+ *  discovered by walking user code.
  */
 object PyReachability:
 
-  /** The output of [[analyze]]. A value-level wrapper (not a raw
-   *  `Set[PyClassName]`) so V2 can grow this with per-method /
-   *  per-field reachability without breaking call sites. */
-  final case class Result(reachableClasses: Set[PyClassName]):
-    def isReachable(cls: PyClassName): Boolean = reachableClasses.contains(cls)
+  /** Per-class reachability facts accumulated during analysis.
+   *
+   *  V1 sets only [[isReachable]] once per class; subsequent V2 steps
+   *  populate the method / field / instantiation sets and the virtual
+   *  call log.
+   */
+  final case class ClassReachability(
+      isReachable:      Boolean             = false,
+      isInstantiated:   Boolean             = false,
+      reachableMethods: Set[PyMethodName]   = Set.empty,
+      reachableFields:  Set[PyFieldName]    = Set.empty,
+      virtualCallLog:   Set[PyMethodName]   = Set.empty,
+  )
+
+  /** The output of [[analyze]]. `facts` is keyed by class name; classes
+   *  absent from the map are unreachable. Query helpers collapse the
+   *  absent case to `false`. */
+  final case class Result(facts: Map[PyClassName, ClassReachability]):
+    def isReachable(cls: PyClassName): Boolean =
+      facts.get(cls).exists(_.isReachable)
+    def isInstantiated(cls: PyClassName): Boolean =
+      facts.get(cls).exists(_.isInstantiated)
+    def isMethodReachable(owner: PyClassName, method: PyMethodName): Boolean =
+      facts.get(owner).exists(_.reachableMethods.contains(method))
+    def isFieldReachable(owner: PyClassName, field: PyFieldName): Boolean =
+      facts.get(owner).exists(_.reachableFields.contains(field))
 
   def analyze(
       userClasses:    List[PyClassDef],
@@ -43,6 +77,18 @@ object PyReachability:
   ): Result =
     new Analyzer(userClasses, supportClasses, mainEntry).run()
 
+  // -------------------------------------------------------------------
+  // Internal worklist tokens
+  // -------------------------------------------------------------------
+  private enum Work:
+    case ReachClass(cls: PyClassName)
+    case Instantiate(cls: PyClassName)
+    case AnalyzeMethod(owner: PyClassName, method: PyMethodName)
+    case ReachField(owner: PyClassName, field: PyFieldName)
+
+  // -------------------------------------------------------------------
+  // Analyzer
+  // -------------------------------------------------------------------
   private final class Analyzer(
       userClasses:    List[PyClassDef],
       supportClasses: List[PyClassDef],
@@ -51,115 +97,330 @@ object PyReachability:
     private val classByName: Map[PyClassName, PyClassDef] =
       (userClasses.iterator ++ supportClasses.iterator).map(c => c.name -> c).toMap
 
-    private val visited  = mutable.HashSet.empty[PyClassName]
-    private val worklist = mutable.ArrayDeque.empty[PyClassName]
+    /** Mutable per-class facts. Classes absent from this map are
+     *  unreachable; query helpers on [[Result]] collapse that to
+     *  `false`. We pre-insert an entry at first touch in
+     *  [[stateOf]]. */
+    private val state = mutable.HashMap.empty[PyClassName, MutableState]
+
+    private final class MutableState:
+      var isReachable:     Boolean = false
+      var isInstantiated:  Boolean = false
+      val reachableMethods: mutable.HashSet[PyMethodName] = new mutable.HashSet
+      val reachableFields:  mutable.HashSet[PyFieldName]  = new mutable.HashSet
+      val virtualCallLog:   mutable.HashSet[PyMethodName] = new mutable.HashSet
+      def freeze: ClassReachability = ClassReachability(
+        isReachable      = isReachable,
+        isInstantiated   = isInstantiated,
+        reachableMethods = reachableMethods.toSet,
+        reachableFields  = reachableFields.toSet,
+        virtualCallLog   = virtualCallLog.toSet,
+      )
+
+    private def stateOf(cls: PyClassName): MutableState =
+      state.getOrElseUpdate(cls, new MutableState)
+
+    private val worklist = mutable.ArrayDeque.empty[Work]
+    private def enqueue(w: Work): Unit = worklist += w
+
+    // --- Inheritance graph (precomputed) ----------------------------
+    // directDescendants[C] = every class whose superClass or interfaces
+    // directly contains C. Built lazily with transitiveAncestors below.
+    private val directDescendants: Map[PyClassName, Set[PyClassName]] =
+      val acc = mutable.HashMap.empty[PyClassName, mutable.HashSet[PyClassName]]
+      for c <- classByName.valuesIterator do
+        c.superClass.foreach { s => acc.getOrElseUpdate(s, mutable.HashSet.empty) += c.name }
+        c.interfaces.foreach { i => acc.getOrElseUpdate(i, mutable.HashSet.empty) += c.name }
+      acc.view.mapValues(_.toSet).toMap
+
+    /** Transitively reachable ancestors of `cls`, not including `cls`
+     *  itself. Runtime-provided ancestors are included (they are class
+     *  names we *might* want to log virtual calls against, even if we
+     *  never emit them). */
+    private def ancestorsOf(cls: PyClassName): Set[PyClassName] =
+      val seen = mutable.HashSet.empty[PyClassName]
+      val stack = mutable.ArrayDeque.empty[PyClassName]
+      classByName.get(cls).foreach { cd =>
+        cd.superClass.foreach(stack += _)
+        cd.interfaces.foreach(stack += _)
+      }
+      while stack.nonEmpty do
+        val a = stack.removeHead()
+        if seen.add(a) then
+          classByName.get(a).foreach { cd =>
+            cd.superClass.foreach(stack += _)
+            cd.interfaces.foreach(stack += _)
+          }
+      seen.toSet
+
+    // --- Entry point ------------------------------------------------
 
     def run(): Result =
-      for cls <- userClasses do enqueue(cls.name)
-      mainEntry.foreach { case (cn, _) => enqueue(cn) }
+      seed()
+      drain()
+      Result(state.view.mapValues(_.freeze).toMap)
 
+    private def seed(): Unit =
+      // Preserve user classes verbatim: every method and field rooted.
+      for cls <- userClasses do
+        enqueue(Work.ReachClass(cls.name))
+        if cls.kind == PyClassKind.ModuleClass then
+          enqueue(Work.Instantiate(cls.name))
+        for m <- cls.methods do enqueue(Work.AnalyzeMethod(cls.name, m.name))
+        for f <- cls.fields  do enqueue(Work.ReachField(cls.name, f.name))
+
+      mainEntry.foreach { case (cn, kind) =>
+        enqueue(Work.ReachClass(cn))
+        if kind == PyClassKind.ModuleClass then
+          enqueue(Work.Instantiate(cn))
+        // If the main-entry class is a Support class (rare: a classpath
+        // class supplying a main), the `main` method needs an explicit
+        // AnalyzeMethod edge. For a User main the method was already
+        // enqueued above; the dedupe in AnalyzeMethod handling makes
+        // the double-enqueue harmless.
+        classByName.get(cn).foreach { cd =>
+          cd.methods
+            .find(_.name.simple.name == "main")
+            .foreach(m => enqueue(Work.AnalyzeMethod(cn, m.name)))
+        }
+      }
+
+      // Runtime-prelude call edges. The hand-written Python preamble
+      // (see `PyIRRuntime.prelude`) calls a handful of Scala-defined
+      // methods directly; the analyzer cannot see those calls because
+      // they are not part of any walked tree. Seed them from the
+      // static list in `PyIRRuntime`.
+      for (owner, method) <- PyIRRuntime.preludeCalls do
+        enqueue(Work.ReachClass(owner))
+        enqueue(Work.Instantiate(owner))
+        enqueue(Work.AnalyzeMethod(owner, method))
+
+    private def drain(): Unit =
       while worklist.nonEmpty do
-        val name = worklist.removeHead()
-        if visited.add(name) then
-          classByName.get(name).foreach(process)
+        worklist.removeHead() match
+          case Work.ReachClass(c)         => reachClass(c)
+          case Work.Instantiate(c)        => instantiate(c)
+          case Work.AnalyzeMethod(o, m)   => analyzeMethod(o, m)
+          case Work.ReachField(o, f)      => reachField(o, f)
 
-      Result(visited.toSet)
+    // --- Work item handlers -----------------------------------------
 
-    /** Enqueue `name` for later processing. Runtime-provided classes are
-     *  dropped on the floor: they are already opaque leaves to the
-     *  linker (see `PyIRRuntime`) and never participate in emission. */
-    private def enqueue(name: PyClassName): Unit =
-      if !visited.contains(name)
-         && PyIRRuntime.providedClass(name).isEmpty
-      then worklist += name
+    /** Runtime-provided classes never participate in emission, so we
+     *  never touch their state. */
+    private def isRuntimeProvided(cls: PyClassName): Boolean =
+      PyIRRuntime.providedClass(cls).isDefined
 
-    private def process(cls: PyClassDef): Unit =
-      cls.superClass.foreach(enqueue)
-      cls.interfaces.foreach(enqueue)
-      cls.methods.foreach { m => m.body.foreach(walkTree) }
+    private def reachClass(cls: PyClassName): Unit =
+      if isRuntimeProvided(cls) then return
+      val s = stateOf(cls)
+      if s.isReachable then return
+      s.isReachable = true
+      classByName.get(cls).foreach { cd =>
+        cd.superClass.foreach(sc => enqueue(Work.ReachClass(sc)))
+        cd.interfaces.foreach(i  => enqueue(Work.ReachClass(i)))
+        // `<clinit>` runs on class definition in Python; if we keep the
+        // class we'll run its static init, so analyze the body to pull
+        // in whatever it references.
+        for m <- cd.methods if m.flags.namespace == PyMemberNamespace.StaticConstructor do
+          enqueue(Work.AnalyzeMethod(cls, m.name))
+      }
 
-    // --- Tree visitor -------------------------------------------------
-    //
-    // Mirrors the structure of `PyLinker.validateTree`. Each case either
-    // extracts named class references via `enqueue` / `fromTypeRef` /
-    // `fromType`, or recurses into children. Keep structurally in sync
-    // with `PyLinker.validateTree` when new PyTree cases are added.
+    private def instantiate(cls: PyClassName): Unit =
+      if isRuntimeProvided(cls) then return
+      val s = stateOf(cls)
+      if s.isInstantiated then return
+      s.isInstantiated = true
+      enqueue(Work.ReachClass(cls))
+      // Two classes of methods must be kept on any instantiated class
+      // even if no Scala-side call site mentions them:
+      //   1. Every constructor — the emitter's runtime constructor
+      //      dispatcher (`PyIREmitter.emitConstructorDispatcher`) scans
+      //      every ctor of the class, so dropping one can misroute a
+      //      `new X(...)` matching call somewhere else.
+      //   2. Every Python dunder (`__call__`, `__str__`, `__iter__`,
+      //      `__enter__`, comparison hooks, etc.). Those are invoked
+      //      by the Python runtime — not by any tree we walk — so
+      //      the analyzer has no explicit edge for them. Without this
+      //      rule, a user-facing callable class like Timer's
+      //      `RunOnce(task)` would have its `__call__` pruned and the
+      //      timer would hang forever.
+      classByName.get(cls).foreach { cd =>
+        for m <- cd.methods do
+          val ns    = m.flags.namespace
+          val simp  = m.name.simple.name
+          if ns == PyMemberNamespace.Constructor || isPythonDunder(simp) then
+            enqueue(Work.AnalyzeMethod(cls, m.name))
+      }
+      // Replay every accumulated virtual-call log on the new vtable.
+      val chain = cls +: ancestorsOf(cls).toSeq
+      for a <- chain do
+        state.get(a).foreach { as =>
+          for m <- as.virtualCallLog do
+            resolveInstanceMethod(cls, m).foreach { case (owner, method) =>
+              enqueue(Work.AnalyzeMethod(owner, method))
+            }
+        }
+
+    private def analyzeMethod(owner: PyClassName, method: PyMethodName): Unit =
+      if isRuntimeProvided(owner) then return
+      val s = stateOf(owner)
+      if !s.reachableMethods.add(method) then return
+      enqueue(Work.ReachClass(owner))
+      classByName.get(owner).flatMap(_.methods.find(_.name == method)) match
+        case Some(mdef) => mdef.body.foreach(walkTree)
+        case None =>
+          // Not a direct member — either inherited only, or missing.
+          // For exact / super dispatch that lands here by mistake we
+          // stay lenient, mirroring `PyLinker.requireInstanceMethod`'s
+          // Java-provided pass-through.
+          ()
+
+    private def reachField(owner: PyClassName, field: PyFieldName): Unit =
+      if isRuntimeProvided(owner) then return
+      val s = stateOf(owner)
+      if !s.reachableFields.add(field) then return
+      enqueue(Work.ReachClass(owner))
+
+    // --- Virtual dispatch -------------------------------------------
+
+    /** Log a virtual call against `staticRecv` and every ancestor, and
+     *  immediately dispatch to any currently-instantiated descendant.
+     *  Subsequent instantiations will replay via [[instantiate]].
+     *
+     *  Additionally resolves the call against `staticRecv`'s current
+     *  method table and enqueues the resolver. Without this, a call
+     *  with no instantiated receiver would never pull in the fallback
+     *  method body, and the linker's ancestor-walk in
+     *  [[PyLinker.requireInstanceMethod]] would fail validation. */
+    private def logVirtualCall(staticRecv: PyClassName, m: PyMethodName): Unit =
+      if isRuntimeProvided(staticRecv) then return
+      // Log against the receiver and every ancestor so that a future
+      // instantiation of a deeper descendant (whose ancestors transit
+      // through `staticRecv`) still sees this call.
+      stateOf(staticRecv).virtualCallLog += m
+      for a <- ancestorsOf(staticRecv) do stateOf(a).virtualCallLog += m
+      // Static-receiver fallback: keep whichever class currently owns
+      // the default definition in the reachable set.
+      resolveInstanceMethod(staticRecv, m).foreach { case (owner, method) =>
+        enqueue(Work.AnalyzeMethod(owner, method))
+      }
+      // Dispatch to already-instantiated descendants.
+      val candidates = staticRecv +: gatherDescendants(staticRecv).toSeq
+      for d <- candidates do
+        state.get(d).foreach { ds =>
+          if ds.isInstantiated then
+            resolveInstanceMethod(d, m).foreach { case (owner, method) =>
+              enqueue(Work.AnalyzeMethod(owner, method))
+            }
+        }
+
+    private def gatherDescendants(cls: PyClassName): Set[PyClassName] =
+      val seen = mutable.HashSet.empty[PyClassName]
+      val stack = mutable.ArrayDeque.empty[PyClassName]
+      directDescendants.get(cls).foreach(_.foreach(stack += _))
+      while stack.nonEmpty do
+        val d = stack.removeHead()
+        if seen.add(d) then
+          directDescendants.get(d).foreach(_.foreach(stack += _))
+      seen.toSet
+
+    /** Walk `start`'s superchain (including `start`) and return the
+     *  first class that defines an instance method with name `m`.
+     *  Returns `None` if the method is resolved only via a
+     *  runtime-provided ancestor or isn't in the bundle. */
+    private def resolveInstanceMethod(
+        start:  PyClassName,
+        m:      PyMethodName
+    ): Option[(PyClassName, PyMethodName)] =
+      // First walk the superclass chain.
+      var cur: Option[PyClassName] = Some(start)
+      var found: Option[(PyClassName, PyMethodName)] = None
+      while cur.isDefined && found.isEmpty do
+        val cn = cur.get
+        classByName.get(cn) match
+          case Some(cd) =>
+            cd.methods.find(md => md.name == m && isInstanceMethod(md.flags.namespace)) match
+              case Some(_) => found = Some((cn, m))
+              case None    => cur = cd.superClass
+          case None =>
+            cur = None
+      // Fall back to interface defaults directly declared on `start`.
+      // We do not walk interface-of-interface chains — `reachClass`
+      // has already pulled those in, and deeper interface defaults
+      // are found via their own concrete-subclass dispatch.
+      if found.isEmpty then
+        classByName.get(start).foreach { cd =>
+          val it = cd.interfaces.iterator.flatMap(classByName.get)
+          while it.hasNext && found.isEmpty do
+            val ifd = it.next()
+            ifd.methods.find(md => md.name == m && isInstanceMethod(md.flags.namespace)).foreach { _ =>
+              found = Some((ifd.name, m))
+            }
+        }
+      found
+
+    private def isInstanceMethod(ns: PyMemberNamespace): Boolean =
+      ns == PyMemberNamespace.Public || ns == PyMemberNamespace.Private
+
+    /** Python dunder predicate: `__foo__` with length ≥ 5. Mirrors the
+     *  convention in `PyNames.PyMethodName.isDunder`. */
+    private def isPythonDunder(name: String): Boolean =
+      name.length >= 5 && name.startsWith("__") && name.endsWith("__")
+
+    // --- Tree visitor ----------------------------------------------
 
     private def walkTree(tree: PyTree): Unit = tree match
-      case t: PyVarDef =>
-        walkTree(t.rhs)
-
-      case t: PyAssign =>
-        walkTree(t.lhs)
-        walkTree(t.rhs)
-
-      case t: PyReturn =>
-        walkTree(t.value)
-
-      case t: PyWhile =>
-        walkTree(t.cond)
-        walkTree(t.body)
-
-      case t: PyForEach =>
-        walkTree(t.iterable)
-        walkTree(t.body)
-
-      case _: PySkip =>
-        ()
-
-      case t: PyIf =>
-        walkTree(t.cond); walkTree(t.thenp); walkTree(t.elsep)
-
-      case t: PyTryCatch =>
-        walkTree(t.block); walkTree(t.handler)
-
-      case t: PyTryFinally =>
-        walkTree(t.block); walkTree(t.finalizer)
-
-      case t: PyMatch =>
+      case t: PyVarDef         => walkTree(t.rhs)
+      case t: PyAssign         => walkTree(t.lhs); walkTree(t.rhs)
+      case t: PyReturn         => walkTree(t.value)
+      case t: PyWhile          => walkTree(t.cond); walkTree(t.body)
+      case t: PyForEach        => walkTree(t.iterable); walkTree(t.body)
+      case _: PySkip           => ()
+      case t: PyIf             => walkTree(t.cond); walkTree(t.thenp); walkTree(t.elsep)
+      case t: PyTryCatch       => walkTree(t.block); walkTree(t.handler)
+      case t: PyTryFinally     => walkTree(t.block); walkTree(t.finalizer)
+      case t: PyMatch          =>
         walkTree(t.selector)
         t.cases.foreach { case (_, body) => walkTree(body) }
         walkTree(t.default)
-
-      case t: PyBlock =>
-        t.stats.foreach(walkTree)
-        walkTree(t.expr)
-
-      case t: PyLabeled =>
-        walkTree(t.body)
-
-      case t: PyLabelReturn =>
-        walkTree(t.value)
-
-      case _: PyVarRef =>
-        ()
-
-      case _: PyThis =>
-        ()
+      case t: PyBlock          => t.stats.foreach(walkTree); walkTree(t.expr)
+      case t: PyLabeled        => walkTree(t.body)
+      case t: PyLabelReturn    => walkTree(t.value)
+      case _: PyVarRef         => ()
+      case _: PyThis           => ()
 
       case t: PySelect =>
         walkTree(t.qualifier)
-        enqueue(t.field.owner)
+        enqueue(Work.ReachField(t.field.owner, t.field))
 
       case t: PySelectStatic =>
-        enqueue(t.field.owner)
+        enqueue(Work.ReachField(t.field.owner, t.field))
 
       case t: PyApply =>
         walkTree(t.receiver)
         t.args.foreach(walkTree)
-        enqueue(t.className)
+        enqueue(Work.ReachClass(t.className))
+        // Constructors can surface as `PyApply` from the uniform-call
+        // lowering. Dispatch is exact — not virtual — so route them
+        // like `PyApplyStatically`.
+        if t.method.simple.isConstructor then
+          enqueue(Work.AnalyzeMethod(t.className, t.method))
+        else
+          logVirtualCall(t.className, t.method)
 
       case t: PyApplyStatically =>
         walkTree(t.receiver)
         t.args.foreach(walkTree)
-        enqueue(t.className)
+        enqueue(Work.ReachClass(t.className))
+        enqueue(Work.AnalyzeMethod(t.className, t.method))
 
       case t: PyApplyStatic =>
         t.args.foreach(walkTree)
-        enqueue(t.className)
+        enqueue(Work.ReachClass(t.className))
+        enqueue(Work.AnalyzeMethod(t.className, t.method))
 
       case t: PyApplyExternal =>
-        // Opaque — the callee targets a Python builtin / runtime helper.
+        // Opaque — callee is a Python builtin / runtime helper.
         t.args.foreach(walkTree)
 
       case _: PyExternalRef =>
@@ -176,10 +437,22 @@ object PyReachability:
 
       case t: PyNew =>
         t.args.foreach(walkTree)
-        enqueue(t.className)
+        enqueue(Work.Instantiate(t.className))
+        enqueue(Work.AnalyzeMethod(t.className, t.ctor))
 
       case t: PyLoadModule =>
-        enqueue(t.className)
+        // Module-class singletons are "allocated" on load via the
+        // lazy-module wrapper; their Constructor/<clinit> run on first
+        // access. Force the class instantiated and analyze whichever
+        // init entry points exist.
+        enqueue(Work.ReachClass(t.className))
+        enqueue(Work.Instantiate(t.className))
+        classByName.get(t.className).foreach { cd =>
+          for m <- cd.methods do
+            val ns = m.flags.namespace
+            if ns == PyMemberNamespace.Constructor || ns == PyMemberNamespace.StaticConstructor then
+              enqueue(Work.AnalyzeMethod(t.className, m.name))
+        }
 
       case t: PyIsInstanceOf =>
         walkTree(t.expr)
@@ -217,10 +490,10 @@ object PyReachability:
         ()
 
     private def fromTypeRef(ref: PyTypeRef): Unit = ref match
-      case PyClassRef(name)   => enqueue(name)
+      case PyClassRef(name)    => enqueue(Work.ReachClass(name))
       case PyArrayRef(base, _) => fromTypeRef(base)
-      case PyPrimRef(_)       => ()
+      case PyPrimRef(_)        => ()
 
     private def fromType(tpe: PyType): Unit = tpe match
-      case PyClassType(name) => enqueue(name)
+      case PyClassType(name) => enqueue(Work.ReachClass(name))
       case _                 => ()

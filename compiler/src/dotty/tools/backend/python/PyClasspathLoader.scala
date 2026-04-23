@@ -8,18 +8,20 @@ import java.util.jar.JarFile
 import scala.collection.mutable
 
 /** Walks the compile classpath AND the compile's output directory for
- *  `.pyir` entries and deserializes them into `PyLinker.Input` values.
+ *  `.pyir` entries and deserializes them into `Support`-tagged
+ *  [[PyLinker.Input]] values.
+ *
+ *  Roots of the reachability check are the classes produced by the
+ *  current compile, handed to the linker in-memory by
+ *  [[dotty.tools.backend.python.GenPython]] — this loader does **not**
+ *  produce `User` inputs. Any `.pyir` found in the output directory is
+ *  leftover state from a previous compile (or the output-dir-on-classpath
+ *  case) and is treated as Support, subject to DCE.
  *
  *  Mirrors Scala.js's `PathIRContainer.fromClasspath` + the `scalaJSIR`
  *  sbt task, which reads `.sjsir` via the `fullClasspath` (which always
  *  includes the compile output). See
  *  `inbox/scala-js/linker/jvm/src/main/scala/org/scalajs/linker/PathIRContainer.scala`.
- *
- *  In Scala.js the linker is a separate sbt task run after compile, so
- *  the output directory already contains fresh `.sjsir` files by the
- *  time the linker walks it. The Python backend currently folds the
- *  linker into `GenPython.linkAndWrite`, so the caller is responsible
- *  for writing this CU's `.pyir` before invoking `loadInputs`.
  *
  *  Results are deduped by canonical file path so that `.pyir` reachable
  *  both via the output directory and via an overlapping classpath entry
@@ -27,28 +29,41 @@ import scala.collection.mutable
  */
 object PyClasspathLoader:
 
-  def loadInputs(using ctx: Context): List[PyLinker.Input] =
+  /** Load every `.pyir` on the classpath (and any left over at the top
+   *  level of the output dir), tagged [[PyLinker.InputSource.Support]].
+   *
+   *  @param excludeOutputFile  canonical file whose content should be
+   *                            skipped — typically the `.pyir` the
+   *                            current compile just wrote, since the
+   *                            in-memory User input already covers it.
+   */
+  def loadSupportInputs(excludeOutputFile: Option[File] = None)(using ctx: Context): List[PyLinker.Input] =
     val cp = ctx.settings.classpath.value
     val outDir = outputDirCanonical
     val inputs = mutable.ListBuffer.empty[PyLinker.Input]
     val visitedFiles = mutable.HashSet.empty[String]
 
-    // Scan the output directory first so its fresh `.pyir` wins over
-    // any overlapping classpath entry. Output-directory entries are
-    // tagged `User` (the CU's own freshly-emitted classes, always kept
-    // by the linker), classpath entries are tagged `Support` (DCE
-    // candidates).
+    // Pre-register the canonical path of the just-written User `.pyir`
+    // so the subsequent scans skip it outright.
+    excludeOutputFile.foreach { f =>
+      val canon =
+        try f.getCanonicalPath.nn catch case _: java.io.IOException => f.getAbsolutePath.nn
+      visitedFiles += canon
+    }
+
+    // Scan the output dir top-level first so an overlapping classpath
+    // entry doesn't re-add the same file. Output-dir strays are
+    // Support — they are NOT roots.
     //
-    // The output-dir scan is NON-RECURSIVE: emission writes
-    // `<sourceName>.pyir` directly at the top of the output dir, so
-    // subtrees (e.g. `library-py/target/.../classes/*.pyir` when
-    // `-d .` happens to equal cwd) are not our output. They will be
-    // picked up by the classpath scan below (as `Support`), so nothing
-    // is lost.
+    // The scan is NON-RECURSIVE: emission writes `<sourceName>.pyir`
+    // directly at the top of the output dir, so subtrees (e.g. a
+    // library's `target/.../classes/*.pyir` when `-d .` happens to equal
+    // cwd) are not our output. They will be picked up by the classpath
+    // scan below, so nothing is lost.
     outDir.foreach { dir =>
       val f = new File(dir)
       if f.isDirectory then
-        loadFromDirTopLevel(f, PyLinker.InputSource.User, visitedFiles, inputs)
+        loadFromDirTopLevel(f, PyLinker.InputSource.Support, visitedFiles, inputs)
     }
 
     for entry <- cp.split(File.pathSeparator) do

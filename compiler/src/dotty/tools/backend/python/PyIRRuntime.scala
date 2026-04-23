@@ -500,6 +500,35 @@ object PyIRRuntime:
   private[python] def providedClass(className: PyClassName): Option[ProvidedClass] =
     providedClasses.get(className)
 
+  /** Static edges into Scala-defined stdlib methods that the runtime
+   *  [[prelude]] invokes directly. These call sites are not part of any
+   *  PyIR tree, so [[PyReachability]] cannot discover them by walking
+   *  method bodies. Seed them explicitly so method-level DCE does not
+   *  prune the targets.
+   *
+   *  Each entry is `(module-class name, target method name)`. The class
+   *  is treated as instantiated (module singleton) and the method as
+   *  reachable.
+   */
+  private[python] val preludeCalls: List[(PyClassName, PyMethodName)] = List(
+    // `_scpy_require_monitor` (see `prelude`) routes Object.wait/notify
+    // monitor-state errors through this helper so the exception class is
+    // kept live for test cases that don't otherwise mention it.
+    PyClassName("java.lang.ThrowablesSupport_")
+      -> PyMethodName.noArgs("throwIllegalMonitorState"),
+    // `_scpy_str_get_bytes` uses a `hasattr` probe to route through
+    // `Charset.encode(String)` when the caller passes a Charset. The
+    // call site is reflective, so the analyzer cannot see it; if DCE
+    // prunes `encode(String)` then `String.getBytes(charset)` silently
+    // falls back to Python's platform-endian codec and UTF-16 output
+    // ships with the wrong BOM.
+    PyClassName("java.nio.charset.Charset") -> PyMethodName(
+      PySimpleMethodName("encode"),
+      List(PyClassRef(PyClassName("java.lang.String"))),
+      PyClassRef(PyClassName("java.nio.ByteBuffer"))
+    )
+  )
+
   /** Python reserved words that must be escaped in identifiers. */
   val PythonKeywords: Set[String] = Set(
     "False", "None", "True", "and", "as", "assert", "async", "await",

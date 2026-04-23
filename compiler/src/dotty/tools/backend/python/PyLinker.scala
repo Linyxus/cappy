@@ -126,13 +126,36 @@ object PyLinker:
       // are bundled), preserving input order otherwise.
       LinkedBundle(orderForEmission(keptClasses), mainEntry)
 
-    // V1 filter hook: class-level only. V2 will also map over each
-    // kept class to prune unreachable methods/fields.
+    /** Drop unreachable classes and, for each class that survives,
+     *  drop methods whose bodies the analyzer never walked. Fields are
+     *  pruned later (Step 5 in the linker refactor); for now every
+     *  field of a kept class is retained. */
     private def applyReachability(
         classes: List[PyClassDef],
         reach:   PyReachability.Result
     ): List[PyClassDef] =
-      classes.filter(c => reach.isReachable(c.name))
+      classes.iterator.collect {
+        case c if reach.isReachable(c.name) => pruneClass(c, reach)
+      }.toList
+
+    private def pruneClass(c: PyClassDef, reach: PyReachability.Result): PyClassDef =
+      val instantiated = reach.isInstantiated(c.name)
+      def keepMethod(m: PyMethodDef): Boolean =
+        val ns = m.flags.namespace
+        if reach.isMethodReachable(c.name, m.name) then true
+        // `<clinit>` runs on class definition; keep it when the class
+        // is kept. Matches the analyzer's proactive <clinit> analysis.
+        else if ns == PyMemberNamespace.StaticConstructor then true
+        // The runtime ctor dispatcher sees every ctor of the class;
+        // keep them all for any instantiated class. The analyzer has
+        // already walked their bodies (see `instantiate`).
+        else if ns == PyMemberNamespace.Constructor && instantiated then true
+        // Abstract declarations have no body to pull anything in, and
+        // preserving them keeps the interface surface intact for
+        // downstream consumers.
+        else if m.body.isEmpty then true
+        else false
+      c.copy(methods = c.methods.filter(keepMethod))
 
     private def orderForEmission(classes: List[PyClassDef]): List[PyClassDef] =
       val byName = classes.iterator.map(c => c.name -> c).toMap
@@ -146,7 +169,7 @@ object PyLinker:
       ordered.toList
 
     private def collectClasses(): List[PyClassDef] =
-      val classDefs = mutable.LinkedHashMap.empty[PyClassName, PyClassDef]
+      val classDefs = mutable.LinkedHashMap.empty[PyClassName, (PyClassDef, InputSource)]
 
       for
         input <- inputs
@@ -163,12 +186,20 @@ object PyLinker:
             error(s"Class '${cls.name.nameString}' collides with a runtime-provided class", cls.pos)
         else
           classDefs.get(cls.name) match
+            case Some((_, InputSource.User)) if input.source == InputSource.Support =>
+              // Stale `.pyir` on the classpath or in the output dir
+              // carrying the same class name as a fresh User class.
+              // The in-memory User copy is authoritative; drop silently.
+              ()
             case Some(_) =>
+              // User × User or Support × Support duplicates remain hard
+              // errors. The first signals user error; the second is
+              // normally prevented by the canonical-path dedupe upstream.
               error(s"Duplicate class '${cls.name.nameString}'", cls.pos)
             case None =>
-              classDefs += cls.name -> cls
+              classDefs += cls.name -> (cls, input.source)
 
-      classDefs.values.toList
+      classDefs.values.iterator.map(_._1).toList
 
     private def buildClassInfos(classes: List[PyClassDef]): Map[PyClassName, ClassInfo] =
       val bundledInfos =
