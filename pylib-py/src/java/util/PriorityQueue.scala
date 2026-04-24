@@ -215,7 +215,7 @@ class PriorityQueue[E] private (
       arraySet(inner, 1, arrayGet(inner, newSize))
       arrayDecLength(inner)
       fixDown(1)
-      result
+      return result
     } else {
       null.asInstanceOf[E]
     }

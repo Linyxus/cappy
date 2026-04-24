@@ -37,7 +37,7 @@ float-1.5:1.5
 float-neg-3.14:-3.14
 float-sci:1000.0
 float-nan-is-nan:true
-float-inf:inf
+float-inf:Infinity
 abs-int-neg-5:5
 abs-int-0:0
 abs-long-neg-large:9000000000

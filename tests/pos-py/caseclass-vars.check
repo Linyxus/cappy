@@ -1,7 +1,7 @@
-True
+true
 Counter(2,hits)
-False
-True
+false
+true
 Counter(2,views)
 2
 Pair(3,4)

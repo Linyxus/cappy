@@ -1,3 +1,5 @@
 reverse:2:1:0:true
 nil:true:true
 singleton:true:3
+concat-to-string:List(0, 1, 2, 2, 1, 0)
+concat-plus:List(0, 1, 2, 2, 1, 0)

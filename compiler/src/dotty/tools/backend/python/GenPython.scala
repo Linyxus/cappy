@@ -60,6 +60,7 @@ private class PyCodeGen()(using genCtx: Context):
   private val generatedClasses = mutable.ListBuffer.empty[PyClassDef]
   private var mainEntry: Option[PyIREmitter.MainEntry] = None
   private val stringCompanionClassName = PyClassName("java.lang._String_")
+  private lazy val charSequenceClass = requiredClassRef("java.lang.CharSequence").symbol.asClass
 
   // --- Scoped state --------------------------------------------------
 
@@ -243,6 +244,7 @@ private class PyCodeGen()(using genCtx: Context):
       if ns != PyMemberNamespace.Public then None
       else if m.body.isEmpty then None  // abstract — can't forward
       else if existingMethodNames.contains(m.name) then None  // already on owner
+      else if isStaticForwarderProtocolMethod(m.name) then None
       else
         val paramRefs: List[PyTree] = m.args.map(p => PyVarRef(p.name)(p.ptpe, p.pos))
         val body = PyApply(
@@ -265,6 +267,16 @@ private class PyCodeGen()(using genCtx: Context):
           pos          = m.pos
         ))
     }
+
+  private def isStaticForwarderProtocolMethod(name: PyMethodName): Boolean =
+    val simple = name.simple.name
+    isPythonDunderName(simple) ||
+      (simple == "toString" && name.paramTypeRefs.isEmpty) ||
+      (simple == "hashCode" && name.paramTypeRefs.isEmpty) ||
+      (simple == "equals" && name.paramTypeRefs.length == 1)
+
+  private def isPythonDunderName(name: String): Boolean =
+    name.length >= 5 && name.startsWith("__") && name.endsWith("__")
 
   /** Static field forwarders for top-level module fields. Stdlib code
    *  typechecked against the JVM JDK sees primitives' `TYPE` as a static
@@ -518,8 +530,9 @@ private class PyCodeGen()(using genCtx: Context):
           rhs          = rhs
         )(pos)
 
-      case If(cond, thenp, elsep) =>
-        PyIf(genExpr(cond), genStat(thenp), genStat(elsep))(PyVoidType, pos)
+      case tree @ If(cond, thenp, elsep) =>
+        if isValueProducingScalaType(tree.tpe) then genExpr(tree)
+        else PyIf(genExpr(cond), genStat(thenp), genStat(elsep))(PyVoidType, pos)
 
       case t @ Labeled(bind, expr) =>
         // If the labeled block produces a value (non-Unit, non-Nothing
@@ -594,6 +607,12 @@ private class PyCodeGen()(using genCtx: Context):
   /** Build a `PyAssignable` LHS for an assignment. Scala's typer
    *  guarantees `Assign.lhs` is a valid LHS tree, so the matched cases
    *  cover everything. */
+  private def isValueProducingScalaType(tpe: Type): Boolean =
+    tpe.exists &&
+      !tpe.isRef(defn.UnitClass) &&
+      !tpe.isRef(defn.BoxedUnitClass) &&
+      !tpe.isRef(defn.NothingClass)
+
   private def genAssignableLhs(tree: Tree): PyAssignable =
     val pos = posOf(tree)
     tree match
@@ -980,6 +999,10 @@ private class PyCodeGen()(using genCtx: Context):
         val resultTpe  = encoding.encodeType(sym.info.finalResultType)
         val isStaticTarget = sym.is(JavaStatic)
 
+        genToStringSpecial(app, pos) match
+          case Some(tree) => break(tree)
+          case None       => ()
+
         if !isStaticTarget && sym.name == nme.clone_ then
           app.fun match
             case Select(receiver, _) =>
@@ -1176,13 +1199,38 @@ private class PyCodeGen()(using genCtx: Context):
       sym.info.paramInfoss.flatten.map(encoding.encodeTypeRef),
       encoding.encodeTypeRef(sym.info.finalResultType)
     )
-    PyApply(
-      PyApplyFlags.empty,
-      PyLoadModule(stringCompanionClassName)(pos),
-      stringCompanionClassName,
-      methodName,
-      args
-    )(resultTpe, pos)
+    genStringValueOfIntrinsic(methodName, args, pos).getOrElse {
+      PyApply(
+        PyApplyFlags.empty,
+        PyLoadModule(stringCompanionClassName)(pos),
+        stringCompanionClassName,
+        methodName,
+        args
+      )(resultTpe, pos)
+    }
+
+  private def genStringValueOfIntrinsic(
+      methodName: PyMethodName,
+      args: List[PyTree],
+      pos: PyPosition
+  ): Option[PyTree] =
+    if methodName.simple.name != "valueOf" || args.length != 1 then None
+    else
+      methodName.paramTypeRefs match
+        case List(ref) if ref == PyPrimRef.CharRef =>
+          Some(PyApplyExternal(PyExternalName("chr"), args)(PyStringType, pos))
+        case List(ref) if ref == PyPrimRef.FloatRef || ref == PyPrimRef.DoubleRef =>
+          Some(PyApplyExternal(PyExternalName("_scpy_float_to_str"), args)(PyStringType, pos))
+        case List(ref)
+            if ref == PyPrimRef.BooleanRef ||
+              ref == PyPrimRef.ByteRef ||
+              ref == PyPrimRef.ShortRef ||
+              ref == PyPrimRef.IntRef ||
+              ref == PyPrimRef.LongRef ||
+              ref == PyClassRef(PyClassName.ObjectClass) =>
+          Some(PyApplyExternal(PyExternalName("_scpy_to_str"), args)(PyStringType, pos))
+        case _ =>
+          None
 
   private def genStringRegexHelperCall(
       helperName: String,
@@ -1577,6 +1625,71 @@ private class PyCodeGen()(using genCtx: Context):
 
       case _ => PyUnitLit()(pos)
 
+  /** `toString` is a Scala method, not Python's `__str__`. Most concrete
+   *  receivers should use normal virtual dispatch to
+   *  `toString__Ljava_lang_String`; only raw Python-backed values need a
+   *  helper because they have no Scala-shaped method table. */
+  private def genToStringSpecial(app: Apply, pos: PyPosition): Option[PyTree] =
+    val sym = app.fun.symbol
+    if !isNullaryToString(sym) || sym.is(JavaStatic) then None
+    else
+      app.fun match
+        case Select(receiver, _) =>
+          val receiverType = receiver.tpe.widenDealias
+          val receiverExpr = genExpr(receiver)
+          if encoding.isStringType(receiverType) then
+            Some(receiverExpr)
+          else if isUnitValueType(receiverType) then
+            Some(PyStringLit("()")(pos))
+          else if encoding.isCharType(receiverType) then
+            Some(PyApplyExternal(PyExternalName("chr"), List(receiverExpr))(PyStringType, pos))
+          else if isFloatValueType(receiverType) then
+            Some(PyApplyExternal(PyExternalName("_scpy_float_to_str"), List(receiverExpr))(PyStringType, pos))
+          else if isPrimitiveValueType(receiverType) then
+            Some(PyApplyExternal(PyExternalName("_scpy_to_str"), List(receiverExpr))(PyStringType, pos))
+          else if isRawPythonToStringType(receiverType) then
+            Some(PyApplyExternal(PyExternalName("_scpy_call_to_string"), List(receiverExpr))(PyStringType, pos))
+          else
+            None
+        case _ =>
+          None
+
+  private def isNullaryToString(sym: Symbol): Boolean =
+    sym.exists && sym.name.mangledString == "toString" && sym.info.paramInfoss.flatten.isEmpty
+
+  private def isUnitValueType(tp: Type): Boolean =
+    val sym = tp.widenDealias.typeSymbol
+    sym == defn.UnitClass || sym == defn.BoxedUnitClass
+
+  private def isFloatValueType(tp: Type): Boolean =
+    val sym = tp.widenDealias.typeSymbol
+    sym == defn.FloatClass ||
+    sym == defn.BoxedFloatClass ||
+    sym == defn.DoubleClass ||
+    sym == defn.BoxedDoubleClass
+
+  private def isPrimitiveValueType(tp: Type): Boolean =
+    val sym = tp.widenDealias.typeSymbol
+    sym == defn.BooleanClass ||
+    sym == defn.ByteClass ||
+    sym == defn.ShortClass ||
+    sym == defn.IntClass ||
+    sym == defn.LongClass
+
+  private def isRawPythonToStringType(tp: Type): Boolean =
+    val sym = tp.widenDealias.typeSymbol
+    sym == defn.ObjectClass ||
+    sym == charSequenceClass ||
+    sym == defn.AnyClass ||
+    sym == defn.AnyValClass ||
+    sym == defn.BoxedBooleanClass ||
+    sym == defn.BoxedByteClass ||
+    sym == defn.BoxedShortClass ||
+    sym == defn.BoxedIntClass ||
+    sym == defn.BoxedLongClass ||
+    sym == defn.BoxedFloatClass ||
+    sym == defn.BoxedDoubleClass
+
   /** String concatenation. The receiver is always String (post-erasure);
    *  wrap any non-String operand in `_scpy_to_str` so Python `+` succeeds.
    *  `Char` operands get `chr(…)` instead — our encoding stores Chars as
@@ -1585,9 +1698,13 @@ private class PyCodeGen()(using genCtx: Context):
   private def genStringConcat(receiver: Tree, args: List[Tree], pos: PyPosition): PyTree =
     def asString(t: Tree): PyTree =
       val e = genExpr(t)
-      if e.tpe == PyStringType then e
+      if isUnitValueType(t.tpe) then
+        PyStringLit("()")(pos)
+      else if e.tpe == PyStringType then e
       else if encoding.isCharType(t.tpe) then
         PyApplyExternal(PyExternalName("chr"), List(e))(PyStringType, pos)
+      else if isFloatValueType(t.tpe) then
+        PyApplyExternal(PyExternalName("_scpy_float_to_str"), List(e))(PyStringType, pos)
       else
         PyApplyExternal(PyExternalName("_scpy_to_str"), List(e))(PyStringType, pos)
     PyBinaryOp(PyBinaryCode.StringConcat, asString(receiver), asString(args.head))(pos)

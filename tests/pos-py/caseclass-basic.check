@@ -1,6 +1,6 @@
 Point(10,20)
-True
-False
+true
+false
 Point(10,99)
 2
 10
@@ -8,9 +8,9 @@ Point(10,99)
 x
 y
 10|20
-True
+true
 Empty()
-True
+true
 Empty()
 Empty
 0
@@ -18,7 +18,7 @@ Config(localhost,80)
 Config(localhost,8080)
 Config(remote,9000)
 Outer(Inner(x),2)
-True
-False
+true
+false
 Outer(Inner(z),2)
 oob:2

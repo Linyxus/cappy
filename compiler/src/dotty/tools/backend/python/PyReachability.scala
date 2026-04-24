@@ -243,7 +243,7 @@ object PyReachability:
       if s.isInstantiated then return
       s.isInstantiated = true
       enqueue(Work.ReachClass(cls))
-      // Two classes of methods must be kept on any instantiated class
+      // Three classes of methods must be kept on any instantiated class
       // even if no Scala-side call site mentions them:
       //   1. Every constructor — the emitter's runtime constructor
       //      dispatcher (`PyIREmitter.emitConstructorDispatcher`) scans
@@ -256,11 +256,14 @@ object PyReachability:
       //      rule, a user-facing callable class like Timer's
       //      `RunOnce(task)` would have its `__call__` pruned and the
       //      timer would hang forever.
+      //   3. Scala `toString`: `_scpy_to_str` implements String.valueOf
+      //      by reflectively calling `toString__Ljava_lang_String` when
+      //      present, so the method has no explicit PyIR call edge.
       classByName.get(cls).foreach { cd =>
         for m <- cd.methods do
           val ns    = m.flags.namespace
           val simp  = m.name.simple.name
-          if ns == PyMemberNamespace.Constructor || isPythonDunder(simp) then
+          if ns == PyMemberNamespace.Constructor || isPythonDunder(simp) || isScalaToString(m.name) then
             enqueue(Work.AnalyzeMethod(cls, m.name))
       }
       // Replay every accumulated virtual-call log on the new vtable.
@@ -386,6 +389,11 @@ object PyReachability:
      *  convention in `PyNames.PyMethodName.isDunder`. */
     private def isPythonDunder(name: String): Boolean =
       name.length >= 5 && name.startsWith("__") && name.endsWith("__")
+
+    private def isScalaToString(name: PyMethodName): Boolean =
+      name.simple.name == "toString" &&
+        name.paramTypeRefs.isEmpty &&
+        name.resultTypeRef == PyClassRef(PyClassName.StringClass)
 
     // --- Tree visitor ----------------------------------------------
 
