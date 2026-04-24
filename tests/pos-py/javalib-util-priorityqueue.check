@@ -1,0 +1,3 @@
+peek-size:1:4:10
+drain:1,2,3,4
+reverse:4,3,2,1

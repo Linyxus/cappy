@@ -1,0 +1,5 @@
+fold:15:z12345
+exists-forall:true:false:true:false
+zip:a:1:b:2:2
+mkString:[1|2|3|4|5]:[]
+iterator:true:1:2:true
