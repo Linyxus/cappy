@@ -56,6 +56,9 @@ inScope(Global)(Build.globalSettings)
 val pyCompilerTests = Build.pyCompilerTests
 val `scala-pylib-py` = Build.`scala-pylib-py`
 val `scala-library-py` = Build.`scala-library-py`
+
+// Stdlib benchmarks (JVM backend, JMH)
+val `stdlib-bench` = Build.`stdlib-bench`
 // Run every test for Python backend. Builds the javalib + library-py jars
 // first so that the test classpath includes their .pyir artifacts.
 addCommandAlias(

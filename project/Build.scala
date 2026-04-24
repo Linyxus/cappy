@@ -2749,6 +2749,16 @@ object Build {
     .asDottyBench(Bootstrapped)
     .settings(Jmh / run / mainClass := Some("org.openjdk.jmh.Main"))*/
 
+  lazy val `stdlib-bench` = project.in(file("stdlib-bench"))
+    .dependsOn(`scala3-library-bootstrapped`)
+    .settings(commonBootstrappedSettings)
+    .settings(
+      bootstrappedScalaInstanceSettings,
+      Jmh / bspEnabled := false,
+      publish / skip := true,
+    )
+    .enablePlugins(JmhPlugin)
+
   val testcasesOutputDir = taskKey[Seq[String]]("Root directory where tests classes are generated")
   val testcasesSourceRoot = taskKey[String]("Root directory where tests sources are generated")
   val testDocumentationRoot = taskKey[String]("Root directory where tests documentation are stored")
