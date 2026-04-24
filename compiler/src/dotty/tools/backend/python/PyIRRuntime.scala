@@ -1220,6 +1220,12 @@ object PyIRRuntime:
        |    def __repr__(self):
        |        return f"<LazyModule {object.__getattribute__(self, '_scpy_cls').__name__}>"
        |
+       |def _scpy_module_value(module):
+       |    ensure = getattr(module, "_scpy_ensure", None)
+       |    if ensure is None:
+       |        return module
+       |    return ensure()
+       |
        |def _scpy_lazy_module(cls):
        |    return _scpy_LazyModule(cls)
        |
