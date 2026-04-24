@@ -21,6 +21,9 @@ sbt --client "pyCompilerTests/test"
 sbt --client "scala-pylib-py/Compile/packageBin"
 sbt --client "scala-library-py/Compile/packageBin"
 
+# Force support jars to be regenerated after backend/runtime changes.
+sbt --client "scala-pylib-py/clean; scala-pylib-py/Compile/packageBin; scala-library-py/clean; scala-library-py/Compile/packageBin"
+
 # Run py compiler harness suites.
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests"
 sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests -- --tests=runScalaPy"
@@ -43,6 +46,8 @@ uv run --project . --no-sync python /tmp/out/foo.py
 ```
 
 Generated Python must run through `uv run --project <repo-root> --no-sync python`, never bare `python3`. `PyRun.scala` enforces this and checks `uv sync --frozen --check` before running harness output.
+
+Stale ScalaPy artifacts can produce false positives or false negatives. The support libraries emit `.pyir`, and that `.pyir` depends on backend codegen/linker/runtime behavior, not just on `pylib-py/` or `library-py/` source timestamps. After changing `compiler/src/dotty/tools/backend/python/`, PyIR serialization, `PyIRRuntime`, `PyEncoding`, `GenPython`, or Python support-library APIs, rebuild `scala-pylib-py` and `scala-library-py`; use the clean rebuild command above when results differ between `./bin/scpyc`, direct fresh-output runs, and the harness.
 
 ## Backend Architecture
 
