@@ -19,8 +19,9 @@ import scala.collection.mutable
  *   3. **`reachableMethods`** — which specific method signatures on the
  *      class are known to be called. The linker uses this to prune
  *      unused methods from kept classes.
- *   4. **`reachableFields`** — which specific fields are read or
- *      written. The linker prunes dead fields.
+ *   4. **`readFields` / `writtenFields`** — which specific fields are
+ *      touched by reachable bodies. The linker prunes fields untouched by
+ *      reachable code.
  *
  *  Virtual dispatch uses the Scala.js dispatch-log technique (see
  *  `inbox/scala-js/.../analyzer/Analyzer.scala`): a virtual call on a
@@ -53,7 +54,8 @@ object PyReachability:
       isReachable:      Boolean             = false,
       isInstantiated:   Boolean             = false,
       reachableMethods: Set[PyMethodName]   = Set.empty,
-      reachableFields:  Set[PyFieldName]    = Set.empty,
+      readFields:       Set[PyFieldName]    = Set.empty,
+      writtenFields:    Set[PyFieldName]    = Set.empty,
       virtualCallLog:   Set[PyMethodName]   = Set.empty,
   )
 
@@ -67,8 +69,12 @@ object PyReachability:
       facts.get(cls).exists(_.isInstantiated)
     def isMethodReachable(owner: PyClassName, method: PyMethodName): Boolean =
       facts.get(owner).exists(_.reachableMethods.contains(method))
+    def isFieldRead(owner: PyClassName, field: PyFieldName): Boolean =
+      facts.get(owner).exists(_.readFields.contains(field))
+    def isFieldWritten(owner: PyClassName, field: PyFieldName): Boolean =
+      facts.get(owner).exists(_.writtenFields.contains(field))
     def isFieldReachable(owner: PyClassName, field: PyFieldName): Boolean =
-      facts.get(owner).exists(_.reachableFields.contains(field))
+      isFieldRead(owner, field) || isFieldWritten(owner, field)
 
   def analyze(
       userClasses:    List[PyClassDef],
@@ -84,7 +90,8 @@ object PyReachability:
     case ReachClass(cls: PyClassName)
     case Instantiate(cls: PyClassName)
     case AnalyzeMethod(owner: PyClassName, method: PyMethodName)
-    case ReachField(owner: PyClassName, field: PyFieldName)
+    case ReadField(owner: PyClassName, field: PyFieldName)
+    case WriteField(owner: PyClassName, field: PyFieldName)
 
   // -------------------------------------------------------------------
   // Analyzer
@@ -107,13 +114,15 @@ object PyReachability:
       var isReachable:     Boolean = false
       var isInstantiated:  Boolean = false
       val reachableMethods: mutable.HashSet[PyMethodName] = new mutable.HashSet
-      val reachableFields:  mutable.HashSet[PyFieldName]  = new mutable.HashSet
+      val readFields:       mutable.HashSet[PyFieldName]  = new mutable.HashSet
+      val writtenFields:    mutable.HashSet[PyFieldName]  = new mutable.HashSet
       val virtualCallLog:   mutable.HashSet[PyMethodName] = new mutable.HashSet
       def freeze: ClassReachability = ClassReachability(
         isReachable      = isReachable,
         isInstantiated   = isInstantiated,
         reachableMethods = reachableMethods.toSet,
-        reachableFields  = reachableFields.toSet,
+        readFields       = readFields.toSet,
+        writtenFields    = writtenFields.toSet,
         virtualCallLog   = virtualCallLog.toSet,
       )
 
@@ -167,7 +176,9 @@ object PyReachability:
         if cls.kind == PyClassKind.ModuleClass then
           enqueue(Work.Instantiate(cls.name))
         for m <- cls.methods do enqueue(Work.AnalyzeMethod(cls.name, m.name))
-        for f <- cls.fields  do enqueue(Work.ReachField(cls.name, f.name))
+        for f <- cls.fields do
+          enqueue(Work.ReadField(cls.name, f.name))
+          enqueue(Work.WriteField(cls.name, f.name))
 
       mainEntry.foreach { case (cn, kind) =>
         enqueue(Work.ReachClass(cn))
@@ -201,7 +212,8 @@ object PyReachability:
           case Work.ReachClass(c)         => reachClass(c)
           case Work.Instantiate(c)        => instantiate(c)
           case Work.AnalyzeMethod(o, m)   => analyzeMethod(o, m)
-          case Work.ReachField(o, f)      => reachField(o, f)
+          case Work.ReadField(o, f)       => readField(o, f)
+          case Work.WriteField(o, f)      => writeField(o, f)
 
     // --- Work item handlers -----------------------------------------
 
@@ -275,10 +287,18 @@ object PyReachability:
           // Java-provided pass-through.
           ()
 
-    private def reachField(owner: PyClassName, field: PyFieldName): Unit =
+    private def readField(owner: PyClassName, field: PyFieldName): Unit =
+      reachField(owner, field)(_.readFields)
+
+    private def writeField(owner: PyClassName, field: PyFieldName): Unit =
+      reachField(owner, field)(_.writtenFields)
+
+    private def reachField(owner: PyClassName, field: PyFieldName)(
+        select: MutableState => mutable.HashSet[PyFieldName]
+    ): Unit =
       if isRuntimeProvided(owner) then return
       val s = stateOf(owner)
-      if !s.reachableFields.add(field) then return
+      if !select(s).add(field) then return
       enqueue(Work.ReachClass(owner))
 
     // --- Virtual dispatch -------------------------------------------
@@ -371,6 +391,13 @@ object PyReachability:
 
     private def walkTree(tree: PyTree): Unit = tree match
       case t: PyVarDef         => walkTree(t.rhs)
+      case PyAssign(PySelect(qualifier, field), rhs) =>
+        walkTree(qualifier)
+        walkTree(rhs)
+        enqueue(Work.WriteField(field.owner, field))
+      case PyAssign(PySelectStatic(field), rhs) =>
+        walkTree(rhs)
+        enqueue(Work.WriteField(field.owner, field))
       case t: PyAssign         => walkTree(t.lhs); walkTree(t.rhs)
       case t: PyReturn         => walkTree(t.value)
       case t: PyWhile          => walkTree(t.cond); walkTree(t.body)
@@ -391,10 +418,10 @@ object PyReachability:
 
       case t: PySelect =>
         walkTree(t.qualifier)
-        enqueue(Work.ReachField(t.field.owner, t.field))
+        enqueue(Work.ReadField(t.field.owner, t.field))
 
       case t: PySelectStatic =>
-        enqueue(Work.ReachField(t.field.owner, t.field))
+        enqueue(Work.ReadField(t.field.owner, t.field))
 
       case t: PyApply =>
         walkTree(t.receiver)

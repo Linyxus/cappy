@@ -63,6 +63,6 @@ addCommandAlias(
   "; scala-pylib-py/Compile/packageBin" +
   " ; scala-library-py/Compile/packageBin" +
   " ; pyCompilerTests/Test/compile" +
-  " ; scala3-compiler-bootstrapped/testOnly dotty.tools.backend.python.PyLinkerTest dotty.tools.backend.python.ir.pyir.serialization.PyIRSerializationTests" +
+  " ; scala3-compiler-bootstrapped/testOnly dotty.tools.backend.python.PyReachabilityTest dotty.tools.backend.python.PyLinkerTest dotty.tools.backend.python.ir.pyir.serialization.PyIRSerializationTests" +
   " ; pyCompilerTests/test"
 )

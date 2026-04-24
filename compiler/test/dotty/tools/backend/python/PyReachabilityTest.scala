@@ -111,6 +111,105 @@ class PyReachabilityTest:
     )
     assertTrue(result.isReachable(holder.name))
 
+  @Test def recordsFieldReadsAndWritesSeparately(): Unit =
+    val ownerName = className("example.Holder")
+    val readField = fieldDef(ownerName, "read", PyIntType, PyMemberNamespace.PublicStatic)
+    val writtenField = fieldDef(ownerName, "written", PyIntType, PyMemberNamespace.PublicStatic)
+    val holder = classDef(
+      name   = ownerName,
+      fields = List(readField, writtenField)
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyBlock(
+          List(
+            PySelectStatic(readField.name)(PyIntType, NoPos),
+            PyAssign(
+              PySelectStatic(writtenField.name)(PyIntType, NoPos),
+              PyIntLit(1)(NoPos)
+            )(NoPos)
+          ),
+          PyUnitLit()(NoPos)
+        )(NoPos)
+      ))
+    )
+    val result = PyReachability.analyze(
+      userClasses    = List(user),
+      supportClasses = List(holder),
+      mainEntry      = None
+    )
+    assertTrue(result.isFieldRead(ownerName, readField.name))
+    assertFalse(result.isFieldWritten(ownerName, readField.name))
+    assertFalse(result.isFieldRead(ownerName, writtenField.name))
+    assertTrue(result.isFieldWritten(ownerName, writtenField.name))
+
+  @Test def fieldAssignmentWalksQualifierAndRhsButDoesNotCountLhsAsRead(): Unit =
+    val ownerName = className("example.Holder")
+    val targetField = fieldDef(ownerName, "target", PyIntType)
+    val rhsField = fieldDef(ownerName, "rhs", PyIntType, PyMemberNamespace.PublicStatic)
+    val holder = classDef(
+      name    = ownerName,
+      fields  = List(targetField, rhsField),
+      methods = List(ctor())
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyAssign(
+          PySelect(
+            PyNew(ownerName, ctorName(), Nil)(NoPos),
+            targetField.name
+          )(PyIntType, NoPos),
+          PySelectStatic(rhsField.name)(PyIntType, NoPos)
+        )(NoPos)
+      ))
+    )
+    val result = PyReachability.analyze(
+      userClasses    = List(user),
+      supportClasses = List(holder),
+      mainEntry      = None
+    )
+    assertTrue(result.isInstantiated(ownerName))
+    assertFalse(result.isFieldRead(ownerName, targetField.name))
+    assertTrue(result.isFieldWritten(ownerName, targetField.name))
+    assertTrue(result.isFieldRead(ownerName, rhsField.name))
+
+  @Test def loadModuleAnalyzesInitializerFieldWrites(): Unit =
+    val modName = className("example.Mod")
+    val stateField = fieldDef(modName, "state", PyIntType)
+    val mod = classDef(
+      name   = modName,
+      kind   = PyClassKind.ModuleClass,
+      fields = List(stateField),
+      methods = List(ctor(
+        body = PyAssign(
+          PySelect(
+            PyThis()(PyClassType(modName), NoPos),
+            stateField.name
+          )(PyIntType, NoPos),
+          PyIntLit(1)(NoPos)
+        )(NoPos)
+      ))
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyLoadModule(modName)(NoPos)
+      ))
+    )
+    val result = PyReachability.analyze(
+      userClasses    = List(user),
+      supportClasses = List(mod),
+      mainEntry      = None
+    )
+    assertTrue(result.isInstantiated(modName))
+    assertFalse(result.isFieldRead(modName, stateField.name))
+    assertTrue(result.isFieldWritten(modName, stateField.name))
+
   @Test def keepsReferencedSupportClassThroughClassOf(): Unit =
     val targetName = className("example.Target")
     val target = classDef(targetName)
@@ -252,18 +351,62 @@ class PyReachabilityTest:
     assertTrue(result.isReachable(used.name))
     assertFalse("sibling support class must not be kept", result.isReachable(unused.name))
 
+  @Test def replaysVirtualDispatchOnlyForInstantiatedDescendants(): Unit =
+    val animalName = className("example.Animal")
+    val dogName = className("example.Dog")
+    val catName = className("example.Cat")
+    val speak = methodName("speak")
+    val animal = classDef(
+      name    = animalName,
+      kind    = PyClassKind.AbstractClass,
+      methods = List(abstractMethod(speak))
+    )
+    val dog = classDef(
+      name       = dogName,
+      superClass = Some(animalName),
+      methods    = List(ctor(), method(speak))
+    )
+    val cat = classDef(
+      name       = catName,
+      superClass = Some(animalName),
+      methods    = List(ctor(), method(speak))
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyBlock(
+          List(PyNew(dogName, ctorName(), Nil)(NoPos)),
+          PyApply(
+            PyApplyFlags.empty,
+            PyThis()(PyClassType(animalName), NoPos),
+            animalName,
+            speak,
+            Nil
+          )(PyVoidType, NoPos)
+        )(NoPos)
+      ))
+    )
+    val result = PyReachability.analyze(
+      userClasses    = List(user),
+      supportClasses = List(animal, dog, cat),
+      mainEntry      = None
+    )
+    assertTrue(result.isMethodReachable(dogName, speak))
+    assertFalse(result.isMethodReachable(catName, speak))
+
   // -- Runtime-provided classes ----------------------------------------
 
   @Test def skipsRuntimeProvidedClassReferences(): Unit =
-    // Referencing java.lang.Integer should NOT add it to the result —
+    // Referencing java.lang.String should NOT add it to the result —
     // runtime-provided classes are opaque to the linker/emitter.
-    val integerClass = className("java.lang.Integer")
+    val stringClass = PyClassName.StringClass
     val user = classDef(
       name    = className("example.User"),
       methods = List(method(
         methodName("use"),
         body = PyApplyStatic(
-          PyApplyFlags.empty, integerClass, methodName("toBinaryString"), Nil
+          PyApplyFlags.empty, stringClass, methodName("valueOf"), Nil
         )(PyVoidType, NoPos)
       ))
     )
@@ -272,7 +415,7 @@ class PyReachabilityTest:
       supportClasses = Nil,
       mainEntry      = None
     )
-    assertFalse(result.isReachable(integerClass))
+    assertFalse(result.isReachable(stringClass))
     assertTrue(result.isReachable(user.name))
 
   // -- Helpers (cloned from PyLinkerTest) ------------------------------
@@ -280,12 +423,33 @@ class PyReachabilityTest:
   private def className(name: String): PyClassName =
     PyClassName(name)
 
-  private def fieldDef(owner: PyClassName, name: String, tpe: PyType): PyFieldDef =
+  private def fieldDef(
+      owner:     PyClassName,
+      name:      String,
+      tpe:       PyType,
+      namespace: PyMemberNamespace = PyMemberNamespace.Public
+  ): PyFieldDef =
     PyFieldDef(
-      flags        = PyMemberFlags.empty,
+      flags        = PyMemberFlags.empty.withNamespace(namespace),
       name         = PyFieldName(owner, PySimpleFieldName(name)),
       originalName = PyOriginalName.NoOriginalName,
       ftpe         = tpe,
+      pos          = NoPos
+    )
+
+  private def abstractMethod(
+      name:       PyMethodName,
+      namespace:  PyMemberNamespace = PyMemberNamespace.Public,
+      resultType: PyType            = PyVoidType,
+      args:       List[PyParamDef]  = Nil
+  ): PyMethodDef =
+    PyMethodDef(
+      flags        = PyMemberFlags.empty.withNamespace(namespace),
+      name         = name,
+      originalName = PyOriginalName.NoOriginalName,
+      args         = args,
+      resultType   = resultType,
+      body         = None,
       pos          = NoPos
     )
 
