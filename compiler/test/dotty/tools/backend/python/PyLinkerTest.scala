@@ -280,10 +280,161 @@ class PyLinkerTest:
       PyLinker.link(List(PyLinker.Input(List(host), None)))
     }
 
+  @Test def prunesUntouchedSupportFieldsButKeepsUserFields(): Unit =
+    val supportName = className("example.Support")
+    val live = fieldDef(supportName, "live", PyIntType, PyMemberNamespace.PublicStatic)
+    val dead = fieldDef(supportName, "dead", PyIntType, PyMemberNamespace.PublicStatic)
+    val support = classDef(
+      name   = supportName,
+      fields = List(live, dead)
+    )
+    val userName = className("example.User")
+    val userLive = fieldDef(userName, "userLive", PyIntType)
+    val userDead = fieldDef(userName, "userDead", PyIntType)
+    val user = classDef(
+      name   = userName,
+      fields = List(userLive, userDead),
+      methods = List(method(
+        methodName("use"),
+        body = PySelectStatic(live.name)(PyIntType, NoPos)
+      ))
+    )
+
+    val bundle = PyLinker.link(List(
+      PyLinker.Input(List(user), None, PyLinker.InputSource.User),
+      PyLinker.Input(List(support), None, PyLinker.InputSource.Support)
+    ))
+
+    assertEquals(List(live.name), fieldsOf(bundle, supportName))
+    assertEquals(List(userLive.name, userDead.name), fieldsOf(bundle, userName))
+
+  @Test def keepsTouchedInstanceFieldOnInstantiatedSupportClass(): Unit =
+    val supportName = className("example.Support")
+    val live = fieldDef(supportName, "live", PyIntType)
+    val dead = fieldDef(supportName, "dead", PyIntType)
+    val support = classDef(
+      name    = supportName,
+      fields  = List(live, dead),
+      methods = List(ctor())
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PySelect(
+          PyNew(supportName, ctorName(), Nil)(NoPos),
+          live.name
+        )(PyIntType, NoPos)
+      ))
+    )
+
+    val bundle = PyLinker.link(List(
+      PyLinker.Input(List(user), None, PyLinker.InputSource.User),
+      PyLinker.Input(List(support), None, PyLinker.InputSource.Support)
+    ))
+
+    assertEquals(List(live.name), fieldsOf(bundle, supportName))
+
+  @Test def keepsTouchedSuperclassFieldWhenOnlySubclassIsInstantiated(): Unit =
+    val baseName = className("example.Base")
+    val childName = className("example.Child")
+    val inherited = fieldDef(baseName, "inherited", PyIntType)
+    val base = classDef(
+      name   = baseName,
+      fields = List(inherited)
+    )
+    val child = classDef(
+      name       = childName,
+      superClass = Some(baseName),
+      methods = List(ctor(
+        body = PyAssign(
+          PySelect(
+            PyThis()(PyClassType(childName), NoPos),
+            inherited.name
+          )(PyIntType, NoPos),
+          PyIntLit(1)(NoPos)
+        )(NoPos)
+      ))
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyNew(childName, ctorName(), Nil)(NoPos)
+      ))
+    )
+
+    val bundle = PyLinker.link(List(
+      PyLinker.Input(List(user), None, PyLinker.InputSource.User),
+      PyLinker.Input(List(base, child), None, PyLinker.InputSource.Support)
+    ))
+
+    assertEquals(List(inherited.name), fieldsOf(bundle, baseName))
+
+  @Test def prunesInstanceFieldsOnReachableButUninstantiatedSupportClass(): Unit =
+    val supportName = className("example.Support")
+    val dead = fieldDef(supportName, "dead", PyIntType)
+    val support = classDef(
+      name   = supportName,
+      fields = List(dead)
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyClassOf(PyClassRef(supportName))(NoPos)
+      ))
+    )
+
+    val bundle = PyLinker.link(List(
+      PyLinker.Input(List(user), None, PyLinker.InputSource.User),
+      PyLinker.Input(List(support), None, PyLinker.InputSource.Support)
+    ))
+
+    assertEquals(Nil, fieldsOf(bundle, supportName))
+
+  @Test def prunedModuleFieldDoesNotEmitDefaultNoneInitializer(): Unit =
+    val modName = className("example.Mod")
+    val live = fieldDef(modName, "live", PyIntType)
+    val dead = fieldDef(modName, "dead", PyIntType)
+    val mod = classDef(
+      name   = modName,
+      kind   = PyClassKind.ModuleClass,
+      fields = List(live, dead),
+      methods = List(ctor(
+        body = PyAssign(
+          PySelect(
+            PyThis()(PyClassType(modName), NoPos),
+            live.name
+          )(PyIntType, NoPos),
+          PyIntLit(1)(NoPos)
+        )(NoPos)
+      ))
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyLoadModule(modName)(NoPos)
+      ))
+    )
+
+    val bundle = PyLinker.link(List(
+      PyLinker.Input(List(user), None, PyLinker.InputSource.User),
+      PyLinker.Input(List(mod), None, PyLinker.InputSource.Support)
+    ))
+    val emitted = PyIREmitter.emitToString(bundle.classes, bundle.mainEntry)
+
+    assertTrue(emitted.contains("live = None"))
+    assertFalse(emitted.contains("dead = None"))
+
   private def assertLinkError(expectedMessage: String)(body: => Any): Unit =
     assertThrows[PyLinkingException](_.errors.exists(_.message.contains(expectedMessage))) {
       body
     }
+
+  private def fieldsOf(bundle: PyLinker.LinkedBundle, name: PyClassName): List[PyFieldName] =
+    bundle.classes.find(_.name == name).toList.flatMap(_.fields.map(_.name))
 
   private def className(name: String): PyClassName =
     PyClassName(name)
@@ -291,9 +442,14 @@ class PyLinkerTest:
   private def fieldName(owner: PyClassName, name: String): PyFieldName =
     PyFieldName(owner, PySimpleFieldName(name))
 
-  private def fieldDef(owner: PyClassName, name: String, tpe: PyType): PyFieldDef =
+  private def fieldDef(
+      owner: PyClassName,
+      name: String,
+      tpe: PyType,
+      namespace: PyMemberNamespace = PyMemberNamespace.Public
+  ): PyFieldDef =
     PyFieldDef(
-      flags = PyMemberFlags.empty,
+      flags = PyMemberFlags.empty.withNamespace(namespace),
       name = fieldName(owner, name),
       originalName = PyOriginalName.NoOriginalName,
       ftpe = tpe,

@@ -111,7 +111,7 @@ object PyLinker:
       val (userClasses, supportClasses) =
         allClasses.partition(c => userClassNames.contains(c.name))
       val reach = PyReachability.analyze(userClasses, supportClasses, mainEntry)
-      val keptClasses = applyReachability(allClasses, reach)
+      val keptClasses = applyReachability(allClasses, reach, userClassNames)
 
       val classInfos = buildClassInfos(keptClasses)
       keptClasses.foreach(validateClass(_, classInfos))
@@ -127,18 +127,42 @@ object PyLinker:
       LinkedBundle(orderForEmission(keptClasses), mainEntry)
 
     /** Drop unreachable classes and, for each class that survives,
-     *  drop methods whose bodies the analyzer never walked. Fields are
-     *  pruned later (Step 5 in the linker refactor); for now every
-     *  field of a kept class is retained. */
+     *  drop support methods and fields whose bodies / declarations the
+    *  analyzer never reached. User classes are preserved verbatim. */
     private def applyReachability(
+        classes:        List[PyClassDef],
+        reach:          PyReachability.Result,
+        userClassNames: Set[PyClassName]
+    ): List[PyClassDef] =
+      val instantiatedFieldOwners = collectInstantiatedFieldOwners(classes, reach)
+      val methodPrunedClasses = classes.iterator.collect {
+        case c if reach.isReachable(c.name) =>
+          pruneClassMethods(c, reach)
+      }.toList
+      // Safety net: if a method survives for a conservative linker reason
+      // (ctor dispatcher, <clinit>, abstract surface), fields referenced by
+      // that emitted body must survive too.
+      val emittedFieldRefs = collectEmittedFieldRefs(methodPrunedClasses)
+      methodPrunedClasses.map { c =>
+        pruneClassFields(c, reach, userClassNames, instantiatedFieldOwners, emittedFieldRefs)
+      }
+
+    private def collectInstantiatedFieldOwners(
         classes: List[PyClassDef],
         reach:   PyReachability.Result
-    ): List[PyClassDef] =
-      classes.iterator.collect {
-        case c if reach.isReachable(c.name) => pruneClass(c, reach)
-      }.toList
+    ): Set[PyClassName] =
+      val byName = classes.iterator.map(c => c.name -> c).toMap
+      val owners = mutable.HashSet.empty[PyClassName]
+      def mark(cls: PyClassName): Unit =
+        if owners.add(cls) then
+          byName.get(cls).foreach { c =>
+            c.superClass.foreach(mark)
+            c.interfaces.foreach(mark)
+          }
+      classes.iterator.map(_.name).filter(reach.isInstantiated).foreach(mark)
+      owners.toSet
 
-    private def pruneClass(c: PyClassDef, reach: PyReachability.Result): PyClassDef =
+    private def pruneClassMethods(c: PyClassDef, reach: PyReachability.Result): PyClassDef =
       val instantiated = reach.isInstantiated(c.name)
       def keepMethod(m: PyMethodDef): Boolean =
         val ns = m.flags.namespace
@@ -156,6 +180,77 @@ object PyLinker:
         else if m.body.isEmpty then true
         else false
       c.copy(methods = c.methods.filter(keepMethod))
+
+    private def pruneClassFields(
+        c:                       PyClassDef,
+        reach:                   PyReachability.Result,
+        userClassNames:          Set[PyClassName],
+        instantiatedFieldOwners: Set[PyClassName],
+        emittedFieldRefs:        Set[PyFieldName]
+    ): PyClassDef =
+      val isUserClass = userClassNames.contains(c.name)
+      def keepField(f: PyFieldDef): Boolean =
+        val ns = f.flags.namespace
+        if isUserClass then true
+        else if emittedFieldRefs.contains(f.name) then true
+        else if ns.isStatic then reach.isFieldReachable(c.name, f.name)
+        else instantiatedFieldOwners.contains(c.name) && reach.isFieldReachable(c.name, f.name)
+      c.copy(fields = c.fields.filter(keepField))
+
+    private def collectEmittedFieldRefs(classes: List[PyClassDef]): Set[PyFieldName] =
+      val refs = mutable.HashSet.empty[PyFieldName]
+      def walk(tree: PyTree): Unit = tree match
+        case t: PyVarDef         => walk(t.rhs)
+        case t: PyAssign         => walk(t.lhs); walk(t.rhs)
+        case t: PyReturn         => walk(t.value)
+        case t: PyWhile          => walk(t.cond); walk(t.body)
+        case t: PyForEach        => walk(t.iterable); walk(t.body)
+        case _: PySkip           => ()
+        case t: PyIf             => walk(t.cond); walk(t.thenp); walk(t.elsep)
+        case t: PyTryCatch       => walk(t.block); walk(t.handler)
+        case t: PyTryFinally     => walk(t.block); walk(t.finalizer)
+        case t: PyMatch          =>
+          walk(t.selector)
+          t.cases.foreach { case (_, body) => walk(body) }
+          walk(t.default)
+        case t: PyBlock          => t.stats.foreach(walk); walk(t.expr)
+        case t: PyLabeled        => walk(t.body)
+        case t: PyLabelReturn    => walk(t.value)
+        case _: PyVarRef         => ()
+        case _: PyThis           => ()
+        case t: PySelect         => walk(t.qualifier); refs += t.field
+        case t: PySelectStatic   => refs += t.field
+        case t: PyApply          => walk(t.receiver); t.args.foreach(walk)
+        case t: PyApplyStatically =>
+          walk(t.receiver)
+          t.args.foreach(walk)
+        case t: PyApplyStatic    => t.args.foreach(walk)
+        case t: PyApplyExternal  => t.args.foreach(walk)
+        case _: PyExternalRef    => ()
+        case t: PyAttrAccess     => walk(t.obj)
+        case t: PyApplyDynamic   =>
+          walk(t.callee)
+          t.args.foreach(walk)
+          t.kwargs.foreach((_, value) => walk(value))
+        case t: PyNew            => t.args.foreach(walk)
+        case _: PyLoadModule     => ()
+        case t: PyIsInstanceOf   => walk(t.expr)
+        case t: PyAsInstanceOf   => walk(t.expr)
+        case t: PyNewArray       => walk(t.length)
+        case t: PyArrayValue     => t.elems.foreach(walk)
+        case t: PyArraySelect    => walk(t.array); walk(t.index)
+        case t: PyUnaryOp        => walk(t.lhs)
+        case t: PyBinaryOp       => walk(t.lhs); walk(t.rhs)
+        case t: PyClosure        => t.captureValues.foreach(walk); walk(t.body)
+        case _: PyClassOf        => ()
+        case _: PyLiteral        => ()
+
+      for
+        cls <- classes
+        method <- cls.methods
+        body <- method.body
+      do walk(body)
+      refs.toSet
 
     private def orderForEmission(classes: List[PyClassDef]): List[PyClassDef] =
       val byName = classes.iterator.map(c => c.name -> c).toMap
