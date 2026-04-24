@@ -1,5 +1,7 @@
 package scala.runtime
 
+import scala.python.runtime.PyBuiltins
+
 /** Scala rewrite of `scala.runtime.BoxesRunTime` (Java-defined upstream).
  *
  *  Python is unboxed, so all box/unbox operations are identity casts.
@@ -28,8 +30,8 @@ object BoxesRunTime:
 
   def equals(x: Object, y: Object): Boolean =
     if (x eq y) then true
-    else if x == null then y == null
-    else x.equals(y)
+    else if (x eq null) then y eq null
+    else PyBuiltins.equal(x, y)
 
   def hashFromLong(n: java.lang.Long): Int = Statics.longHash(n.asInstanceOf[Long])
   def hashFromDouble(n: java.lang.Double): Int = Statics.doubleHash(n.asInstanceOf[Double])
