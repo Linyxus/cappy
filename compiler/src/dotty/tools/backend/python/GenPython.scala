@@ -1340,9 +1340,10 @@ private class PyCodeGen()(using genCtx: Context):
 
   private def genBoxesRunTimeEquals(lhs: PyTree, rhs: PyTree, pos: PyPosition): PyTree =
     val moduleClass = defn.BoxesRunTimeModule.moduleClass
+    val staticOwner = moduleClass.linkedClass
     PyApplyStatic(
       PyApplyFlags.empty,
-      encoding.encodeClassName(moduleClass),
+      encoding.encodeClassName(if staticOwner.exists then staticOwner else moduleClass),
       encoding.encodeMethodName(defn.BoxesRunTimeModule_externalEquals),
       List(lhs, rhs)
     )(PyBooleanType, pos)

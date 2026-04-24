@@ -35,6 +35,9 @@ object PyBuiltins:
   @extern("operator", "getitem")
   private def getItem(value: Any, index: Int): Any = native
 
+  @extern("operator", "eq")
+  private def operatorEq(a: Any, b: Any): Boolean = native
+
   /** Facade over Python's `str` for method dispatch. Scala `String`
    *  erases to Python `str` so the `asInstanceOf[PyStr]` bridges are
    *  no-ops at runtime. */
@@ -80,6 +83,9 @@ object PyBuiltins:
 
   def ord_of(c: String): Int =
     builtins.ord(c).asInstanceOf[Int]
+
+  def equal(a: Any, b: Any): Boolean =
+    operatorEq(a, b)
 
   // --- Parsing ------------------------------------------------------
 
