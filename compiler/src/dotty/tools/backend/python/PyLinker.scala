@@ -26,6 +26,7 @@ final class PyLinkingException(val errors: List[PyLinkingError])
  *  file.
  */
 object PyLinker:
+  private val MaxReachabilityIterations = 10
 
   /** Provenance of a link input.
    *
@@ -52,7 +53,14 @@ object PyLinker:
   )
 
   def link(userInputs: List[Input], supportInputs: List[Input]): LinkedBundle =
-    new Linker(userInputs, supportInputs).link()
+    link(userInputs, supportInputs, MaxReachabilityIterations)
+
+  private[python] def link(
+      userInputs:                 List[Input],
+      supportInputs:              List[Input],
+      maxReachabilityIterations:  Int
+  ): LinkedBundle =
+    new Linker(userInputs, supportInputs, maxReachabilityIterations).link()
 
   /** Convenience overload for callers that don't distinguish sources
    *  (e.g. unit tests). Inputs are partitioned by their `source` field. */
@@ -68,7 +76,11 @@ object PyLinker:
     val bundle = link(inputs)
     PyIREmitter.emit(bundle.classes, bundle.mainEntry, out)
 
-  private final class Linker(userInputs: List[Input], supportInputs: List[Input]):
+  private final class Linker(
+      userInputs:                List[Input],
+      supportInputs:             List[Input],
+      maxReachabilityIterations: Int
+  ):
     private val inputs = userInputs ++ supportInputs
     private val errors = mutable.ListBuffer.empty[PyLinkingError]
 
@@ -108,10 +120,7 @@ object PyLinker:
       // entry, or another kept class. See `PyReachability`.
       val userClassNames =
         userInputs.iterator.flatMap(_.classes).map(_.name).toSet
-      val (userClasses, supportClasses) =
-        allClasses.partition(c => userClassNames.contains(c.name))
-      val reach = PyReachability.analyze(userClasses, supportClasses, mainEntry)
-      val keptClasses = applyReachability(allClasses, reach, userClassNames)
+      val keptClasses = optimizeReachability(allClasses, mainEntry, userClassNames)
 
       val classInfos = buildClassInfos(keptClasses)
       keptClasses.foreach(validateClass(_, classInfos))
@@ -126,6 +135,44 @@ object PyLinker:
       // are bundled), preserving input order otherwise.
       LinkedBundle(orderForEmission(keptClasses), mainEntry)
 
+    private def optimizeReachability(
+        classes:        List[PyClassDef],
+        mainEntry:      Option[PyIREmitter.MainEntry],
+        userClassNames: Set[PyClassName]
+    ): List[PyClassDef] =
+      var current = classes
+      var reach = analyzeReachability(current, mainEntry, userClassNames)
+      var iteration = 0
+
+      while iteration < maxReachabilityIterations do
+        val methodPrunedClasses = pruneReachableClassesAndMethods(current, reach)
+        val rewrittenClasses =
+          rewriteDeadSupportInitStores(methodPrunedClasses, reach, userClassNames)
+        val nextReach =
+          analyzeReachability(rewrittenClasses, mainEntry, userClassNames)
+
+        if nextReach == reach then
+          return applyReachability(rewrittenClasses, nextReach, userClassNames)
+
+        current = rewrittenClasses
+        reach = nextReach
+        iteration += 1
+
+      error(
+        s"Reachability DCE did not converge after $maxReachabilityIterations iterations",
+        PyPosition.NoPosition
+      )
+      applyReachability(current, reach, userClassNames)
+
+    private def analyzeReachability(
+        classes:        List[PyClassDef],
+        mainEntry:      Option[PyIREmitter.MainEntry],
+        userClassNames: Set[PyClassName]
+    ): PyReachability.Result =
+      val (userClasses, supportClasses) =
+        classes.partition(c => userClassNames.contains(c.name))
+      PyReachability.analyze(userClasses, supportClasses, mainEntry)
+
     /** Drop unreachable classes and, for each class that survives,
      *  drop support methods and fields whose bodies / declarations the
     *  analyzer never reached. User classes are preserved verbatim. */
@@ -135,10 +182,7 @@ object PyLinker:
         userClassNames: Set[PyClassName]
     ): List[PyClassDef] =
       val instantiatedFieldOwners = collectInstantiatedFieldOwners(classes, reach)
-      val methodPrunedClasses = classes.iterator.collect {
-        case c if reach.isReachable(c.name) =>
-          pruneClassMethods(c, reach)
-      }.toList
+      val methodPrunedClasses = pruneReachableClassesAndMethods(classes, reach)
       // Safety net: if a method survives for a conservative linker reason
       // (ctor dispatcher, <clinit>, abstract surface), fields referenced by
       // that emitted body must survive too.
@@ -146,6 +190,15 @@ object PyLinker:
       methodPrunedClasses.map { c =>
         pruneClassFields(c, reach, userClassNames, instantiatedFieldOwners, emittedFieldRefs)
       }
+
+    private def pruneReachableClassesAndMethods(
+        classes: List[PyClassDef],
+        reach:   PyReachability.Result
+    ): List[PyClassDef] =
+      classes.iterator.collect {
+        case c if reach.isReachable(c.name) =>
+          pruneClassMethods(c, reach)
+      }.toList
 
     private def collectInstantiatedFieldOwners(
         classes: List[PyClassDef],
@@ -196,6 +249,240 @@ object PyLinker:
         else if ns.isStatic then reach.isFieldReachable(c.name, f.name)
         else instantiatedFieldOwners.contains(c.name) && reach.isFieldReachable(c.name, f.name)
       c.copy(fields = c.fields.filter(keepField))
+
+    private final case class RewriteContext(
+        currentClass: PyClassDef,
+        method:       PyMethodDef
+    ):
+      def rewritesModuleCtorStores: Boolean =
+        currentClass.kind == PyClassKind.ModuleClass &&
+          method.flags.namespace == PyMemberNamespace.Constructor
+
+      def rewritesStaticCtorStores: Boolean =
+        method.flags.namespace == PyMemberNamespace.StaticConstructor
+
+      def canRewriteStores: Boolean =
+        rewritesModuleCtorStores || rewritesStaticCtorStores
+
+    private def rewriteDeadSupportInitStores(
+        classes:        List[PyClassDef],
+        reach:          PyReachability.Result,
+        userClassNames: Set[PyClassName]
+    ): List[PyClassDef] =
+      val supportClassNames =
+        classes.iterator.map(_.name).filterNot(userClassNames.contains).toSet
+      val declaredSupportFields =
+        classes.iterator
+          .filter(c => supportClassNames.contains(c.name))
+          .flatMap(_.fields.iterator.map(_.name))
+          .toSet
+
+      def isDeclaredSupportField(field: PyFieldName): Boolean =
+        declaredSupportFields.contains(field)
+
+      def linkedFieldAlias(field: PyFieldName): Option[PyFieldName] =
+        val ownerName = field.owner.nameString
+        if ownerName.endsWith("_") then
+          val linkedOwner = PyClassName(ownerName.stripSuffix("_"))
+          val linkedField = PyFieldName(linkedOwner, field.simple)
+          if declaredSupportFields.contains(linkedField) then Some(linkedField)
+          else None
+        else
+          val moduleOwner = PyClassName(s"${ownerName}_")
+          val moduleField = PyFieldName(moduleOwner, field.simple)
+          if declaredSupportFields.contains(moduleField) then Some(moduleField)
+          else None
+
+      def isFieldRead(field: PyFieldName): Boolean =
+        reach.isFieldRead(field.owner, field) ||
+          linkedFieldAlias(field).exists(alias => reach.isFieldRead(alias.owner, alias))
+
+      def isUnreadSupportField(field: PyFieldName): Boolean =
+        isDeclaredSupportField(field) && !isFieldRead(field)
+
+      def shouldRewriteDeadStore(lhs: PyAssignable, ctx: RewriteContext): Boolean =
+        ctx.canRewriteStores && (lhs match
+          case PySelect(_: PyThis, field) =>
+            ctx.rewritesModuleCtorStores &&
+              field.owner == ctx.currentClass.name &&
+              isUnreadSupportField(field)
+          case PySelectStatic(field) =>
+            ctx.rewritesStaticCtorStores &&
+              field.owner == ctx.currentClass.name &&
+              isUnreadSupportField(field)
+          case _ =>
+            false
+        )
+
+      def isDroppablePure(tree: PyTree): Boolean = tree match
+        case _: PyLiteral | _: PyThis | _: PyVarRef | _: PyClassOf =>
+          true
+        case PyUnaryOp(_, lhs) =>
+          isDroppablePure(lhs)
+        case PyBinaryOp(_, lhs, rhs) =>
+          isDroppablePure(lhs) && isDroppablePure(rhs)
+        case PyAsInstanceOf(expr, _) =>
+          isDroppablePure(expr)
+        case PyIsInstanceOf(expr, _) =>
+          isDroppablePure(expr)
+        case PyArrayValue(_, elems) =>
+          elems.forall(isDroppablePure)
+        case _ =>
+          false
+
+      def replacementForDeadStore(rhs: PyTree, pos: PyPosition, ctx: RewriteContext): PyTree =
+        val rewrittenRhs = rewriteTree(rhs, ctx)
+        rewrittenRhs match
+          // Loading a module solely to cache it in an unread support
+          // initializer field is the bloat pattern this pass targets.
+          case _: PyLoadModule => PySkip()(pos)
+          case _ if isDroppablePure(rewrittenRhs) => PySkip()(pos)
+          case _ => rewrittenRhs
+
+      def rewriteAssignable(tree: PyAssignable, ctx: RewriteContext): PyAssignable =
+        tree match
+          case PyVarRef(name) =>
+            PyVarRef(name)(tree.tpe, tree.pos)
+          case PySelect(qualifier, field) =>
+            PySelect(rewriteTree(qualifier, ctx), field)(tree.tpe, tree.pos)
+          case PySelectStatic(field) =>
+            PySelectStatic(field)(tree.tpe, tree.pos)
+          case PyAttrAccess(obj, name) =>
+            PyAttrAccess(rewriteTree(obj, ctx), name)(tree.tpe, tree.pos)
+          case PyArraySelect(array, index) =>
+            PyArraySelect(rewriteTree(array, ctx), rewriteTree(index, ctx))(tree.tpe, tree.pos)
+
+      def rewriteTree(tree: PyTree, ctx: RewriteContext): PyTree = tree match
+        case PyVarDef(name, originalName, vtpe, mutable, rhs) =>
+          PyVarDef(name, originalName, vtpe, mutable, rewriteTree(rhs, ctx))(tree.pos)
+
+        case PyAssign(lhs, rhs) if shouldRewriteDeadStore(lhs, ctx) =>
+          replacementForDeadStore(rhs, tree.pos, ctx)
+
+        case PyAssign(lhs, rhs) =>
+          PyAssign(rewriteAssignable(lhs, ctx), rewriteTree(rhs, ctx))(tree.pos)
+
+        case PyReturn(value) =>
+          PyReturn(rewriteTree(value, ctx))(tree.pos)
+
+        case PyWhile(cond, body) =>
+          PyWhile(rewriteTree(cond, ctx), rewriteTree(body, ctx))(tree.pos)
+
+        case PyForEach(varName, iterable, body) =>
+          PyForEach(varName, rewriteTree(iterable, ctx), rewriteTree(body, ctx))(tree.pos)
+
+        case _: PySkip =>
+          tree
+
+        case PyIf(cond, thenp, elsep) =>
+          PyIf(rewriteTree(cond, ctx), rewriteTree(thenp, ctx), rewriteTree(elsep, ctx))(tree.tpe, tree.pos)
+
+        case PyTryCatch(block, errVar, errVarOriginalName, handler) =>
+          PyTryCatch(rewriteTree(block, ctx), errVar, errVarOriginalName, rewriteTree(handler, ctx))(tree.tpe, tree.pos)
+
+        case PyTryFinally(block, finalizer) =>
+          PyTryFinally(rewriteTree(block, ctx), rewriteTree(finalizer, ctx))(tree.pos)
+
+        case PyMatch(selector, cases, default) =>
+          PyMatch(
+            rewriteTree(selector, ctx),
+            cases.map { case (lits, body) => (lits, rewriteTree(body, ctx)) },
+            rewriteTree(default, ctx)
+          )(tree.tpe, tree.pos)
+
+        case PyBlock(stats, expr) =>
+          PyBlock(stats.map(rewriteTree(_, ctx)), rewriteTree(expr, ctx))(tree.pos)
+
+        case PyLabeled(label, body) =>
+          PyLabeled(label, rewriteTree(body, ctx))(tree.tpe, tree.pos)
+
+        case PyLabelReturn(label, value) =>
+          PyLabelReturn(label, rewriteTree(value, ctx))(tree.pos)
+
+        case _: PyVarRef | _: PyThis =>
+          tree
+
+        case PySelect(qualifier, field) =>
+          PySelect(rewriteTree(qualifier, ctx), field)(tree.tpe, tree.pos)
+
+        case PySelectStatic(_) =>
+          tree
+
+        case PyApply(flags, receiver, className, method, args) =>
+          PyApply(flags, rewriteTree(receiver, ctx), className, method, args.map(rewriteTree(_, ctx)))(tree.tpe, tree.pos)
+
+        case PyApplyStatically(flags, receiver, className, method, args) =>
+          PyApplyStatically(flags, rewriteTree(receiver, ctx), className, method, args.map(rewriteTree(_, ctx)))(tree.tpe, tree.pos)
+
+        case PyApplyStatic(flags, className, method, args) =>
+          PyApplyStatic(flags, className, method, args.map(rewriteTree(_, ctx)))(tree.tpe, tree.pos)
+
+        case PyApplyExternal(callee, args) =>
+          PyApplyExternal(callee, args.map(rewriteTree(_, ctx)))(tree.tpe, tree.pos)
+
+        case _: PyExternalRef =>
+          tree
+
+        case PyAttrAccess(obj, name) =>
+          PyAttrAccess(rewriteTree(obj, ctx), name)(tree.tpe, tree.pos)
+
+        case PyApplyDynamic(callee, args, kwargs) =>
+          PyApplyDynamic(
+            rewriteTree(callee, ctx),
+            args.map(rewriteTree(_, ctx)),
+            kwargs.map((name, value) => (name, rewriteTree(value, ctx)))
+          )(tree.tpe, tree.pos)
+
+        case PyNew(className, ctor, args) =>
+          PyNew(className, ctor, args.map(rewriteTree(_, ctx)))(tree.pos)
+
+        case _: PyLoadModule =>
+          tree
+
+        case PyIsInstanceOf(expr, testType) =>
+          PyIsInstanceOf(rewriteTree(expr, ctx), testType)(tree.pos)
+
+        case PyAsInstanceOf(expr, tpe) =>
+          PyAsInstanceOf(rewriteTree(expr, ctx), tpe)(tree.pos)
+
+        case PyNewArray(elemTypeRef, length) =>
+          PyNewArray(elemTypeRef, rewriteTree(length, ctx))(tree.pos)
+
+        case PyArrayValue(elemTypeRef, elems) =>
+          PyArrayValue(elemTypeRef, elems.map(rewriteTree(_, ctx)))(tree.pos)
+
+        case PyArraySelect(array, index) =>
+          PyArraySelect(rewriteTree(array, ctx), rewriteTree(index, ctx))(tree.tpe, tree.pos)
+
+        case PyUnaryOp(op, lhs) =>
+          PyUnaryOp(op, rewriteTree(lhs, ctx))(tree.pos)
+
+        case PyBinaryOp(op, lhs, rhs) =>
+          PyBinaryOp(op, rewriteTree(lhs, ctx), rewriteTree(rhs, ctx))(tree.pos)
+
+        case PyClosure(captureParams, params, resultType, body, captureValues) =>
+          PyClosure(
+            captureParams,
+            params,
+            resultType,
+            rewriteTree(body, ctx),
+            captureValues.map(rewriteTree(_, ctx))
+          )(tree.pos)
+
+        case _: PyClassOf | _: PyLiteral =>
+          tree
+
+      classes.map { cls =>
+        if userClassNames.contains(cls.name) then cls
+        else
+          val methods = cls.methods.map { method =>
+            val ctx = RewriteContext(cls, method)
+            if ctx.canRewriteStores then
+              method.copy(body = method.body.map(rewriteTree(_, ctx)))
+            else method
+          }
+          cls.copy(methods = methods)
+      }
 
     private def collectEmittedFieldRefs(classes: List[PyClassDef]): Set[PyFieldName] =
       val refs = mutable.HashSet.empty[PyFieldName]
