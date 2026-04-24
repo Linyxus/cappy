@@ -415,7 +415,10 @@ class PyLinkerTest:
       name    = className("example.User"),
       methods = List(method(
         methodName("use"),
-        body = PyLoadModule(modName)(NoPos)
+        body = PySelect(
+          PyLoadModule(modName)(NoPos),
+          live.name
+        )(PyIntType, NoPos)
       ))
     )
 
@@ -428,13 +431,336 @@ class PyLinkerTest:
     assertTrue(emitted.contains("live = None"))
     assertFalse(emitted.contains("dead = None"))
 
+  @Test def prunesUnreadModuleCtorStoreAndItsModuleLoadRhs(): Unit =
+    val (userInput, supportInput, modName, deadName) = deadModuleStoreFixture()
+
+    val bundle = PyLinker.link(List(
+      userInput,
+      supportInput
+    ))
+
+    assertFalse(classNamesOf(bundle).contains(deadName))
+    assertEquals(Nil, fieldsOf(bundle, modName))
+
+  @Test def reachabilityFixpointRepeatsUntilReachabilitySetConverges(): Unit =
+    val (userInput, supportInput, modName, deadName) = deadModuleStoreFixture()
+
+    val bundle = PyLinker.link(
+      List(userInput),
+      List(supportInput),
+      maxReachabilityIterations = 2
+    )
+
+    assertFalse(classNamesOf(bundle).contains(deadName))
+    assertEquals(Nil, fieldsOf(bundle, modName))
+
+  @Test def reachabilityFixpointReportsErrorWhenIterationLimitIsExhausted(): Unit =
+    val (userInput, supportInput, _, _) = deadModuleStoreFixture()
+
+    assertLinkError("Reachability DCE did not converge after 1 iterations") {
+      PyLinker.link(
+        List(userInput),
+        List(supportInput),
+        maxReachabilityIterations = 1
+      )
+    }
+
+  @Test def keepsModuleCtorStoreWhenFieldIsRead(): Unit =
+    val liveName = className("example.LiveModule")
+    val liveModule = classDef(
+      name    = liveName,
+      kind    = PyClassKind.ModuleClass,
+      methods = List(ctor())
+    )
+    val modName = className("example.Mod")
+    val liveField = fieldDef(modName, "live", PyClassType(liveName))
+    val mod = classDef(
+      name   = modName,
+      kind   = PyClassKind.ModuleClass,
+      fields = List(liveField),
+      methods = List(ctor(
+        body = PyAssign(
+          PySelect(
+            PyThis()(PyClassType(modName), NoPos),
+            liveField.name
+          )(PyClassType(liveName), NoPos),
+          PyLoadModule(liveName)(NoPos)
+        )(NoPos)
+      ))
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PySelect(
+          PyLoadModule(modName)(NoPos),
+          liveField.name
+        )(PyClassType(liveName), NoPos)
+      ))
+    )
+
+    val bundle = PyLinker.link(List(
+      PyLinker.Input(List(user), None, PyLinker.InputSource.User),
+      PyLinker.Input(List(mod, liveModule), None, PyLinker.InputSource.Support)
+    ))
+
+    assertTrue(classNamesOf(bundle).contains(liveName))
+    assertEquals(List(liveField.name), fieldsOf(bundle, modName))
+
+  @Test def keepsModuleCtorStoreWhenLinkedClassFieldAliasIsRead(): Unit =
+    val liveName = className("example.LiveModule")
+    val liveModule = classDef(
+      name    = liveName,
+      kind    = PyClassKind.ModuleClass,
+      methods = List(ctor())
+    )
+    val linkedName = className("example.Linked")
+    val modName = className("example.Linked_")
+    val linkedField = fieldDef(linkedName, "constant", PyClassType(liveName), PyMemberNamespace.PublicStatic)
+    val moduleField = fieldDef(modName, "constant", PyClassType(liveName))
+    val linked = classDef(
+      name   = linkedName,
+      fields = List(linkedField)
+    )
+    val mod = classDef(
+      name   = modName,
+      kind   = PyClassKind.ModuleClass,
+      fields = List(moduleField),
+      methods = List(ctor(
+        body = PyAssign(
+          PySelect(
+            PyThis()(PyClassType(modName), NoPos),
+            moduleField.name
+          )(PyClassType(liveName), NoPos),
+          PyLoadModule(liveName)(NoPos)
+        )(NoPos)
+      ))
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyBlock(
+          List(PyLoadModule(modName)(NoPos)),
+          PySelectStatic(linkedField.name)(PyClassType(liveName), NoPos)
+        )(NoPos)
+      ))
+    )
+
+    val bundle = PyLinker.link(List(
+      PyLinker.Input(List(user), None, PyLinker.InputSource.User),
+      PyLinker.Input(List(linked, mod, liveModule), None, PyLinker.InputSource.Support)
+    ))
+
+    assertTrue(classNamesOf(bundle).contains(liveName))
+    assertEquals(List(moduleField.name), fieldsOf(bundle, modName))
+
+  @Test def prunesUnreadStaticCtorStoreAndItsModuleLoadRhs(): Unit =
+    val deadName = className("example.DeadModule")
+    val deadModule = classDef(
+      name    = deadName,
+      kind    = PyClassKind.ModuleClass,
+      methods = List(ctor())
+    )
+    val holderName = className("example.Holder")
+    val deadField = fieldDef(holderName, "dead", PyClassType(deadName), PyMemberNamespace.PublicStatic)
+    val holder = classDef(
+      name   = holderName,
+      fields = List(deadField),
+      methods = List(staticCtor(
+        body = PyAssign(
+          PySelectStatic(deadField.name)(PyClassType(deadName), NoPos),
+          PyLoadModule(deadName)(NoPos)
+        )(NoPos)
+      ))
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyClassOf(PyClassRef(holderName))(NoPos)
+      ))
+    )
+
+    val bundle = PyLinker.link(List(
+      PyLinker.Input(List(user), None, PyLinker.InputSource.User),
+      PyLinker.Input(List(holder, deadModule), None, PyLinker.InputSource.Support)
+    ))
+
+    assertFalse(classNamesOf(bundle).contains(deadName))
+    assertEquals(Nil, fieldsOf(bundle, holderName))
+
+  @Test def preservesEffectfulRhsWhenPruningUnreadModuleCtorStore(): Unit =
+    val effectName = className("example.Effect")
+    val touchName = methodName("touch")
+    val effect = classDef(
+      name    = effectName,
+      methods = List(method(touchName, namespace = PyMemberNamespace.PublicStatic))
+    )
+    val modName = className("example.Mod")
+    val deadField = fieldDef(modName, "dead", PyIntType)
+    val mod = classDef(
+      name   = modName,
+      kind   = PyClassKind.ModuleClass,
+      fields = List(deadField),
+      methods = List(ctor(
+        body = PyAssign(
+          PySelect(
+            PyThis()(PyClassType(modName), NoPos),
+            deadField.name
+          )(PyIntType, NoPos),
+          PyApplyStatic(
+            PyApplyFlags.empty,
+            effectName,
+            touchName,
+            Nil
+          )(PyVoidType, NoPos)
+        )(NoPos)
+      ))
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyLoadModule(modName)(NoPos)
+      ))
+    )
+
+    val bundle = PyLinker.link(List(
+      PyLinker.Input(List(user), None, PyLinker.InputSource.User),
+      PyLinker.Input(List(mod, effect), None, PyLinker.InputSource.Support)
+    ))
+
+    assertTrue(classNamesOf(bundle).contains(effectName))
+    assertEquals(Nil, fieldsOf(bundle, modName))
+
+  @Test def preservesCrossOwnerModuleCtorStore(): Unit =
+    val loadedName = className("example.Loaded")
+    val loaded = classDef(
+      name    = loadedName,
+      kind    = PyClassKind.ModuleClass,
+      methods = List(ctor())
+    )
+    val linkedName = className("example.Linked")
+    val linkedField = fieldDef(linkedName, "constant", PyClassType(loadedName))
+    val linked = classDef(
+      name   = linkedName,
+      fields = List(linkedField)
+    )
+    val modName = className("example.Linked_")
+    val mod = classDef(
+      name    = modName,
+      kind    = PyClassKind.ModuleClass,
+      methods = List(ctor(
+        body = PyAssign(
+          PySelect(
+            PyThis()(PyClassType(modName), NoPos),
+            linkedField.name
+          )(PyClassType(loadedName), NoPos),
+          PyLoadModule(loadedName)(NoPos)
+        )(NoPos)
+      ))
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyLoadModule(modName)(NoPos)
+      ))
+    )
+
+    val bundle = PyLinker.link(List(
+      PyLinker.Input(List(user), None, PyLinker.InputSource.User),
+      PyLinker.Input(List(linked, mod, loaded), None, PyLinker.InputSource.Support)
+    ))
+
+    assertTrue(classNamesOf(bundle).contains(loadedName))
+    assertEquals(List(linkedField.name), fieldsOf(bundle, linkedName))
+
+  @Test def preservesUserModuleCtorStoreAndItsModuleLoadRhs(): Unit =
+    val loadedName = className("example.Loaded")
+    val loaded = classDef(
+      name    = loadedName,
+      kind    = PyClassKind.ModuleClass,
+      methods = List(ctor())
+    )
+    val userModName = className("example.UserMod")
+    val field = fieldDef(userModName, "kept", PyClassType(loadedName))
+    val userMod = classDef(
+      name   = userModName,
+      kind   = PyClassKind.ModuleClass,
+      fields = List(field),
+      methods = List(ctor(
+        body = PyAssign(
+          PySelect(
+            PyThis()(PyClassType(userModName), NoPos),
+            field.name
+          )(PyClassType(loadedName), NoPos),
+          PyLoadModule(loadedName)(NoPos)
+        )(NoPos)
+      ))
+    )
+
+    val bundle = PyLinker.link(List(
+      PyLinker.Input(List(userMod), None, PyLinker.InputSource.User),
+      PyLinker.Input(List(loaded), None, PyLinker.InputSource.Support)
+    ))
+
+    assertTrue(classNamesOf(bundle).contains(loadedName))
+    assertEquals(List(field.name), fieldsOf(bundle, userModName))
+
   private def assertLinkError(expectedMessage: String)(body: => Any): Unit =
     assertThrows[PyLinkingException](_.errors.exists(_.message.contains(expectedMessage))) {
       body
     }
 
+  private def classNamesOf(bundle: PyLinker.LinkedBundle): Set[PyClassName] =
+    bundle.classes.iterator.map(_.name).toSet
+
   private def fieldsOf(bundle: PyLinker.LinkedBundle, name: PyClassName): List[PyFieldName] =
     bundle.classes.find(_.name == name).toList.flatMap(_.fields.map(_.name))
+
+  private def deadModuleStoreFixture(): (
+      PyLinker.Input,
+      PyLinker.Input,
+      PyClassName,
+      PyClassName
+  ) =
+    val deadName = className("example.DeadModule")
+    val deadModule = classDef(
+      name    = deadName,
+      kind    = PyClassKind.ModuleClass,
+      methods = List(ctor())
+    )
+    val modName = className("example.Mod")
+    val deadField = fieldDef(modName, "dead", PyClassType(deadName))
+    val mod = classDef(
+      name   = modName,
+      kind   = PyClassKind.ModuleClass,
+      fields = List(deadField),
+      methods = List(ctor(
+        body = PyAssign(
+          PySelect(
+            PyThis()(PyClassType(modName), NoPos),
+            deadField.name
+          )(PyClassType(deadName), NoPos),
+          PyLoadModule(deadName)(NoPos)
+        )(NoPos)
+      ))
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyLoadModule(modName)(NoPos)
+      ))
+    )
+    (
+      PyLinker.Input(List(user), None, PyLinker.InputSource.User),
+      PyLinker.Input(List(mod, deadModule), None, PyLinker.InputSource.Support),
+      modName,
+      deadName
+    )
 
   private def className(name: String): PyClassName =
     PyClassName(name)
@@ -492,6 +818,13 @@ class PyLinkerTest:
       namespace = PyMemberNamespace.Constructor,
       body = body,
       args = args
+    )
+
+  private def staticCtor(body: PyTree = PySkip()(NoPos)): PyMethodDef =
+    method(
+      name = PyMethodName(PySimpleMethodName.StaticInit, Nil, PyPrimRef.VoidRef),
+      namespace = PyMemberNamespace.StaticConstructor,
+      body = body
     )
 
   private def classDef(
