@@ -1418,25 +1418,27 @@ object Parsers {
             case _ =>
           }
         import scala.util.FromDigits.*
-        val value =
-          try token match {
-            case INTLIT                        => intFromDigits(digits, in.base)
-            case LONGLIT                       => longFromDigits(digits, in.base)
-            case FLOATLIT                      => floatFromDigits(digits)
-            case DOUBLELIT | DECILIT | EXPOLIT => doubleFromDigits(digits)
-            case CHARLIT                       => in.strVal.head
-            case STRINGLIT | STRINGPART        => in.strVal
-            case TRUE                          => true
-            case FALSE                         => false
-            case NULL                          => null
-            case _                             =>
-              syntaxErrorOrIncomplete(IllegalLiteral())
-              null
-          }
-          catch {
-            case ex: FromDigitsException => syntaxErrorOrIncomplete(ex.getMessage.toMessage)
-          }
-        Literal(Constant(value))
+        def lit[T](value: T)(using Constant.ValueToConstant[T]): Tree =
+          Literal(Constant.fromValue(value))
+        try token match {
+          case INTLIT                         => lit(intFromDigits(digits, in.base))
+          case LONGLIT                        => lit(longFromDigits(digits, in.base))
+          case FLOATLIT                       => lit(floatFromDigits(digits))
+          case DOUBLELIT | DECILIT | EXPOLIT  => lit(doubleFromDigits(digits))
+          case CHARLIT                        => lit(in.strVal.head)
+          case STRINGLIT | STRINGPART         => lit(in.strVal)
+          case TRUE                           => lit(true)
+          case FALSE                          => lit(false)
+          case NULL                           => lit(null)
+          case _                              =>
+            syntaxErrorOrIncomplete(IllegalLiteral())
+            lit(null)
+        }
+        catch {
+          case ex: FromDigitsException =>
+            syntaxErrorOrIncomplete(ex.getMessage.toMessage)
+            lit(null)
+        }
       }
 
       if (inStringInterpolation) {
@@ -2327,16 +2329,19 @@ object Parsers {
 
     /** ContextBound      ::=  Type [`as` id] */
     def contextBound(pname: TypeName): Tree =
+      val start = in.offset
       val t = toplevelTyp(inContextBound = true)
       val ownName =
         if isIdent(nme.as) && sourceVersion.enablesNewGivens then
           in.nextToken()
           ident()
         else EmptyTermName
-      val res = ContextBoundTypeTree(t, pname, ownName)
-      if t.span.exists then
-        res.withSpan(Span(t.span.start, end = in.lastOffset, point = t.span.end))
-      else res
+      ContextBoundTypeTree(t, pname, ownName)
+        .withSpan:
+          if t.span.exists then
+            Span(t.span.start, end = in.lastOffset, point = t.span.end)
+          else
+            Span(start, end = in.lastOffset, point = start)
 
     /** ContextBounds     ::= ContextBound [`:` ContextBounds]
      *                      | `{` ContextBound {`,` ContextBound} `}`
@@ -3856,7 +3861,7 @@ object Parsers {
                 syntaxError(em"`using` expected")
               val (firstParamMod, paramsAreNamed) =
                 var mods = EmptyModifiers
-                if in.lookahead.isColon then
+                if in.token != INTERPOLATIONID && in.lookahead.isColon then
                   (mods, true)
                 else if isConsume then (mods, true)
                 else
@@ -4739,11 +4744,19 @@ object Parsers {
         constrApp() :: withConstrApps()
       else Nil
 
+    /** UseRef            ::=  CaptureRef [‘initially’] */
+    def useRef(): UseRef =
+      val ref = captureRef()
+      if isIdent(nme.initially) then
+        atSpan(in.skipToken()):
+          UseRef(ref, initially = true)
+      else
+        UseRef(ref, initially = false)
+
     /** Template          ::=  InheritClauses [TemplateBody]
      *  InheritClauses    ::=  [‘extends’ ConstrApps]
      *                         [‘derives’ QualId {‘,’ QualId}]
-     *                         [‘uses’ CaptureRef {‘,’ CaptureRef}]
-     *                         [‘uses_init’ CaptureRef {‘,’ CaptureRef}]
+     *                         [‘uses’ UseRef {‘,’ UseRef}]
      */
     def template(constr: DefDef, isEnum: Boolean = false): Template = {
       val parents =
@@ -4765,22 +4778,11 @@ object Parsers {
           commaSeparated(() => convertToTypeId(qualId()))
         else Nil
       newLinesOptWhenFollowedBy(nme.uses)
-      var classUses =
+      val derivedAndUses =
         if isIdent(nme.uses) then
           in.nextToken()
-          concreteCapsType(commaSeparated(captureRef)) :: Nil
-        else Nil
-      newLinesOptWhenFollowedBy(nme.uses_init)
-      var constructorUses =
-        if isIdent(nme.uses_init)then
-          in.nextToken()
-          concreteCapsType(commaSeparated(captureRef)) :: Nil
-        else Nil
-      if classUses.isEmpty && constructorUses.nonEmpty then
-        classUses = concreteCapsType(Nil) :: Nil
-      if constructorUses.isEmpty && classUses.nonEmpty then
-        constructorUses = concreteCapsType(Nil) :: Nil
-      val derivedAndUses = derived ++ classUses ++ constructorUses
+          derived ++ commaSeparated(useRef)
+        else derived
       possibleTemplateStart()
       if isEnum then
         val (self, stats) = withinEnum(templateBody(parents))
@@ -4793,7 +4795,7 @@ object Parsers {
      */
     def templateOpt(constr: DefDef): Template =
       newLinesOptWhenFollowedBy(nme.derives)
-      if in.token == EXTENDS || isIdent(nme.derives) || isIdent(nme.uses) || isIdent(nme.uses_init) then
+      if in.token == EXTENDS || isIdent(nme.derives) || isIdent(nme.uses) then
         template(constr)
       else
         possibleTemplateStart()

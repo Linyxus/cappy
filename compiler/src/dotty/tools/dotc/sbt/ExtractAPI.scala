@@ -754,7 +754,10 @@ private class ExtractAPICollector(nonLocalClassSymbols: mutable.HashSet[Symbol])
     //   `IncOptions#useOptimizedSealed`.
     s.annotations.foreach { annot =>
       val sym = annot.symbol
-      if sym.exists && sym != defn.BodyAnnot && sym != defn.ChildAnnot then
+      // Ignore annotations of type Any, this means we couldn't actually load it,
+      // because it's no longer on the classpath compared to when the code we're loading was compiled.
+      // See the i25722 special test in explicitNullsPos for an example.
+      if sym.exists && sym != defn.BodyAnnot && sym != defn.ChildAnnot && !sym.typeRef.isAny then
         annots += apiAnnotation(annot)
     }
 

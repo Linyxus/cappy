@@ -217,7 +217,7 @@ transparent trait MapOps[K, +V, +CC[_, _] <: IterableOps[?, AnyConstr, ?], +C]
    *  See [[MapOps.LazyKeySet]] for a version that lazily captures the map.
    */
   @deprecated("GenKeySet is not capture-safe, and so is deprecated and no longer used in .keySet implementations.", since = "3.8.0")
-  protected trait GenKeySet uses_init MapOps.this {
+  protected trait GenKeySet @retains[MapOps.this.type]() {
     this: Set[K] =>
     import caps.unsafe.{unsafeDiscardUses, unsafeAssumePure}
     def iterator: Iterator[K] = unsafeDiscardUses(MapOps.this).keysIterator.unsafeAssumePure
@@ -368,7 +368,7 @@ transparent trait MapOps[K, +V, +CC[_, _] <: IterableOps[?, AnyConstr, ?], +C]
    *                of this $coll followed by all elements of `suffix`.
    */
   def concat[V2 >: V](suffix: collection.IterableOnce[(K, V2)]^): CC[K, V2]^{this, suffix} = mapFactory.from(suffix match {
-    case it: Iterable[(K, V2)] => new View.Concat(this, it)
+    case it: Iterable[(K, V2) @unchecked] => new View.Concat(this, it)
     case _ => iterator.concat(suffix.iterator)
   })
 
@@ -397,7 +397,7 @@ transparent trait MapOps[K, +V, +CC[_, _] <: IterableOps[?, AnyConstr, ?], +C]
   @deprecated("Use ++ instead of ++: for collections of type Iterable", "2.13.0")
   def ++: [V1 >: V](that: IterableOnce[(K,V1)]^): CC[K,V1]^{this, that} = {
     val thatIterable: Iterable[(K, V1)]^{that} = that match {
-      case that: Iterable[(K, V1)] => that
+      case that: Iterable[(K, V1) @unchecked] => that
       case that => View.from(that)
     }
     mapFactory.from(new View.Concat(thatIterable, this))

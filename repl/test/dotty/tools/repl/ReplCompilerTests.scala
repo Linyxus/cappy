@@ -510,7 +510,7 @@ class ReplCompilerTests extends ReplTest:
       assertEquals("", storedOutput().trim)
       // Pure function arrow syntax requires pureFunctions
       run("val f: Int -> Int = (x: Int) => x + 1")
-      assertTrue(storedOutput().trim.startsWith("val f: Int -> Int = Lambda$"))
+      assertTrue("(?s)val f: Int -> Int = Lambda[$/].*".r.matches(storedOutput()))
 
   @Test def `i16250c`: Unit =
     initially:
@@ -709,6 +709,17 @@ class ReplCompilerTests extends ReplTest:
     val expected = List(
       "lazy val foo: Unit",
       "val res0: LazyList[Unit] = LazyList(<not computed>)"
+    )
+    assertEquals(expected, lines())
+
+  @Test def `i25691 scala xml printing`: Unit = initially:
+    run:
+      """
+      |import scala.xml.*
+      |<foo/>
+      |""".stripMargin
+    val expected = List(
+      "val res0: Elem = <foo/>"
     )
     assertEquals(expected, lines())
 

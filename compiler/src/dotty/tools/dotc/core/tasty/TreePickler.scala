@@ -938,12 +938,17 @@ class TreePickler(pickler: TastyPickler, attributes: Attributes) {
   def pickleAnnotation(owner: Symbol, mdef: MemberDef, ann: Annotation)(using Context): Unit =
     if !isUnpicklable(owner, ann) then
       writeByte(ANNOTATION)
-      withLength { pickleType(ann.symbol.typeRef); pickleTree(ann.tree) }
+      val annotTree = ann match
+        case ann: CompactAnnotation =>
+          if sourceVersion.enablesCompactAnnotation then ann.tree else ann.oldTree
+        case _ =>
+          ann.tree
+      withLength { pickleType(ann.symbol.typeRef); pickleTree(annotTree) }
       var treeBuf = annotTrees.lookup(mdef)
       if treeBuf == null then
         treeBuf = new mutable.ListBuffer[Tree]
         annotTrees(mdef) = treeBuf
-      treeBuf += ann.tree
+      treeBuf += annotTree
 
 // ---- main entry points ---------------------------------------
 

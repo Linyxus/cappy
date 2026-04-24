@@ -162,8 +162,15 @@ class Setup extends PreRecheck, SymTransformer, SetupAPI:
           symd.info // don't transform symbols that will anyway be updated
         else
           val symCtx = if sym.isOneOf(TermParamOrAccessor) then ctx else ctx.withOwner(sym)
+          val oldInfo =
+            if sym.is(ModuleVal) then
+              sym.moduleClass.getAnnotation(defn.RetainsAnnot) match
+                case Some(ann) =>
+                  AnnotatedType(sym.info, RetainingAnnotation.fromAnnotation(ann))
+                case None => sym.info
+            else sym.info
           toResultInReturnType(sym, msg => throw TypeError(msg)):
-            transformExplicitType(symd.info, sym)(using symCtx)
+            transformExplicitType(oldInfo, sym)(using symCtx)
       if Synthetics.needsTransform(symd) then
         Synthetics.transform(symd, mappedInfo)
       else if sym.isClass && !sym.is(CaptureChecked) then

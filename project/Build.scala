@@ -58,7 +58,7 @@ object Build {
    *
    *  Warning: Change of this variable needs to be consulted with `expectedTastyVersion`
    */
-  val referenceVersion = "3.8.4-RC1"
+  val referenceVersion = "3.8.4-RC2"
 
   /** Version of the Scala compiler targeted in the current release cycle
    *  Contains a version without RC/SNAPSHOT/NIGHTLY specific suffixes
@@ -136,7 +136,7 @@ object Build {
   val mimaPreviousDottyVersion = "3.8.0"
 
   /** Version of Scala CLI to download */
-  val scalaCliLauncherVersion = "1.12.5"
+  val scalaCliLauncherVersion = "1.13.0"
   /** Version of Coursier to download for initializing the local maven repo of Scala command */
   val coursierJarVersion = "2.1.25-M24"
 
@@ -163,6 +163,8 @@ object Build {
 
   // Used to compile files similar to ./bin/scalac script
   val scalac = inputKey[Unit]("run the compiler using the correct classpath, or the user supplied classpath")
+
+  val buildQuick = taskKey[Unit]("compile the compiler and REPL, write classpath to bin/.cp for use by bin/scalacQ and bin/replQ")
 
   // Settings used to configure the test language server
   val ideTestsCompilerVersion = taskKey[String]("Compiler version to use in IDE tests")
@@ -473,8 +475,7 @@ object Build {
 
   // Settings used when compiling dotty with a non-bootstrapped dotty
   lazy val commonBootstrappedSettings = commonDottySettings ++ Seq(
-    // To enable support of scaladoc and language-server projects you need to change this to true
-    bspEnabled := false,
+    bspEnabled := enableBspAllProjects,
     (Compile / unmanagedSourceDirectories) += baseDirectory.value / "src-bootstrapped",
 
     version := dottyVersion,
@@ -744,6 +745,14 @@ object Build {
 
         (`scala3-compiler-nonbootstrapped` / Compile / runMain).toTask(fullArgs.mkString(" ", " ", ""))
       }.evaluated,
+      // TODO: scala3-repl depends on the bootstrapped compiler, making this slower
+      // than it needs to be. A non-bootstrapped REPL project would speed this up.
+      buildQuick := {
+        val _ = (`scala3-repl` / Compile / compile).value
+        val cp = (`scala3-repl` / Compile / fullClasspath).value.map(_.data.getAbsolutePath).mkString(File.pathSeparator)
+        IO.write(baseDirectory.value / "bin" / ".cp", cp)
+        streams.value.log.info(s"Wrote classpath to bin/.cp — use bin/scalacQ and bin/replQ")
+      },
       testCompilation := Def.inputTaskDyn {
         val args = spaceDelimited("<arg>").parsed
         if (args.contains("--help")) {
@@ -1092,6 +1101,7 @@ object Build {
           (Compile / sourceManaged).value
         }
         val externalDeps = (ThisProject / Runtime / externalDependencyClasspath).value
+        val testExternalDeps = (ThisProject / Test / externalDependencyClasspath).value
         Seq(
           s"-Ddotty.tests.dottyCompilerManagedSources=${managedSrcDir}",
           s"-Ddotty.tests.classes.dottyInterfaces=${(`scala3-interfaces` / Compile / packageBin).value}",
@@ -1109,6 +1119,7 @@ object Build {
           s"-Ddotty.tests.classes.pprint=${findArtifactPath(externalDeps, "pprint_3")}",
           s"-Ddotty.tests.classes.fansi=${findArtifactPath(externalDeps, "fansi_3")}",
           s"-Ddotty.tests.classes.sourcecode=${findArtifactPath(externalDeps, "sourcecode_3")}",
+          s"-Ddotty.tests.classes.scalaXml=${findArtifactPath(testExternalDeps, "scala-xml_2.13")}",
           s"-Ddotty.tools.dotc.semanticdb.test=${(ThisBuild / baseDirectory).value/"tests"/"semanticdb"}",
         )
       },
@@ -1290,7 +1301,6 @@ object Build {
       Compile / resourceGenerators += generateLibraryProperties.taskValue,
       bspEnabled := enableBspAllProjects,
       Compile / mainClass := None,
-
       Test / unmanagedSourceDirectories   := Seq(baseDirectory.value / "test"),
       Test / unmanagedResourceDirectories := Seq(baseDirectory.value / "test-resources"),
       libraryDependencies ++= Seq(
@@ -1626,6 +1636,9 @@ object Build {
       // Silence `using` clause warnings in the scalajs-ir sources
       Compile / compile / scalacOptions +=
         "-Wconf:src=scalajs-ir-src/.*&msg=Implicit parameters should be provided with a `using` clause:s",
+      // Silence AnyRefMap deprecation warnings in the scalajs-ir sources
+      Compile / compile / scalacOptions +=
+        "-Wconf:src=scalajs-ir-src/.*&msg=object AnyRefMap in package scala\\.collection\\.mutable is deprecated:s",
       Compile / sourceGenerators += Def.task {
         val s = streams.value
         val cacheDir = s.cacheDirectory
@@ -1747,6 +1760,9 @@ object Build {
       // Silence `using` clause warnings in the scalajs-ir sources
       Compile / compile / scalacOptions +=
         "-Wconf:src=scalajs-ir-src/.*&msg=Implicit parameters should be provided with a `using` clause:s",
+      // Silence AnyRefMap deprecation warnings in the scalajs-ir sources
+      Compile / compile / scalacOptions +=
+        "-Wconf:src=scalajs-ir-src/.*&msg=object AnyRefMap in package scala\\.collection\\.mutable is deprecated:s",
       Compile / sourceGenerators += Def.task {
         val s = streams.value
         val cacheDir = s.cacheDirectory
@@ -2152,9 +2168,7 @@ object Build {
               .add(NoLinkWarnings(true))
               .add(NoLinkAssetWarnings(true))
               .add(GenerateAPI(false))
-              .add(SnippetCompiler(List(
-                s"${tempDocsRoot.getAbsolutePath}=compile"
-              )))
+              .add(SnippetCompiler(referenceSnippetCompilerTargets(tempRoot.getAbsolutePath)))
           }
 
           generateDocumentation(config)
@@ -2194,7 +2208,7 @@ object Build {
       BuildInfoPlugin.buildInfoDefaultSettings
 
   lazy val presentationCompilerSettings = {
-    val mtagsVersion = "1.6.3"
+    val mtagsVersion = "1.6.7"
     Seq(
       libraryDependencies ++= Seq(
         "org.lz4" % "lz4-java" % "1.8.0",
@@ -2210,6 +2224,8 @@ object Build {
         `scala3-library-bootstrapped` / publishLocal,
         `scala-library-bootstrapped` / publishLocal,
       ).value,
+      // Silence warnings in metals shared code, which must be compatible with Scala 2
+      Compile / compile / scalacOptions += "-Wconf:src=.*/scala/meta/internal/.*:s",
       Compile / sourceGenerators += Def.task {
         val s = streams.value
         val cacheDir = s.cacheDirectory
@@ -3243,8 +3259,14 @@ object ScaladocConfigs {
     "enums",
     "experimental/capture-checking",
   )
+  def captureCheckingSnippetTestTargets(docsRoot: String) = List(
+    s"$docsRoot/_docs/reference/experimental/capture-checking/basics.md=compile+test",
+    s"$docsRoot/_docs/reference/experimental/capture-checking/checked-exceptions.md=compile+test",
+    s"$docsRoot/_docs/reference/experimental/capture-checking/scoped-capabilities.md=compile+test"
+  )
   def referenceSnippetCompilerTargets(docsRoot: String) =
-    referenceSnippetRelativeRoots.map(path => s"$docsRoot/_docs/reference/$path=compile")
+    referenceSnippetRelativeRoots.map(path => s"$docsRoot/_docs/reference/$path=compile") ++
+      captureCheckingSnippetTestTargets(docsRoot)
 
   lazy val Scala3 = Def.task {
     val stdlib = { // relative path to the stdlib directory ('library/')
