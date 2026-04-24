@@ -1098,7 +1098,7 @@ object PyIREmitter:
         s"${classIdentifier(className)}($argsStr)"
 
       case PyLoadModule(className) =>
-        moduleAccessExpr(routeToModuleVar(className))
+        moduleValueExpr(routeToModuleVar(className))
 
       // Type tests / casts
       case PyIsInstanceOf(expr, testType) =>
@@ -1421,6 +1421,9 @@ object PyIREmitter:
      *  runtime. */
     private def moduleAccessExpr(cn: PyClassName): String =
       moduleVarName(cn)
+
+    private def moduleValueExpr(cn: PyClassName): String =
+      s"_scpy_module_value(${moduleAccessExpr(cn)})"
 
     /** Rewrite a class-style ClassName to its module-class counterpart
      *  when only the latter has a singleton in this bundle. Stdlib
