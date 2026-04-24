@@ -8,3 +8,7 @@
 
   val singleton = 3 :: Nil
   println("singleton:" + singleton.tail.isEmpty + ":" + singleton.reverse.head)
+
+  val zs = xs ++ ys
+  println("concat-to-string:" + zs.toString)
+  println("concat-plus:" + zs)

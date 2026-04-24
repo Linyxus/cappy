@@ -1,8 +1,8 @@
 Add(Num(2),Mul(Num(3),Neg(Num(4))))
 -10
 (2 + (3 * -4))
-True
+true
 Add(Num(2),Num(5))
-True
-False
+true
+false
 -(1 + 2)

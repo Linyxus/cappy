@@ -92,8 +92,6 @@ class PyEncoding(using Context):
 
   private def specialMethodNameOf(sym: Symbol, rawName: String): Option[String] =
     rawName match
-      case "toString" if sym.info.paramInfoss.flatten.isEmpty =>
-        Some("__str__")
       case "hashCode" if sym.info.paramInfoss.flatten.isEmpty =>
         Some("__hash__")
       case "equals" if sym.info.paramInfoss.flatten.length == 1 =>

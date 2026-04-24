@@ -2,9 +2,9 @@ Ada:37
 senior:Bob:41
 Cid:19
 Nia@28
-True
+true
 Box(User(Mia,30))
 Pair(42,ok)
 Pair(42,ok)
-True
-True
+true
+true

@@ -1,0 +1,10 @@
+custom-direct:Rendered(7)
+custom-any:Rendered(7)
+custom-plus:Rendered(7)
+primitives:A:true:42:()
+primitive-plus:A:true:42:()
+case:Pair(1,x)
+case-plus:Pair(2,y)
+list-direct:List(0, 1, 2, 2, 1, 0)
+list-plus:List(0, 1, 2, 2, 1, 0)
+companion:plain companion:false:true
