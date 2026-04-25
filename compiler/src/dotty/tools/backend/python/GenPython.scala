@@ -667,15 +667,30 @@ private class PyCodeGen()(using genCtx: Context):
         // Each branch must scope its own `pendingLocalDefs` to prevent
         // side-effecting genExpr calls (notably `genExpr(Return)`) from
         // leaking into the enclosing scope and running unconditionally.
-        def scopedBranch(branch: Tree): PyTree =
+        //
+        // INVARIANT: A `PyIf` returned from `genExpr` must not contain
+        // a `PyBlock` (or any other statement-shaped node) in its
+        // branches. The emitter would render such a `PyIf` as a Python
+        // conditional expression `(thenp if cond else elsep)` and
+        // silently drop the block's statements — see
+        // `notes/issue-list-vector-large-literal-unbound-locals.md`.
+        // When either branch has pending locals, hoist the whole `If`
+        // to a statement-form temp assign + `PyVarRef` for the value.
+        def scopedBranch(branch: Tree): (List[PyTree], PyTree) =
           val saved = pendingLocalDefs
           pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
           val expr = genExpr(branch)
-          val locals = pendingLocalDefs
+          val locals = pendingLocalDefs.toList
           pendingLocalDefs = saved
-          if locals.isEmpty then expr
-          else PyBlock(locals.toList, expr)(pos)
-        PyIf(genExpr(cond), scopedBranch(thenp), scopedBranch(elsep))(encoding.encodeType(tree.tpe), pos)
+          (locals, expr)
+        val condIR = genExpr(cond)
+        val (thenLocals, thenExpr) = scopedBranch(thenp)
+        val (elseLocals, elseExpr) = scopedBranch(elsep)
+        if thenLocals.isEmpty && elseLocals.isEmpty then
+          PyIf(condIR, thenExpr, elseExpr)(encoding.encodeType(tree.tpe), pos)
+        else
+          hoistValueIf(condIR, thenLocals, thenExpr, elseLocals, elseExpr,
+                       encoding.encodeType(tree.tpe), pos)
 
       case t: This =>
         if t.symbol.is(ModuleClass) && t.symbol != currentClassSym then
@@ -1052,7 +1067,7 @@ private class PyCodeGen()(using genCtx: Context):
               args
             )(resultTpe, pos)
 
-          case Ident(_) =>
+          case id: Ident =>
             if sym.owner.is(ModuleClass) then
               PyApply(
                 PyApplyFlags.empty,
@@ -1065,16 +1080,35 @@ private class PyCodeGen()(using genCtx: Context):
               // Bare-name call on an instance member — the implicit receiver
               // is `this`. Scala 3's tree form elides `this.` on own-class
               // members inside instance methods (and for val-accessors
-              // generated from `val x = ...`). Emit `self.method(...)` to
-              // reach the right storage at Python runtime.
-              val classTpe = PyClassType(encoding.encodeClassName(currentClassSym))
-              PyApply(
-                PyApplyFlags.empty,
-                PyThis()(classTpe, pos),
-                ownerName,
-                methodName,
-                args
-              )(resultTpe, pos)
+              // generated from `val x = ...`).
+              //
+              // BUT: implicit conversions like `Predef.intWrapper(x)` may
+              // also lower to a bare `Ident(intWrapper)` whose `sym.owner`
+              // is `LowPriorityImplicits` (a parent class of `Predef`,
+              // private[scala] and never extended by user code). In that
+              // case the qualifier is the Predef module, not `this`.
+              // Recover the actual qualifier from the Ident's TermRef
+              // prefix via `desugarIdent` and route through the recovered
+              // receiver if it is not a `this.` reference.
+              val desugared = tpd.desugarIdent(id)
+              desugared match
+                case sel @ Select(qual, _) if !qual.isInstanceOf[This] =>
+                  PyApply(
+                    PyApplyFlags.empty,
+                    genExpr(qual),
+                    ownerName,
+                    methodName,
+                    args
+                  )(resultTpe, pos)
+                case _ =>
+                  val classTpe = PyClassType(encoding.encodeClassName(currentClassSym))
+                  PyApply(
+                    PyApplyFlags.empty,
+                    PyThis()(classTpe, pos),
+                    ownerName,
+                    methodName,
+                    args
+                  )(resultTpe, pos)
             else
               PyApplyExternal(
                 PyExternalName(methodName.encoded),
@@ -2021,28 +2055,104 @@ private class PyCodeGen()(using genCtx: Context):
     labeledResultCounter += 1
     PyLocalName(s"_scpy_labeled_result_$labeledResultCounter")
 
+  private var ifResultCounter = 0
+  private def freshIfResultName(): PyLocalName =
+    ifResultCounter += 1
+    PyLocalName(s"_scpy_if_result_$ifResultCounter")
+
+  private var matchResultCounter = 0
+  private def freshMatchResultName(): PyLocalName =
+    matchResultCounter += 1
+    PyLocalName(s"_scpy_match_result_$matchResultCounter")
+
+  /** Hoist a value-producing `If` whose branches carry pending local
+   *  definitions into a statement-form `PyIf` that assigns to a fresh
+   *  temp, plus a `PyVarRef` reading the temp. This preserves the
+   *  invariant that a `PyIf` in expression position never contains a
+   *  `PyBlock` (or other statement-shaped node) in its branches —
+   *  otherwise the emitter would render it as a Python conditional
+   *  expression and silently drop the block's statements. */
+  private def hoistValueIf(
+      cond: PyTree,
+      thenLocals: List[PyTree], thenExpr: PyTree,
+      elseLocals: List[PyTree], elseExpr: PyTree,
+      resultTpe: PyType, pos: PyPosition
+  ): PyTree =
+    val tempName = freshIfResultName()
+    val tempVar  = PyVarRef(tempName)(resultTpe, pos)
+    val tempDef  = PyVarDef(
+      name         = tempName,
+      originalName = PyOriginalName.NoOriginalName,
+      vtpe         = resultTpe,
+      mutable      = true,
+      rhs          = defaultValueFor(resultTpe, pos)
+    )(pos)
+    val thenStmt = stmtsToBody(thenLocals :+ PyAssign(tempVar, thenExpr)(pos), pos)
+    val elseStmt = stmtsToBody(elseLocals :+ PyAssign(tempVar, elseExpr)(pos), pos)
+    val ifStmt   = PyIf(cond, thenStmt, elseStmt)(PyVoidType, pos)
+    pendingLocalDefs += tempDef
+    pendingLocalDefs += ifStmt
+    tempVar
+
+  /** Hoist a value-producing `Match` whose case bodies carry pending
+   *  local definitions into a statement-form `PyMatch` that assigns
+   *  each arm's value to a fresh temp, plus a `PyVarRef` reading the
+   *  temp. Preserves the same invariant as `hoistValueIf`. */
+  private def hoistValueMatch(
+      sel: PyTree,
+      cases: List[(List[PyMatchableLiteral], List[PyTree], PyTree)],
+      defaultLocals: List[PyTree], defaultExpr: PyTree,
+      resultTpe: PyType, pos: PyPosition
+  ): PyTree =
+    val tempName = freshMatchResultName()
+    val tempVar  = PyVarRef(tempName)(resultTpe, pos)
+    val tempDef  = PyVarDef(
+      name         = tempName,
+      originalName = PyOriginalName.NoOriginalName,
+      vtpe         = resultTpe,
+      mutable      = true,
+      rhs          = defaultValueFor(resultTpe, pos)
+    )(pos)
+    val stmtCases = cases.map { case (lits, locals, expr) =>
+      (lits, stmtsToBody(locals :+ PyAssign(tempVar, expr)(pos), pos))
+    }
+    val defaultStmt = stmtsToBody(defaultLocals :+ PyAssign(tempVar, defaultExpr)(pos), pos)
+    val matchStmt = PyMatch(sel, stmtCases, defaultStmt)(PyVoidType, pos)
+    pendingLocalDefs += tempDef
+    pendingLocalDefs += matchStmt
+    tempVar
+
   // --- Match generation ----------------------------------------------
 
   private def genMatchExpr(
       selector: Tree, cases: List[CaseDef], pos: PyPosition, resultTpe: PyType
   ): PyTree =
     val sel = genExpr(selector)
-    val litCases = mutable.ListBuffer.empty[(List[PyMatchableLiteral], PyTree)]
-    var defaultTree: PyTree = PyUnitLit()(pos)
-    var defaultSet = false
 
     // Each case body must scope its own `pendingLocalDefs`. Otherwise
     // side-effecting genExpr calls inside a case (e.g. the `genExpr(Return)`
     // path pushes a `PyLabelReturn` as a pending stmt) would leak out of
     // the match and execute unconditionally before the dispatch runs.
-    def scopedBody(body: Tree): PyTree =
+    //
+    // Same invariant as in `genExpr(If)`: a `PyMatch` returned from
+    // `genExpr` must not contain a `PyBlock` (or other statement-shaped
+    // node) inside a case body, because the emitter renders such a
+    // `PyMatch` as a chain of Python conditional expressions and would
+    // silently drop the block's statements. When any arm produced
+    // pending locals we hoist the whole `Match` to a statement-form
+    // `PyMatch` that assigns each arm's value to a fresh temp.
+    def scopedBody(body: Tree): (List[PyTree], PyTree) =
       val saved = pendingLocalDefs
       pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
       val expr = genExpr(body)
-      val locals = pendingLocalDefs
+      val locals = pendingLocalDefs.toList
       pendingLocalDefs = saved
-      if locals.isEmpty then expr
-      else PyBlock(locals.toList, expr)(pos)
+      (locals, expr)
+
+    val litCases = mutable.ListBuffer.empty[(List[PyMatchableLiteral], List[PyTree], PyTree)]
+    var defaultLocals: List[PyTree] = Nil
+    var defaultExpr: PyTree = PyUnitLit()(pos)
+    var defaultSet = false
 
     for caseDef <- cases do
       caseDef match
@@ -2050,13 +2160,22 @@ private class PyCodeGen()(using genCtx: Context):
           val lit = genLiteral(c, pos) match
             case ml: PyMatchableLiteral => ml
             case _ => PyNullLit()(pos): PyMatchableLiteral
-          litCases += ((List(lit), scopedBody(body)))
+          val (locals, expr) = scopedBody(body)
+          litCases += ((List(lit), locals, expr))
         case CaseDef(_, _, body) =>
           if !defaultSet then
-            defaultTree = scopedBody(body)
+            val (locals, expr) = scopedBody(body)
+            defaultLocals = locals
+            defaultExpr = expr
             defaultSet = true
 
-    PyMatch(sel, litCases.toList, defaultTree)(resultTpe, pos)
+    val anyHasLocals =
+      defaultLocals.nonEmpty || litCases.exists { case (_, ls, _) => ls.nonEmpty }
+    if anyHasLocals then
+      hoistValueMatch(sel, litCases.toList, defaultLocals, defaultExpr, resultTpe, pos)
+    else
+      val plainCases = litCases.toList.map { case (lits, _, expr) => (lits, expr) }
+      PyMatch(sel, plainCases, defaultExpr)(resultTpe, pos)
 
   // --- Closure generation --------------------------------------------
 

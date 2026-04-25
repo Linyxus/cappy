@@ -771,6 +771,66 @@ object PyIRRuntime:
        |
        |Class = _scpy_Class
        |
+       |class _scpy_ClassModule(_scpy_Object):
+       |    # Stand-in for `java.lang.Class$` (the static-method receiver
+       |    # for `Class.forName`). The Scala backend lowers
+       |    # `Class.forName(name)` to a static call whose Python target is
+       |    # `_scpy_mod_java_lang_Class_.forName__...(name)`. There is no
+       |    # Scala companion source for `java.lang.Class`, so without this
+       |    # the bundle would reference an undefined module variable.
+       |    # Aliased below as `_scpy_mod_java_lang_Class_` (and the
+       |    # double-underscore companion form for safety).
+       |    #
+       |    # Semantics: always raise `ClassNotFoundException`. The Python
+       |    # runtime cannot honor reflective class loading — the registry
+       |    # only knows about classes the bundle already defines, and even
+       |    # for those the JDK-equivalent behavior (constructing via
+       |    # `Class.forName(...).newInstance()`, `getDeclaredFields()`,
+       |    # etc.) is not faithfully implemented. Mirroring Scala.js, we
+       |    # report "not available" so callers like
+       |    # `scala.runtime.ClassValueCompat` take their feature-detect
+       |    # fallback branch (`FallbackClassValue`), which is correctly
+       |    # emitted by the Python backend. Honoring forName would force
+       |    # `ClassValueCompat` down its `JavaClassValue` path, where the
+       |    # `computeValue` override is not currently kept reachable by
+       |    # link-time DCE on a runtime-provided ancestor.
+       |    @staticmethod
+       |    def _scpy_resolve(name):
+       |        # Defer the exception-class lookup to runtime: the prelude
+       |        # is emitted before user/support classes, so
+       |        # `ClassNotFoundException` is not bound when this source
+       |        # string is parsed.
+       |        exc_cls = globals().get("java_lang_ClassNotFoundException")
+       |        if exc_cls is None:
+       |            exc_cls = globals().get("ClassNotFoundException")
+       |        if exc_cls is not None:
+       |            # `_scpy_java_Throwable.__init__` (the synthesized one
+       |            # from `library-py`) only accepts the 4-arg shape
+       |            # `(message, cause, enableSuppression, writableStackTrace)`.
+       |            raise exc_cls(name, None, True, True)
+       |        # Last-resort fallback for tests where ClassNotFoundException
+       |        # has been DCE'd out of the bundle.
+       |        raise Exception("ClassNotFoundException: " + str(name))
+       |
+       |    def forName__Ljava_lang_String__Ljava_lang_Class(self, name):
+       |        return _scpy_ClassModule._scpy_resolve(name)
+       |
+       |    def forName__Ljava_lang_String_Z_Ljava_lang_ClassLoader__Ljava_lang_Class(self, name, initialize, loader):
+       |        return _scpy_ClassModule._scpy_resolve(name)
+       |
+       |    def forName__Ljava_lang_String_Ljava_lang_Module__Ljava_lang_Class(self, name, module):
+       |        return _scpy_ClassModule._scpy_resolve(name)
+       |
+       |    def __getattr__(self, name):
+       |        # Tolerate any other encoded `forName` overload by
+       |        # delegating to the resolver. The first positional argument
+       |        # is always the class name.
+       |        if name.startswith("forName"):
+       |            def _resolve(*args, **kwargs):
+       |                return _scpy_ClassModule._scpy_resolve(args[0])
+       |            return _resolve
+       |        raise AttributeError(name)
+       |
        |class _scpy_Array(list):
        |    def __init__(self, values, clazz):
        |        super().__init__(values)
@@ -984,14 +1044,46 @@ object PyIRRuntime:
        |# — so Python must have a base class to inherit from at class-definition
        |# time. Runtime dispatch goes through `_scpy_Fn` for closures; these
        |# declarations are nominal bases only.
+       |#
+       |# `__getattr__` provides default forwarders for the Scala 2 specialized
+       |# `apply_mc..._sp__...` method names that Scala 3's `SpecializeFunctions`
+       |# rewrites call sites to. On the JVM these are interface default methods
+       |# that box arguments and call the unspecialized `apply`, then unbox the
+       |# result. In Python ints / floats / bools are unboxed values, so the
+       |# fallback simply forwards to whichever non-specialized `apply__...`
+       |# method the subclass exposes.
+       |def _scpy_fn_specialized_forward(self, name):
+       |    if not name.startswith("apply_mc") or "_sp__" not in name:
+       |        raise AttributeError(name)
+       |    target = None
+       |    for cls in type(self).__mro__:
+       |        for attr_name, attr_val in vars(cls).items():
+       |            if attr_name == name:
+       |                continue
+       |            if not attr_name.startswith("apply__"):
+       |                continue
+       |            if attr_name.startswith("apply_mc"):
+       |                continue
+       |            if callable(attr_val):
+       |                target = attr_val
+       |                break
+       |        if target is not None:
+       |            break
+       |    if target is None:
+       |        raise AttributeError(name)
+       |    return target.__get__(self, type(self))
+       |
        |class Function0(_scpy_Object):
-       |    pass
+       |    def __getattr__(self, name):
+       |        return _scpy_fn_specialized_forward(self, name)
        |
        |class Function1(_scpy_Object):
-       |    pass
+       |    def __getattr__(self, name):
+       |        return _scpy_fn_specialized_forward(self, name)
        |
        |class Function2(_scpy_Object):
-       |    pass
+       |    def __getattr__(self, name):
+       |        return _scpy_fn_specialized_forward(self, name)
        |
        |# Linker-only nominal stubs. Stdlib references them by name (some as
        |# bases — Stepper/Spliterator path), so Python must have a class to
@@ -1130,6 +1222,14 @@ object PyIRRuntime:
        |_scpy_mod_scala_Char_ = _scpy_CharModule()
        |_scpy_mod_scala_Int__ = _scpy_mod_scala_Int_
        |_scpy_mod_scala_Char__ = _scpy_mod_scala_Char_
+       |# `Class.forName(...)` is a static call on the JDK-provided
+       |# `java.lang.Class`. The backend lowers it to
+       |# `_scpy_mod_java_lang_Class_.forName__...(...)`. Bind the module
+       |# variable to a singleton of `_scpy_ClassModule` so the call
+       |# resolves; cover the `Class$` companion form too in case any
+       |# emitted code carries the trailing-dollar variant.
+       |_scpy_mod_java_lang_Class_  = _scpy_ClassModule()
+       |_scpy_mod_java_lang_Class__ = _scpy_mod_java_lang_Class_
        |_scpy_system_class_loader = ClassLoader()
        |
        |_scpy_register_class(object, "java.lang.Object", "class", None)

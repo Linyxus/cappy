@@ -1139,24 +1139,31 @@ object PyIREmitter:
       case PyIf(cond, thenp, elsep) =>
         s"(${exprToStr(thenp)} if ${exprToStr(cond)} else ${exprToStr(elsep)})"
 
-      // Block-expression - fall back to final expression (side effects
-      // won't be captured; this is a known limitation of the shell
-      // emitter).
-      case PyBlock(_, expr) =>
-        exprToStr(expr)
-
       case PyMatch(selector, cases, default) =>
-        // Lower to nested ternary: each case is `body if cond else <else>`
+        // Lower to nested ternary: each case is `body if cond else <else>`.
+        // Statement-shaped arm bodies are forbidden here for the same
+        // reason as in `PyIf` — see the `PyBlock` case below.
         val selStr = exprToStr(selector)
         cases.foldRight(exprToStr(default)) { case ((lits, body), elsePart) =>
           val conds = lits.map(lit => s"$selStr == ${exprToStr(lit)}").mkString(" or ")
           s"(${exprToStr(body)} if ($conds) else $elsePart)"
         }
 
-      case PyLabeled(_, body)      => exprToStr(body)
-      case PyLabelReturn(_, value) => exprToStr(value)
-      case PyTryCatch(block, _, _, _) => exprToStr(block)
-      case PyTryFinally(block, _)     => exprToStr(block)
+      // INVARIANT: `PyBlock`, `PyLabeled`, `PyLabelReturn`,
+      // `PyTryCatch`, and `PyTryFinally` are statement-shaped nodes
+      // and must never appear in expression position. Rendering them
+      // as a Python expression would silently drop their statements
+      // (the `result = ...` assignments inside the block body), which
+      // produces broken code where the result variable is read but
+      // never bound — see
+      // `notes/issue-list-vector-large-literal-unbound-locals.md`.
+      // The `GenPython` lowering hoists such trees to a temp + a
+      // statement; any occurrence here is a backend bug.
+      case _: (PyBlock | PyLabeled | PyLabelReturn | PyTryCatch | PyTryFinally) =>
+        throw new AssertionError(
+          s"statement-shaped PyIR node in expression position: ${tree.getClass.getSimpleName} " +
+          s"at ${tree.pos}; this must be hoisted by GenPython before reaching the emitter."
+        )
 
       case other =>
         // Fall-through: emit a bare `None` so the surrounding expression
