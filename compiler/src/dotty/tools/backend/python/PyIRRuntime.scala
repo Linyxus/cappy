@@ -1098,7 +1098,13 @@ object PyIRRuntime:
        |class Method(AccessibleObject): pass
        |class Field(AccessibleObject): pass
        |class Spliterator(_scpy_Object): pass
-       |class Reference(_scpy_Object): pass
+       |class Reference(_scpy_Object):
+       |    def __init__(self, referent=None, *_args):
+       |        self._scpy_ref_referent = referent
+       |    def get__Ljava_lang_Object(self):
+       |        return self._scpy_ref_referent
+       |    def clear__V(self):
+       |        self._scpy_ref_referent = None
        |class WeakReference(Reference): pass
        |class ScalaNumber(_scpy_Object): pass
        |class PrimitiveIterator(_scpy_Object): pass
