@@ -1125,22 +1125,20 @@ object PyIREmitter:
         emitBinary(op, lhs, rhs)
 
       // Closures (simplified). Wrapped in an arity-specific
-      // `_scpy_Fn{0,1,2}` subclass (defined in the runtime preamble) that
-      // both inherits the `_scpy_Fn` `__call__` / `apply*` forwarding and
-      // extends the matching nominal `FunctionN` base, so runtime
-      // `_scpy_is_instance(closure, scala.FunctionN)` succeeds at
-      // constructor-dispatch sites with a `FunctionN` parameter
-      // (e.g. `IndexedSeqView.Map(self, f)`). Higher arities fall back to
-      // the plain `_scpy_Fn` carrier — there are no `Function3..22`
-      // runtime bases today, so the dispatcher's `Function3..22` guard
-      // would never be emitted anyway.
+      // `_scpy_FnN` subclass (defined in the runtime preamble for
+      // `N = 0..22`) that both inherits the `_scpy_Fn` `__call__` /
+      // `apply*` forwarding and extends the matching nominal `FunctionN`
+      // base, so runtime `_scpy_is_instance(closure, scala.FunctionN)`
+      // succeeds at constructor-dispatch sites with a `FunctionN`
+      // parameter (e.g. `IndexedSeqView.Map(self, f)`). Arities above 22
+      // fall back to the plain `_scpy_Fn` carrier; Scala's source
+      // language only defines `FunctionN` for `N <= 22`, so this is just
+      // a safety net for codegen-synthesized closures of unexpected
+      // shape.
       case PyClosure(_, params, _, body, _) =>
         val paramsStr = params.map(_.name.name).mkString(", ")
-        val carrier = params.length match
-          case 0 => "_scpy_Fn0"
-          case 1 => "_scpy_Fn1"
-          case 2 => "_scpy_Fn2"
-          case _ => "_scpy_Fn"
+        val arity = params.length
+        val carrier = if arity >= 0 && arity <= 22 then s"_scpy_Fn$arity" else "_scpy_Fn"
         s"$carrier(lambda $paramsStr: ${exprToStr(body)})"
 
       case PyClassOf(typeRef) =>

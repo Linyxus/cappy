@@ -47,9 +47,13 @@ object PyIRRuntime:
   // Java-only class names. These have no Scala source and are backed by
   // Python builtins (object, str, type, annotation base classes).
   private val SerializableClass = PyClassName("java.io.Serializable")
-  private val Function0Class = PyClassName("scala.Function0")
-  private val Function1Class = PyClassName("scala.Function1")
-  private val Function2Class = PyClassName("scala.Function2")
+  /** `scala.FunctionN` for `N = 0..22`. The Python runtime declares a
+   *  matching nominal `FunctionN` base for each, so closures wrapped in
+   *  `_scpy_FnN` satisfy `_scpy_is_instance(closure, scala.FunctionN)`
+   *  at constructor-dispatch sites (e.g. `IndexedSeqView.Map(self, f)`).
+   */
+  private val FunctionClasses: IndexedSeq[PyClassName] =
+    (0 to 22).map(n => PyClassName(s"scala.Function$n"))
   private val AnnotationClass = PyClassName("scala.annotation.Annotation")
   private val StaticAnnotationClass = PyClassName("scala.annotation.StaticAnnotation")
   private val ComparableClass = PyClassName("java.lang.Comparable")
@@ -198,35 +202,6 @@ object PyIRRuntime:
         kind = PyClassKind.Interface,
         superClass = None,
         javaProvided = true
-      ),
-    Function0Class ->
-      ProvidedClass(
-        kind = PyClassKind.Interface,
-        superClass = None,
-        javaProvided = true,
-        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("apply", "toString", "__str__"))
-      ),
-    Function1Class ->
-      ProvidedClass(
-        kind = PyClassKind.Interface,
-        superClass = None,
-        javaProvided = true,
-        // `compose`, `andThen`, `toString` are instance methods
-        // stdlib references. Runtime Function1 is a Python callable; missing
-        // attributes get sane defaults via Python's attribute lookup, so
-        // declaring them here only costs a linker-side match.
-        instanceMethods = MethodMatcher(
-          simpleNamePrefixes = Set("apply", "compose", "andThen", "toString", "__str__")
-        )
-      ),
-    Function2Class ->
-      ProvidedClass(
-        kind = PyClassKind.Interface,
-        superClass = None,
-        javaProvided = true,
-        instanceMethods = MethodMatcher(
-          simpleNamePrefixes = Set("apply", "curried", "tupled", "toString", "__str__")
-        )
       ),
     AnnotationClass ->
       ProvidedClass(
@@ -494,6 +469,20 @@ object PyIRRuntime:
       constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
       staticMethods = MethodMatcher(simpleNamePrefixes = Set("create")),
       fields = Set(PyFieldName(name, PySimpleFieldName("elem")))
+    )
+  }.toMap ++ FunctionClasses.map { name =>
+    // `scala.FunctionN` for `N = 0..22`. Stdlib classes like `Set`, `Map`
+    // extend `Function1`, so each must exist as a nominal interface at
+    // link time. Method names cover `apply`, the compose/curry/tupled
+    // family, and `toString`/`__str__` — superset across arities is fine
+    // because `javaProvided = true` already accepts any signature.
+    name -> ProvidedClass(
+      kind = PyClassKind.Interface,
+      superClass = None,
+      javaProvided = true,
+      instanceMethods = MethodMatcher(
+        simpleNamePrefixes = Set("apply", "compose", "andThen", "curried", "tupled", "toString", "__str__")
+      )
     )
   }.toMap
 
@@ -1039,11 +1028,11 @@ object PyIRRuntime:
        |class Serializable(_scpy_Object):
        |    pass
        |
-       |# Scala `FunctionN` interfaces. Stdlib classes like `Set`, `Map`, etc.
-       |# extend `Function1` (e.g. `trait Set[A] extends ... with (A => Boolean)`)
-       |# — so Python must have a base class to inherit from at class-definition
-       |# time. Runtime dispatch goes through `_scpy_Fn` for closures; these
-       |# declarations are nominal bases only.
+       |# Scala `FunctionN` interfaces (N = 0..22). Stdlib classes like `Set`,
+       |# `Map`, etc. extend `Function1` (e.g. `trait Set[A] extends ... with
+       |# (A => Boolean)`) — so Python must have a base class to inherit from
+       |# at class-definition time. Runtime dispatch goes through
+       |# `_scpy_Fn{0..22}` for closures; these declarations are nominal bases.
        |#
        |# `__getattr__` provides default forwarders for the Scala 2 specialized
        |# `apply_mc..._sp__...` method names that Scala 3's `SpecializeFunctions`
@@ -1051,7 +1040,9 @@ object PyIRRuntime:
        |# that box arguments and call the unspecialized `apply`, then unbox the
        |# result. In Python ints / floats / bools are unboxed values, so the
        |# fallback simply forwards to whichever non-specialized `apply__...`
-       |# method the subclass exposes.
+       |# method the subclass exposes. (Scala only emits specialized forwarders
+       |# for low arities, but keeping the shape uniform across N = 0..22
+       |# avoids surprises.)
        |def _scpy_fn_specialized_forward(self, name):
        |    if not name.startswith("apply_mc") or "_sp__" not in name:
        |        raise AttributeError(name)
@@ -1073,19 +1064,15 @@ object PyIRRuntime:
        |        raise AttributeError(name)
        |    return target.__get__(self, type(self))
        |
-       |class Function0(_scpy_Object):
-       |    def __getattr__(self, name):
-       |        return _scpy_fn_specialized_forward(self, name)
-       |
-       |class Function1(_scpy_Object):
-       |    def __getattr__(self, name):
-       |        return _scpy_fn_specialized_forward(self, name)
-       |
-       |class Function2(_scpy_Object):
-       |    def __getattr__(self, name):
-       |        return _scpy_fn_specialized_forward(self, name)
-       |
-       |# Linker-only nominal stubs. Stdlib references them by name (some as
+       |""".stripMargin +
+    (0 to 22).map { n =>
+      s"""|class Function$n(_scpy_Object):
+          |    def __getattr__(self, name):
+          |        return _scpy_fn_specialized_forward(self, name)
+          |
+          |""".stripMargin
+    }.mkString +
+    """|# Linker-only nominal stubs. Stdlib references them by name (some as
        |# bases — Stepper/Spliterator path), so Python must have a class to
        |# inherit from. Empty bodies — runtime never executes their methods.
        |class VarHandle(_scpy_Object): pass
@@ -1243,10 +1230,12 @@ object PyIRRuntime:
        |_scpy_register_class(_scpy_Class, "java.lang.Class", "class", "java.lang.Object")
        |_scpy_register_class(ClassLoader, "java.lang.ClassLoader", "class", "java.lang.Object")
        |_scpy_register_class(ClassValue, "java.lang.ClassValue", "class", "java.lang.Object")
-       |_scpy_register_class(Function0, "scala.Function0", "interface", None)
-       |_scpy_register_class(Function1, "scala.Function1", "interface", None)
-       |_scpy_register_class(Function2, "scala.Function2", "interface", None)
-       |_scpy_register_class(VarHandle, "java.lang.invoke.VarHandle", "class", "java.lang.Object")
+""".stripMargin +
+    (0 to 22).map { n =>
+      s"""|_scpy_register_class(Function$n, "scala.Function$n", "interface", None)
+          |""".stripMargin
+    }.mkString +
+    """|_scpy_register_class(VarHandle, "java.lang.invoke.VarHandle", "class", "java.lang.Object")
        |_scpy_register_class(MethodHandles, "java.lang.invoke.MethodHandles", "class", "java.lang.Object")
        |_scpy_register_class(MethodHandles_Lookup, "java.lang.invoke.MethodHandles_Lookup", "class", "java.lang.Object")
        |_scpy_register_class(ObjectInputStream, "java.io.ObjectInputStream", "class", "java.lang.Object")
@@ -1336,14 +1325,14 @@ object PyIRRuntime:
        |    return _scpy_LazyModule(cls)
        |
        |# Closure carriers. Lambdas emitted from Scala source reach here via
-       |# `_scpy_Fn{0,1,2}(lambda ...)`, with the arity-specific subclass
-       |# selected by the emitter from `PyClosure.params`. Each subclass
-       |# extends the matching nominal `FunctionN` base so that
+       |# `_scpy_FnN(lambda ...)` for `N = 0..22`, with the arity-specific
+       |# subclass selected by the emitter from `PyClosure.params`. Each
+       |# subclass extends the matching nominal `FunctionN` base so that
        |# `_scpy_is_instance(closure, scala.FunctionN)` succeeds at
-       |# constructor-dispatch sites that take a `FunctionN` parameter.
-       |# `_scpy_Fn` is kept as a fallback for arity > 2 (no nominal
-       |# `Function3..22` base is provided by the runtime) and as the shared
-       |# implementation of `__call__` / specialized-apply forwarding.
+       |# constructor-dispatch sites that take a `FunctionN` parameter
+       |# (e.g. `IndexedSeqView.Map(self, f)`). `_scpy_Fn` is kept as a
+       |# fallback for any arity above 22 and as the shared implementation
+       |# of `__call__` / specialized-apply forwarding.
        |class _scpy_Fn(_scpy_Object):
        |    __slots__ = ("_fn",)
        |    def __init__(self, fn):
@@ -1355,16 +1344,14 @@ object PyIRRuntime:
        |            return object.__getattribute__(self, "_fn")
        |        raise AttributeError(name)
        |
-       |class _scpy_Fn0(_scpy_Fn, Function0):
-       |    __slots__ = ()
-       |
-       |class _scpy_Fn1(_scpy_Fn, Function1):
-       |    __slots__ = ()
-       |
-       |class _scpy_Fn2(_scpy_Fn, Function2):
-       |    __slots__ = ()
-       |
-       |# -- scala.runtime.*Ref --
+       |""".stripMargin +
+    (0 to 22).map { n =>
+      s"""|class _scpy_Fn$n(_scpy_Fn, Function$n):
+          |    __slots__ = ()
+          |
+          |""".stripMargin
+    }.mkString +
+    """|# -- scala.runtime.*Ref --
        |# By-ref capture wrappers. Scala's JVM target lowers mutable-var
        |# closure captures into `new IntRef(0)` + `.elem` reads/writes.
        |# Python's lexical closure doesn't need them, but PyIR still
