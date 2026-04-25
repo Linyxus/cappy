@@ -1124,13 +1124,24 @@ object PyIREmitter:
       case PyBinaryOp(op, lhs, rhs) =>
         emitBinary(op, lhs, rhs)
 
-      // Closures (simplified). Wrapped in `_scpy_Fn` (defined in the
-      // runtime preamble) so callers can invoke the erased
-      // `apply__...` method — `_scpy_Fn.__getattr__` forwards `apply*`
-      // accesses to the underlying Python lambda.
+      // Closures (simplified). Wrapped in an arity-specific
+      // `_scpy_Fn{0,1,2}` subclass (defined in the runtime preamble) that
+      // both inherits the `_scpy_Fn` `__call__` / `apply*` forwarding and
+      // extends the matching nominal `FunctionN` base, so runtime
+      // `_scpy_is_instance(closure, scala.FunctionN)` succeeds at
+      // constructor-dispatch sites with a `FunctionN` parameter
+      // (e.g. `IndexedSeqView.Map(self, f)`). Higher arities fall back to
+      // the plain `_scpy_Fn` carrier — there are no `Function3..22`
+      // runtime bases today, so the dispatcher's `Function3..22` guard
+      // would never be emitted anyway.
       case PyClosure(_, params, _, body, _) =>
         val paramsStr = params.map(_.name.name).mkString(", ")
-        s"_scpy_Fn(lambda $paramsStr: ${exprToStr(body)})"
+        val carrier = params.length match
+          case 0 => "_scpy_Fn0"
+          case 1 => "_scpy_Fn1"
+          case 2 => "_scpy_Fn2"
+          case _ => "_scpy_Fn"
+        s"$carrier(lambda $paramsStr: ${exprToStr(body)})"
 
       case PyClassOf(typeRef) =>
         typeRefToClassExpr(typeRef)

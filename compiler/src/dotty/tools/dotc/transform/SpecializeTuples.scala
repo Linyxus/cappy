@@ -21,6 +21,12 @@ class SpecializeTuples extends MiniPhase:
   override def phaseName: String                 = SpecializeTuples.name
   override def description: String               = SpecializeTuples.description
 
+  // The Python backend has no JVM-style box/unbox cost and ships no
+  // `Tuple{1,2}$mc??$sp` PyIR. Gate the rewrite off so user code keeps
+  // referencing the unspecialized `scala.Tuple{1,2}` classes that the
+  // Python support libraries actually provide.
+  override def isEnabled(using Context): Boolean = !ctx.settings.scalapy.value
+
   override def transformApply(tree: Apply)(using Context): Tree = tree match
     case Apply(TypeApply(fun: NameTree, targs), args)
         if fun.symbol.name == nme.apply && fun.symbol.exists && defn.isSpecializableTuple(fun.symbol.owner.companionClass, targs.map(_.tpe))

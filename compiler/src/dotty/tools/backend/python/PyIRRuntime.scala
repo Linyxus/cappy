@@ -1335,6 +1335,15 @@ object PyIRRuntime:
        |def _scpy_lazy_module(cls):
        |    return _scpy_LazyModule(cls)
        |
+       |# Closure carriers. Lambdas emitted from Scala source reach here via
+       |# `_scpy_Fn{0,1,2}(lambda ...)`, with the arity-specific subclass
+       |# selected by the emitter from `PyClosure.params`. Each subclass
+       |# extends the matching nominal `FunctionN` base so that
+       |# `_scpy_is_instance(closure, scala.FunctionN)` succeeds at
+       |# constructor-dispatch sites that take a `FunctionN` parameter.
+       |# `_scpy_Fn` is kept as a fallback for arity > 2 (no nominal
+       |# `Function3..22` base is provided by the runtime) and as the shared
+       |# implementation of `__call__` / specialized-apply forwarding.
        |class _scpy_Fn(_scpy_Object):
        |    __slots__ = ("_fn",)
        |    def __init__(self, fn):
@@ -1345,6 +1354,15 @@ object PyIRRuntime:
        |        if name.startswith("apply"):
        |            return object.__getattribute__(self, "_fn")
        |        raise AttributeError(name)
+       |
+       |class _scpy_Fn0(_scpy_Fn, Function0):
+       |    __slots__ = ()
+       |
+       |class _scpy_Fn1(_scpy_Fn, Function1):
+       |    __slots__ = ()
+       |
+       |class _scpy_Fn2(_scpy_Fn, Function2):
+       |    __slots__ = ()
        |
        |# -- scala.runtime.*Ref --
        |# By-ref capture wrappers. Scala's JVM target lowers mutable-var
