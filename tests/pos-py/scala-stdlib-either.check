@@ -1,0 +1,10 @@
+build:Right(42):Left(boom)
+access:true:false:false:true
+transform:Right(43):Left(boom):Right(84):Left(nope):Left(boom)
+swap:Left(42):Right(boom)
+exists:true:false
+forall:true:true
+getOrElse:42:-1
+fold:R:42:L:boom
+toOption:Some(42):None
+toSeq:List(42):List()

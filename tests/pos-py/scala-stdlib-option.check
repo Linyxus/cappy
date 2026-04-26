@@ -1,0 +1,9 @@
+build:Some(42):None:None:Some(7):None
+access:42:true:false:false:true
+transform:Some(43):Some(84):None:None
+filter:Some(42):None
+exists:true:false
+forall:true:true
+getOrElse:42:-1
+fold:43:-1
+toList:List(42):List()
