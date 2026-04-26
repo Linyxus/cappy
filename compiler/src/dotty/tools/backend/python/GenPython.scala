@@ -49,6 +49,18 @@ object GenPython:
   val name: String = "genPython"
   val description: String = "generate Python source files"
 
+  /** Runtime-provided shim ancestors that pylib's concrete subclasses do NOT
+   *  extend. Calls to these classes' members from a concrete pylib subclass
+   *  must be re-anchored to the receiver's static type (see
+   *  `PyCodeGen.dispatchOwnerNameOpt`). JDK 25's `StringBuilder` /
+   *  `StringBuffer` redeclare inherited methods as `ACC_BRIDGE | ACC_SYNTHETIC`
+   *  forwarders; dotc skips those, so without this list reachability would
+   *  prune the pylib-supplied implementations.
+   */
+  private[python] val detachedShimAncestors: Set[PyClassName] = Set(
+    PyClassName("java.lang.AbstractStringBuilder")
+  )
+
 /** Main code generator that translates post-erasure Scala trees into the
   * typed PyIR. Modeled after `dotty.tools.backend.sjs.JSCodeGen`.
   */
@@ -1059,10 +1071,23 @@ private class PyCodeGen()(using genCtx: Context):
             )(resultTpe, pos)
 
           case Select(receiver, _) =>
+            // Re-anchor `className` to the receiver's static type when
+            // `sym.owner` resolves to a runtime-provided abstract parent
+            // (e.g. `java.lang.AbstractStringBuilder`). dotc's classfile
+            // reader skips `ACC_BRIDGE | ACC_SYNTHETIC` redeclarations on
+            // JDK 25 `StringBuilder`/`StringBuffer`, so methods like
+            // `setCharAt`/`length`/`charAt`/`capacity`/`getChars` resolve
+            // up to `AbstractStringBuilder`. That class is opaque to
+            // reachability (`PyIRRuntime.providedClasses`), so the linker
+            // would prune the pylib-supplied implementations on the
+            // concrete subclass. Anchoring the call to the concrete static
+            // receiver lets reachability find pylib's declaration.
+            val dispatchOwner =
+              dispatchOwnerNameOpt(ownerName, receiver.tpe).getOrElse(ownerName)
             PyApply(
               PyApplyFlags.empty,
               genExpr(receiver),
-              ownerName,
+              dispatchOwner,
               methodName,
               args
             )(resultTpe, pos)
@@ -1121,6 +1146,37 @@ private class PyCodeGen()(using genCtx: Context):
               args
             )(resultTpe, pos)
     }
+
+  /** When `ownerName` (from `sym.owner`) names a runtime-provided abstract
+   *  parent that pylib's concrete subclass does NOT extend, return the
+   *  receiver's static class name so virtual dispatch is anchored to the
+   *  class the linker actually loads. Returns `None` when no re-anchoring
+   *  applies, in which case the caller keeps `sym.owner`.
+   *
+   *  This is the bridge/synthetic workaround for JDK 25
+   *  `StringBuilder`/`StringBuffer`: their `setCharAt`/`length`/`charAt`/
+   *  `capacity`/`getChars`/etc. redeclarations are
+   *  `ACC_BRIDGE | ACC_SYNTHETIC` forwarders. dotc's classfile reader skips
+   *  those, so `sym.owner` resolves up to `AbstractStringBuilder`, which is
+   *  an opaque [[PyIRRuntime.providedClasses]] shim. Without re-anchoring,
+   *  reachability bails out at the runtime-provided check and the linker
+   *  prunes the pylib-supplied implementation, surfacing as
+   *  `AttributeError: ... has no attribute 'setCharAt__I_C__V'` at run
+   *  time. This is narrowly scoped to the known shim ancestors so generic
+   *  inherited-from-`Object` calls (`toString`, `getClass`, `wait`, …) are
+   *  unaffected — those classes really do extend `Object` in pylib and
+   *  resolve via the runtime's MRO.
+   */
+  private def dispatchOwnerNameOpt(ownerName: PyClassName, recvTpe: Type): Option[PyClassName] =
+    if !GenPython.detachedShimAncestors.contains(ownerName) then None
+    else
+      val recvSym = recvTpe.widenDealias.typeSymbol
+      if !recvSym.exists || !recvSym.isClass then None
+      else
+        val recvName = encoding.encodeClassName(recvSym)
+        if recvName == ownerName then None
+        else if PyIRRuntime.providedClass(recvName).isDefined then None
+        else Some(recvName)
 
   /** Map `java.lang.String` instance method calls onto Python-native
    *  equivalents — the runtime receiver is a Python `str`, not a ported
