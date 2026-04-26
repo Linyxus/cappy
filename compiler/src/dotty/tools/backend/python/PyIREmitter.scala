@@ -1071,8 +1071,19 @@ object PyIREmitter:
         val argsStr = args.map(exprToStr).mkString(", ")
         // Same rerouting policy as PyLoadModule: stdlib's static method
         // calls on `java.util.Arrays` (a bare class) need to land on
-        // pylib's `java.util.Arrays_` module singleton.
-        s"${moduleAccessExpr(routeToModuleVar(className))}.${method.encoded}($argsStr)"
+        // pylib's `java.util.Arrays_` module singleton. But when the
+        // target class itself is a non-ModuleClass in the bundle and has
+        // no `_`-suffixed companion module class — e.g. trait-static
+        // helpers (`loop$2` lifted onto
+        // `scala.collection.StrictOptimizedLinearSeqOps`) or JVM-static
+        // helpers on `final class`es (`ArrayBufferView.superArg_1`) —
+        // there is no `_scpy_mod_<className>_` binding. The static method
+        // is already attached to the class with `@staticmethod`, so call
+        // it directly on the class identifier.
+        if hasNoModuleVarBinding(className) then
+          s"${classIdentifier(className)}.${method.encoded}($argsStr)"
+        else
+          s"${moduleAccessExpr(routeToModuleVar(className))}.${method.encoded}($argsStr)"
 
       case PyApplyExternal(callee, args) =>
         val argsStr = args.map(exprToStr).mkString(", ")
@@ -1098,7 +1109,17 @@ object PyIREmitter:
         s"${classIdentifier(className)}($argsStr)"
 
       case PyLoadModule(className) =>
-        moduleValueExpr(routeToModuleVar(className))
+        // When the target is a non-ModuleClass class in the bundle (no
+        // `_scpy_mod_*_` binding will be produced — see the `moduleClasses`
+        // filter in emitPreamble), fall back to the class identifier.
+        // The class itself is already defined in module scope and can
+        // serve as the carrier for `@staticmethod`-decorated helpers,
+        // which is the only thing a `LoadModule` of a non-module is used
+        // for downstream.
+        if hasNoModuleVarBinding(className) then
+          classIdentifier(className)
+        else
+          moduleValueExpr(routeToModuleVar(className))
 
       // Type tests / casts
       case PyIsInstanceOf(expr, testType) =>
@@ -1457,6 +1478,27 @@ object PyIREmitter:
           classByName.get(underscored) match
             case Some(c) if c.kind == PyClassKind.ModuleClass => underscored
             case _ => cn
+
+    /** True iff `cn` is known to be a non-ModuleClass in the emitted
+     *  bundle and has no `_`-suffixed companion ModuleClass either —
+     *  i.e. `_scpy_mod_<cn>_` is *guaranteed* to not be bound. Used to
+     *  decide whether `PyApplyStatic` / `PyLoadModule` must call the
+     *  `@staticmethod` directly on the class object (Python-level
+     *  `Class.method(...)`) instead of routing through the missing
+     *  module singleton.
+     *
+     *  Conservative: if `cn` is not in `classByName` at all (e.g.
+     *  runtime-provided classes like `scala.runtime.IntRef` whose
+     *  `_scpy_mod_*_` is bound by the prelude), fall through to the
+     *  original module-routing path. */
+    private def hasNoModuleVarBinding(cn: PyClassName): Boolean =
+      classByName.get(cn) match
+        case Some(c) if c.kind != PyClassKind.ModuleClass =>
+          val underscored = PyClassName(cn.nameString + "_")
+          classByName.get(underscored) match
+            case Some(uc) if uc.kind == PyClassKind.ModuleClass => false
+            case _ => true
+        case _ => false
 
     /** Replace `$` with `_`, escape Python keywords. */
     private def sanitizeIdent(s: String): String =
