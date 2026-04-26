@@ -1638,6 +1638,27 @@ private class PyCodeGen()(using genCtx: Context):
 
       // Binary operations
       case List(rhs) =>
+        // Short-circuit `&&`/`||` must NOT evaluate the RHS unconditionally.
+        // If the RHS lowers to side-effecting statements + a value (e.g. a
+        // Block with assignments), we cannot emit a flat `(lhs and rhs)` —
+        // those statements would run unconditionally before the boolean
+        // expression. Scope the RHS's pending locals and, when non-empty,
+        // hoist to a value-producing `if` that runs the locals only when
+        // the LHS dictates evaluation of the RHS.
+        if code == ZAND || code == ZOR then
+          val (rhsLocals, rhsExprS) = genExprWithPending(rhs)
+          if rhsLocals.isEmpty then
+            return PyBinaryOp(if code == ZAND then BoolAnd else BoolOr, lhs, rhsExprS)(pos)
+          else
+            val resultTpe = encoding.encodeType(defn.BooleanType)
+            // `a && b`  =>  if a then b else False
+            // `a || b`  =>  if a then True else b
+            val falseLit = PyBooleanLit(false)(pos)
+            val trueLit  = PyBooleanLit(true)(pos)
+            if code == ZAND then
+              return hoistValueIf(lhs, rhsLocals, rhsExprS, Nil, falseLit, resultTpe, pos)
+            else
+              return hoistValueIf(lhs, Nil, trueLit, rhsLocals, rhsExprS, resultTpe, pos)
         val rhsExpr = genExpr(rhs)
         val usesUniversalEquality =
           !encoding.isIntType(receiverType) &&
