@@ -46,27 +46,22 @@ class PyEncoding(using Context):
 
   // --- Method names --------------------------------------------------
 
-  /** Map from Scala operator-mangled names to Python dunder names.
-   *  Purely cosmetic - these still go through `PyMethodName.encoded` with
-   *  dunder special-casing so the signature suffix is dropped. */
-  private val operatorMap: Map[String, String] = Map(
-    "$plus"      -> "__add__",
-    "$minus"     -> "__sub__",
-    "$times"     -> "__mul__",
-    "$div"       -> "__truediv__",
-    "$percent"   -> "__mod__",
-    "$less"      -> "__lt__",
-    "$greater"   -> "__gt__",
-    "$amp"       -> "__and__",
-    "$bar"       -> "__or__",
-    "$up"        -> "__xor__",
-    "$tilde"     -> "__invert__",
-    "$eq$eq"     -> "__eq__",
-    "$bang$eq"   -> "__ne__",
-    "$less$eq"   -> "__le__",
-    "$greater$eq" -> "__ge__",
-    "$hash$hash" -> "__hash__"
-  )
+  // NOTE: Scala operator methods (`$plus`, `$minus`, `$times`, ...) are
+  // intentionally NOT mapped to Python dunder names (`__add__`, `__sub__`,
+  // ...). Mapping them was cosmetic but unsafe: Scala can have multiple
+  // overloads of `+` (e.g. `MapOps.+(kv)` and `MapOps.+(e1, e2, elems*)`)
+  // and `PyMethodName.encoded` drops the signature suffix for dunder
+  // names, so all overloads collapsed onto the same Python identifier
+  // and the synthesized forwarders became tautological self-calls
+  // (`return self.__add__(kv)`). See
+  // `notes/issue-treemap-plus-self-recursive.md`. The codegen never emits
+  // Python `+`/`-`/... infix syntax for user classes (primitives use
+  // `PyBinaryOp`; Python facade interop uses `PyApplyDynamic`), so user
+  // classes don't need dunder names at all. Methods like Scala `equals`
+  // and `hashCode`, which Python's runtime DOES invoke through `__eq__`
+  // / `__hash__`, are still rerouted by `specialMethodNameOf` below; they
+  // are nullary or single-arg with no Scala-level overloads, so they
+  // can't collide.
 
   def encodeMethodName(sym: Symbol): PyMethodName =
     if sym.isClassConstructor then
@@ -82,7 +77,6 @@ class PyEncoding(using Context):
       val rawName = sym.name.mangledString
       val mapped =
         specialMethodNameOf(sym, rawName)
-          .orElse(operatorMap.get(rawName))
           .getOrElse(sanitizeName(rawName))
       PyMethodName(
         PySimpleMethodName(mapped),
