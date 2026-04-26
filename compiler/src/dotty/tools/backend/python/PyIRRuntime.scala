@@ -1075,7 +1075,28 @@ object PyIRRuntime:
     """|# Linker-only nominal stubs. Stdlib references them by name (some as
        |# bases — Stepper/Spliterator path), so Python must have a class to
        |# inherit from. Empty bodies — runtime never executes their methods.
-       |class VarHandle(_scpy_Object): pass
+       |#
+       |# `VarHandle` is the one exception: the post-erasure `LazyVals` mini-
+       |# phase emits per-lazy-val `VarHandle.compareAndSet(self, expected,
+       |# replacement)` calls keyed on the underlying container field name.
+       |# The Python backend can't replicate JVM `<clinit>`-time
+       |# `MethodHandles.lookup().findVarHandle(...)` setup, so the emitter
+       |# binds each `<container>_lzyHandle` field to a `VarHandle` instance
+       |# carrying that container's field name and uses Python `getattr` /
+       |# `setattr` to implement CAS. Single-threaded — the Python pos-py
+       |# tests don't exercise the LazyVals races, and a future thread-safe
+       |# variant can wrap the body in a `threading.RLock`.
+       |class VarHandle(_scpy_Object):
+       |    def __init__(self, field_name=None):
+       |        self._scpy_field_name = field_name
+       |    def compareAndSet__Ljava_lang_Object_Ljava_lang_Object_Ljava_lang_Object__Z(self, target, expected, replacement):
+       |        current = _builtins.getattr(target, self._scpy_field_name, None)
+       |        if current is expected:
+       |            _builtins.setattr(target, self._scpy_field_name, replacement)
+       |            return True
+       |        return False
+       |def _scpy_make_lazy_handle(field_name):
+       |    return VarHandle(field_name)
        |class MethodHandles(_scpy_Object): pass
        |class MethodHandles_Lookup(_scpy_Object): pass
        |class ObjectInputStream(_scpy_Object): pass

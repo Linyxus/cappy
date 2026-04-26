@@ -258,7 +258,7 @@ object PyIREmitter:
       // level `None` default matches and breaks the cascade.
       if cls.kind == PyClassKind.ModuleClass && cls.fields.nonEmpty then
         for f <- cls.fields do
-          line(s"${f.name.simple.name} = None")
+          line(s"${f.name.simple.name} = ${classLevelFieldInitExpr(f)}")
 
       // Emit constructor dispatcher (if any) or synthesize a field-init __init__
       if ctorMethods.nonEmpty then
@@ -406,7 +406,7 @@ object PyIREmitter:
         line("pass")
       else
         for f <- cls.fields do
-          line(s"self.${f.name.simple.name} = ${fieldDefaultExpr(f.ftpe)}")
+          line(s"self.${f.name.simple.name} = ${fieldInitExpr(f)}")
       dedent()
 
     private def emitConstructorDispatcher(cls: PyClassDef, ctors: List[PyMethodDef]): Unit =
@@ -449,6 +449,46 @@ object PyIREmitter:
       case PyByteType | PyShortType | PyCharType | PyIntType | PyLongType => "0"
       case PyFloatType | PyDoubleType => "0.0"
       case _ => "None"
+
+    /** Suffix appended by the `LazyVals` mini-phase to the per-lazy-val
+     *  static `VarHandle` symbol name. The container's mangled name plus
+     *  this suffix is what reaches us as a Python field name (with `$`
+     *  rewritten to `_` by `sanitizeName`). */
+    private val LazyHandleSuffix: String = "_lzyHandle"
+
+    /** Default-init expression for `f`, with special handling for the
+     *  per-lazy-val `<container>_lzyHandle` field synthesized by the
+     *  `LazyVals` mini-phase.
+     *
+     *  On the JVM, the static `findVarHandle(...)` rhs runs in `<clinit>`,
+     *  which has no Python analogue; the backend currently drops the rhs
+     *  in `genClassMembers` and the field zero-inits to `None`, then
+     *  `compareAndSet` blows up at the first lazy access (see
+     *  `notes/issue-list-range-lazyhandle-none.md`). The simple, single-
+     *  threaded fix: synthesize a `VarHandle` carrying the underlying
+     *  container field name (`<container>_lzyHandle` -> container
+     *  `<container>`) so the per-instance `compareAndSet` calls have a
+     *  real receiver. */
+    private def fieldInitExpr(f: PyFieldDef): String =
+      val name = f.name.simple.name
+      if name.endsWith(LazyHandleSuffix) then
+        val container = name.stripSuffix(LazyHandleSuffix)
+        s"_scpy_make_lazy_handle(\"${container}\")"
+      else
+        fieldDefaultExpr(f.ftpe)
+
+    /** Class-level field default for module-class singletons. Mirrors
+     *  `fieldInitExpr` for the lazy-val handle case but otherwise falls
+     *  back to the legacy `None` literal so the cross-module-init
+     *  cascade (see the call site) keeps the JVM-style "uninitialized
+     *  static field reads as null" semantics. */
+    private def classLevelFieldInitExpr(f: PyFieldDef): String =
+      val name = f.name.simple.name
+      if name.endsWith(LazyHandleSuffix) then
+        val container = name.stripSuffix(LazyHandleSuffix)
+        s"_scpy_make_lazy_handle(\"${container}\")"
+      else
+        "None"
 
     private def constructorHelperName(owner: PyClassName, name: PyMethodName): String =
       val paramPart =
