@@ -1199,8 +1199,17 @@ object PyIREmitter:
       case PyIsInstanceOf(expr, testType) =>
         s"_scpy_is_value_of_type(${exprToStr(expr)}, ${typeRefToClassExpr(testType)})"
 
-      case PyAsInstanceOf(expr, _) =>
-        exprToStr(expr)  // Python is duck-typed, cast is a no-op
+      case PyAsInstanceOf(expr, target) =>
+        // Python is duck-typed, so most casts are no-ops. Char is an
+        // exception: a boxed `Character` is a `_scpy_Char` (an `int`
+        // subclass), and unboxing must extract the raw codepoint so
+        // downstream primitive Char ops see a plain `int`. Without this,
+        // `(c: Any).asInstanceOf[Char]` would still be a `_scpy_Char`,
+        // and `_scpy_to_str(c)` (e.g. `println(c.toString)` after such a
+        // cast) would still hit the toString hook even from a primitive
+        // Char position.
+        if target == PyCharType then s"_scpy_unbox_char(${exprToStr(expr)})"
+        else exprToStr(expr)
 
       // Arrays
       case PyNewArray(elemTypeRef, length) =>

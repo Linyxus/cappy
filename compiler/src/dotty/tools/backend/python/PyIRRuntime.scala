@@ -824,6 +824,25 @@ object PyIRRuntime:
        |    def __init__(self, values, clazz):
        |        super().__init__(values)
        |        self._scpy_class = clazz
+       |        # Cache once: is this a primitive `char[]`? If so, reads
+       |        # auto-box raw ints into `_scpy_Char` so iterators that
+       |        # forward through `ScalaRunTime.array_apply` (e.g.
+       |        # `ArrayOps.ArrayIterator.next()`) hand off a value whose
+       |        # `_scpy_to_str` renders the codepoint glyph instead of
+       |        # the numeric form. Other primitive arrays don't need
+       |        # this — `str(int)`/`str(float)` already match Scala.
+       |        comp = clazz._scpy_component_type if clazz is not None else None
+       |        self._scpy_is_char_array = (
+       |            comp is not None
+       |            and comp._scpy_kind == "primitive"
+       |            and comp._scpy_name == "char"
+       |        )
+       |
+       |    def __getitem__(self, idx):
+       |        v = list.__getitem__(self, idx)
+       |        if self._scpy_is_char_array and isinstance(v, int) and not isinstance(v, _scpy_Char) and not isinstance(v, bool):
+       |            return _scpy_Char(v)
+       |        return v
        |
        |    def getClass__Ljava_lang_Class(self):
        |        return self._scpy_class
@@ -1218,6 +1237,81 @@ object PyIRRuntime:
        |_scpy_mod_scala_runtime_BoxedUnit_ = BoxedUnit
        |_scpy_mod_scala_runtime_BoxedUnit__ = BoxedUnit
        |
+       |class _scpy_Char(int):
+       |    # Boxed Char wrapper. Subclasses Python's `int` so existing
+       |    # primitive Char operations (treated as ints by the backend)
+       |    # still work — e.g. `_scpy_Char(97) - ord('0')` is an int op,
+       |    # `hash` returns the codepoint, `<`/`>` use int ordering.
+       |    #
+       |    # The wrapper is what Scala emits when a `Char` is widened to
+       |    # `Any`/`Object` (via `Char$.box` or `BoxesRunTime.boxToCharacter`).
+       |    # Without it, `_scpy_to_str(120)` would render as `"120"` instead
+       |    # of `"x"`. The `toString__Ljava_lang_String` method below is the
+       |    # hook that `_scpy_to_str` discovers via `getattr`.
+       |    __slots__ = ()
+       |
+       |    def __new__(cls, value):
+       |        return int.__new__(cls, int(value))
+       |
+       |    def __str__(self):
+       |        return _builtins.chr(int(self))
+       |
+       |    def __repr__(self):
+       |        return _builtins.chr(int(self))
+       |
+       |    def __eq__(self, other):
+       |        # Compare by codepoint against another `_scpy_Char` or a
+       |        # raw int. The lenient int-friendly comparison is needed
+       |        # because primitive Char paths in stdlib generic code
+       |        # (e.g. `ArrayOps.ArrayIterator.next()` reading from a
+       |        # primitive `Array[Char]`) return raw ints — never boxed —
+       |        # so `arr.contains('a')` on a Char vector would otherwise
+       |        # miss its own elements. Booleans are excluded because
+       |        # Python's `True == 1` would otherwise be transitive.
+       |        if isinstance(other, bool):
+       |            return False
+       |        if isinstance(other, int):
+       |            return int(self) == int(other)
+       |        return False
+       |
+       |    def __ne__(self, other):
+       |        return not self.__eq__(other)
+       |
+       |    def __hash__(self):
+       |        # Match `java.lang.Character.hashCode()`: the codepoint.
+       |        return int(self)
+       |
+       |    def toString__Ljava_lang_String(self):
+       |        return _builtins.chr(int(self))
+       |
+       |    def hashCode__I(self):
+       |        return int(self)
+       |
+       |    def charValue__C(self):
+       |        return int(self)
+       |
+       |    def equals__Ljava_lang_Object__Z(self, other):
+       |        return isinstance(other, _scpy_Char) and int(other) == int(self)
+       |
+       |    def compareTo__Ljava_lang_Character__I(self, other):
+       |        return int(self) - int(other)
+       |
+       |    def compareTo__Ljava_lang_Object__I(self, other):
+       |        return int(self) - int(other)
+       |
+       |def _scpy_box_char(value):
+       |    # Idempotent boxing: a value that is already a `_scpy_Char`
+       |    # (e.g. when chained boxes are inserted by erasure) is left
+       |    # unchanged so identity (`is`) is preserved where possible.
+       |    if isinstance(value, _scpy_Char):
+       |        return value
+       |    return _scpy_Char(value)
+       |
+       |def _scpy_unbox_char(value):
+       |    if value is None:
+       |        raise NullPointerException()
+       |    return int(value)
+       |
        |class _scpy_IntModule(_scpy_Object):
        |    def toChar__I__C(self, value):
        |        return chr(value & 0xFFFF)
@@ -1289,7 +1383,7 @@ object PyIRRuntime:
        |_scpy_register_class(None, "java.lang.Cloneable", "interface", None)
        |_scpy_register_class(None, "java.lang.Number", "class", "java.lang.Object", ("java.io.Serializable",))
        |_scpy_register_class(None, "java.lang.Boolean", "class", "java.lang.Object", ("java.lang.Comparable", "java.io.Serializable"))
-       |_scpy_register_class(None, "java.lang.Character", "class", "java.lang.Object", ("java.lang.Comparable", "java.io.Serializable"))
+       |_scpy_register_class(_scpy_Char, "java.lang.Character", "class", "java.lang.Object", ("java.lang.Comparable", "java.io.Serializable"))
        |_scpy_register_class(None, "java.lang.Byte", "class", "java.lang.Number", ("java.lang.Comparable", "java.io.Serializable"))
        |_scpy_register_class(None, "java.lang.Short", "class", "java.lang.Number", ("java.lang.Comparable", "java.io.Serializable"))
        |_scpy_register_class(None, "java.lang.Integer", "class", "java.lang.Number", ("java.lang.Comparable", "java.io.Serializable"))

@@ -1,0 +1,15 @@
+static:A
+static-tostring:A
+any-direct:x
+any-tostring:x
+list-head:a
+list-last:c
+list-mkstring:abc
+list-mkstring-sep:a,b,c
+list-apply:b
+string-tolist-head:a
+string-tolist-mkstring:abc
+foreach-seq:hi
+vector-mkstring:pqr
+any-eq:true
+sb-result:abc

@@ -895,10 +895,44 @@ private class PyCodeGen()(using genCtx: Context):
         val sym = app.fun.symbol
         if primitives.isPrimitive(app) then
           genPrimitiveOp(app, pos)
-        else if Erasure.Boxing.isBox(sym) || Erasure.Boxing.isUnbox(sym) then
-          genExpr(app.args.head)
+        else if Erasure.Boxing.isBox(sym) then
+          genBoxIfChar(sym, genExpr(app.args.head), pos)
+        else if Erasure.Boxing.isUnbox(sym) then
+          genUnboxIfChar(sym, genExpr(app.args.head), pos)
+        else if isBoxesRunTimeBoxToCharacter(sym) then
+          PyApplyExternal(PyExternalName("_scpy_box_char"), List(genExpr(app.args.head)))(PyAnyType, pos)
+        else if isBoxesRunTimeUnboxToChar(sym) then
+          PyApplyExternal(PyExternalName("_scpy_unbox_char"), List(genExpr(app.args.head)))(PyCharType, pos)
         else
           genNormalApply(app, pos)
+
+  /** Char is the only primitive whose boxed display form differs from
+   *  its unboxed Python representation — `Char` is stored as a Python
+   *  `int`, but `String.valueOf(boxedChar)` (and thus `_scpy_to_str`) must
+   *  render the codepoint as the corresponding 1-character string.
+   *  Wrap the value in `_scpy_Char` (an `int` subclass with a
+   *  `toString__Ljava_lang_String` hook) so the boxed-and-widened path
+   *  produces `"a"`, not `"97"`. Other primitives (Int, Long, etc.) round
+   *  trip through `str(x)` correctly already, so their box is identity. */
+  private def genBoxIfChar(sym: Symbol, arg: PyTree, pos: PyPosition): PyTree =
+    if sym.owner.linkedClass == defn.CharClass then
+      PyApplyExternal(PyExternalName("_scpy_box_char"), List(arg))(PyAnyType, pos)
+    else
+      arg
+
+  private def genUnboxIfChar(sym: Symbol, arg: PyTree, pos: PyPosition): PyTree =
+    if sym.owner.linkedClass == defn.CharClass then
+      PyApplyExternal(PyExternalName("_scpy_unbox_char"), List(arg))(PyCharType, pos)
+    else
+      arg
+
+  private def isBoxesRunTimeBoxToCharacter(sym: Symbol): Boolean =
+    sym.exists && sym.owner == defn.BoxesRunTimeModule.moduleClass &&
+      sym.name.mangledString == "boxToCharacter"
+
+  private def isBoxesRunTimeUnboxToChar(sym: Symbol): Boolean =
+    sym.exists && sym.owner == defn.BoxesRunTimeModule.moduleClass &&
+      sym.name.mangledString == "unboxToChar"
 
   private def genSuperCall(app: Apply, pos: PyPosition): PyTree =
     val sym = app.fun.symbol
@@ -1839,28 +1873,39 @@ private class PyCodeGen()(using genCtx: Context):
   private def genCoercion(receiver: Tree, code: Int, pos: PyPosition): PyTree =
     import PyUnaryCode.*
     val src = genExpr(receiver)
+    def unboxChar(t: PyTree): PyTree =
+      PyApplyExternal(PyExternalName("_scpy_unbox_char"), List(t))(PyIntType, pos)
     code match
-      // Identity coercions
-      case B2B | S2S | C2C | I2I | L2L | F2F | D2D => src
+      // Identity coercions. `C2C` strips a possible `_scpy_Char`
+      // wrapper so a value freshly read from a primitive `Array[Char]`
+      // (which auto-boxes for the boxed-toString path) doesn't carry
+      // its glyph-rendering hook into a primitive Char position.
+      case B2B | S2S | I2I | L2L | F2F | D2D => src
+      case C2C => unboxChar(src)
 
-      // Widening to Int - pass through (Python int is big)
-      case B2I | S2I | C2I => src
+      // Widening to Int - pass through (Python int is big). Char must
+      // also unwrap so `c.toInt + ":"` renders as `"97"`, not `"a"`.
+      case B2I | S2I => src
+      case C2I => unboxChar(src)
       case L2I => PyUnaryOp(LongToInt, src)(pos)
       case F2I => PyUnaryOp(FloatToInt, src)(pos)
       case D2I => PyUnaryOp(DoubleToInt, src)(pos)
 
       // Widening to Long
-      case B2L | S2L | C2L | I2L => PyUnaryOp(IntToLong, src)(pos)
+      case B2L | S2L | I2L => PyUnaryOp(IntToLong, src)(pos)
+      case C2L => PyUnaryOp(IntToLong, unboxChar(src))(pos)
       case F2L => PyUnaryOp(FloatToLong, src)(pos)
       case D2L => PyUnaryOp(DoubleToLong, src)(pos)
 
       // Widening to Float
-      case B2F | S2F | C2F | I2F => PyUnaryOp(IntToFloat, src)(pos)
+      case B2F | S2F | I2F => PyUnaryOp(IntToFloat, src)(pos)
+      case C2F => PyUnaryOp(IntToFloat, unboxChar(src))(pos)
       case L2F => PyUnaryOp(LongToFloat, src)(pos)
       case D2F => PyUnaryOp(DoubleToFloat, src)(pos)
 
       // Widening to Double
-      case B2D | S2D | C2D | I2D => PyUnaryOp(IntToDouble, src)(pos)
+      case B2D | S2D | I2D => PyUnaryOp(IntToDouble, src)(pos)
+      case C2D => PyUnaryOp(IntToDouble, unboxChar(src))(pos)
       case L2D => PyUnaryOp(LongToDouble, src)(pos)
       case F2D => PyUnaryOp(FloatToDouble, src)(pos)
 
