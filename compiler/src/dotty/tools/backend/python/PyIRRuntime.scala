@@ -515,6 +515,17 @@ object PyIRRuntime:
       PySimpleMethodName("encode"),
       List(PyClassRef(PyClassName("java.lang.String"))),
       PyClassRef(PyClassName("java.nio.ByteBuffer"))
+    ),
+    // `_scpy_idiv` / `_scpy_imod` / `_scpy_ldiv` / `_scpy_lmod` (see
+    // `prelude`) translate Python `ZeroDivisionError` into a JDK
+    // `ArithmeticException` so divide-by-zero can flow into Scala
+    // `Try` / typed `catch` clauses. The instantiation here keeps every
+    // constructor of `ArithmeticException` live even when no Scala-side
+    // call site references the class directly.
+    PyClassName("java.lang.ArithmeticException") -> PyMethodName(
+      PySimpleMethodName.Constructor,
+      List(PyClassRef(PyClassName("java.lang.String"))),
+      PyPrimRef.VoidRef
     )
   )
 
@@ -1638,6 +1649,34 @@ object PyIRRuntime:
        |def _scpy_f32(x):
        |    return struct.unpack('f', struct.pack('f', _builtins.float(x)))[0]
        |
+       |# Translate native Python arithmetic errors into JDK exception types so
+       |# they are admissible as `java.lang.Throwable` values for `scala.util.Try`,
+       |# `try/catch (e: ArithmeticException)`, etc. Keeps the Scala-overflow
+       |# wrapping (`_scpy_i32` / `_scpy_i64`) on the success path.
+       |def _scpy_idiv(a, b):
+       |    try:
+       |        return _scpy_i32(a // b)
+       |    except ZeroDivisionError:
+       |        raise ArithmeticException("/ by zero")
+       |
+       |def _scpy_imod(a, b):
+       |    try:
+       |        return _scpy_i32(a % b)
+       |    except ZeroDivisionError:
+       |        raise ArithmeticException("/ by zero")
+       |
+       |def _scpy_ldiv(a, b):
+       |    try:
+       |        return _scpy_i64(a // b)
+       |    except ZeroDivisionError:
+       |        raise ArithmeticException("/ by zero")
+       |
+       |def _scpy_lmod(a, b):
+       |    try:
+       |        return _scpy_i64(a % b)
+       |    except ZeroDivisionError:
+       |        raise ArithmeticException("/ by zero")
+       |
        |def _scpy_float_to_str(x):
        |    if _scpy_math.isnan(x):
        |        return "NaN"
@@ -1697,7 +1736,7 @@ object PyIRRuntime:
        |
        |def _scpy_int_trunc_div(a, b):
        |    if b == 0:
-       |        raise ZeroDivisionError()
+       |        raise ArithmeticException("/ by zero")
        |    quot = abs(a) // abs(b)
        |    return -quot if (a < 0) ^ (b < 0) else quot
        |

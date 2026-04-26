@@ -1361,8 +1361,8 @@ object PyIREmitter:
         case IntAdd  => wrapI32(s"$l + $r")
         case IntSub  => wrapI32(s"$l - $r")
         case IntMul  => wrapI32(s"$l * $r")
-        case IntDiv  => wrapI32(s"$l // $r")   // TODO: trunc semantics
-        case IntMod  => wrapI32(s"$l % $r")    // TODO: sign semantics
+        case IntDiv  => s"${Prefix}idiv($l, $r)" // TODO: trunc semantics
+        case IntMod  => s"${Prefix}imod($l, $r)" // TODO: sign semantics
         case IntOr   => wrapI32(s"$l | $r")
         case IntAnd  => wrapI32(s"$l & $r")
         case IntXor  => wrapI32(s"$l ^ $r")
@@ -1382,8 +1382,8 @@ object PyIREmitter:
         case LongAdd  => wrapI64(s"$l + $r")
         case LongSub  => wrapI64(s"$l - $r")
         case LongMul  => wrapI64(s"$l * $r")
-        case LongDiv  => wrapI64(s"$l // $r")
-        case LongMod  => wrapI64(s"$l % $r")
+        case LongDiv  => s"${Prefix}ldiv($l, $r)"
+        case LongMod  => s"${Prefix}lmod($l, $r)"
         case LongOr   => wrapI64(s"$l | $r")
         case LongAnd  => wrapI64(s"$l & $r")
         case LongXor  => wrapI64(s"$l ^ $r")
