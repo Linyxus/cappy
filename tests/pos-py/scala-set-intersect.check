@@ -1,0 +1,6 @@
+immut:2:3,4
+mut:2:2,3
+empty:0:true
+self:4:1,2,3,4
+ampAlias:2
+strs:2:b,c

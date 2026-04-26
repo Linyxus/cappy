@@ -1053,39 +1053,109 @@ object PyIRRuntime:
        |# at class-definition time. Runtime dispatch goes through
        |# `_scpy_Fn{0..22}` for closures; these declarations are nominal bases.
        |#
-       |# `__getattr__` provides default forwarders for the Scala 2 specialized
-       |# `apply_mc..._sp__...` method names that Scala 3's `SpecializeFunctions`
-       |# rewrites call sites to. On the JVM these are interface default methods
-       |# that box arguments and call the unspecialized `apply`, then unbox the
-       |# result. In Python ints / floats / bools are unboxed values, so the
-       |# fallback simply forwards to whichever non-specialized `apply__...`
-       |# method the subclass exposes. (Scala only emits specialized forwarders
-       |# for low arities, but keeping the shape uniform across N = 0..22
-       |# avoids surprises.)
+       |# Parse the arity (parameter count) of an encoded method name.
+       |# Encoding (see PyNames.scala): `<simple>__<param1>_<param2>_..._<paramN>__<result>`.
+       |# Each `<paramI>` starts with a single-letter type tag: `L`/`A` for
+       |# class/array references, `I`/`Z`/`B`/`S`/`C`/`J`/`F`/`D` for primitives,
+       |# `V`/`N`/`E` for void/null/nothing. A class ref `L<className>` may itself
+       |# contain `_` (substituted from `.`), so the param separator is "an
+       |# underscore followed by a type-tag letter". Returns -1 if the name
+       |# has no signature suffix or is malformed.
+       |_SCPY_PARAM_TAGS = frozenset("LAIZBSCJFDVNE")
+       |
+       |def _scpy_arity_of_method_name(name):
+       |    head = name.find("__")
+       |    if head < 0:
+       |        return -1
+       |    tail = name.rfind("__")
+       |    if tail <= head:
+       |        return 0
+       |    params = name[head + 2:tail]
+       |    if not params:
+       |        return 0
+       |    arity = 1
+       |    i = 0
+       |    while i < _scpy_len(params) - 1:
+       |        if params[i] == "_" and params[i + 1] in _SCPY_PARAM_TAGS:
+       |            arity += 1
+       |        i += 1
+       |    return arity
+       |
+       |# `__getattr__` provides default forwarders for any `apply*` method
+       |# missing on a Function-extending class. There are three shapes the
+       |# bridge has to handle:
+       |#
+       |#   1. `apply_mc<X><Y>_sp__...`   — Scala 2 primitive specialization.
+       |#       Scala 3's `SpecializeFunctions` rewrites primitive call sites
+       |#       to these names; on the JVM they are interface default methods
+       |#       that box / unbox into the unspecialized `apply`. In Python
+       |#       ints / floats / bools are unboxed values, so we just route
+       |#       to whichever unspecialized `apply__...` the subclass has.
+       |#
+       |#   2. `apply__Ljava_lang_Object*__Ljava_lang_Object` — the boxed
+       |#       erased form (`Function1[Any,Any]` post-erasure). When the
+       |#       receiver is a primitive-specialized container like
+       |#       `HashMap[Int, Int]` whose only `apply` shape is the
+       |#       specialized one, fall back to whatever specialized variant
+       |#       has the matching arity.
+       |#
+       |#   3. Other `apply<suffix>` shapes (e.g. mixed boxed-and-primitive
+       |#       parameter encodings). Same rule as #2: pick any apply with
+       |#       the same parameter arity.
+       |#
+       |# `PyReachability.scala` keeps both the boxed unspecialized form
+       |# and any specialized form alive on the resolved class so this
+       |# walk finds a target in practice; the runtime fallback is a
+       |# safety net for classes where only one shape survived (e.g.
+       |# hand-rolled `JFunction*` classes).
        |def _scpy_fn_specialized_forward(self, name):
-       |    if not name.startswith("apply_mc") or "_sp__" not in name:
+       |    if not name.startswith("apply"):
+       |        raise AttributeError(name)
+       |    arity = _scpy_arity_of_method_name(name)
+       |    if arity < 0:
        |        raise AttributeError(name)
        |    target = None
        |    for cls in type(self).__mro__:
        |        for attr_name, attr_val in vars(cls).items():
        |            if attr_name == name:
        |                continue
-       |            if not attr_name.startswith("apply__"):
+       |            if not attr_name.startswith("apply"):
        |                continue
-       |            if attr_name.startswith("apply_mc"):
+       |            if not callable(attr_val):
        |                continue
-       |            if callable(attr_val):
-       |                target = attr_val
-       |                break
+       |            if _scpy_arity_of_method_name(attr_name) != arity:
+       |                continue
+       |            target = attr_val
+       |            break
        |        if target is not None:
        |            break
        |    if target is None:
        |        raise AttributeError(name)
        |    return target.__get__(self, type(self))
        |
+       |# Metaclass for the runtime `FunctionN` interfaces. Scala's
+       |# `SpecializeFunctions` phase emits synthetic forwarders that
+       |# delegate to interface default methods via static-class access
+       |# — e.g. `class HashMap` ends up with
+       |# `def apply_mcII_sp__I__I(self, x): return Function1.apply_mcII_sp__I__I(self, x)`.
+       |# On the JVM that lookup hits `Function1`'s default-method
+       |# implementation; in Python the runtime `Function1` class is
+       |# nominal-only (no method bodies). The metaclass `__getattr__`
+       |# below intercepts class-level `apply*` lookups and returns a
+       |# function that forwards to the instance's specialized-apply
+       |# dispatcher (`_scpy_fn_specialized_forward`).
+       |class _scpy_FnMeta(type):
+       |    def __getattr__(cls, name):
+       |        if name.startswith("apply"):
+       |            def _scpy_fn_static_forward(self, *args, **kwargs):
+       |                bound = _scpy_fn_specialized_forward(self, name)
+       |                return bound(*args, **kwargs)
+       |            return _scpy_fn_static_forward
+       |        raise AttributeError(name)
+       |
        |""".stripMargin +
     (0 to 22).map { n =>
-      s"""|class Function$n(_scpy_Object):
+      s"""|class Function$n(_scpy_Object, metaclass=_scpy_FnMeta):
           |    def __getattr__(self, name):
           |        return _scpy_fn_specialized_forward(self, name)
           |

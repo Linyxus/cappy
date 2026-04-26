@@ -1,0 +1,4 @@
+roundtrip:Some(10)
+sum:Some(30)
+apply:30
+foldRead:70

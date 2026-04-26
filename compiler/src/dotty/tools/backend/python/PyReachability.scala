@@ -314,9 +314,20 @@ object PyReachability:
      *  method table and enqueues the resolver. Without this, a call
      *  with no instantiated receiver would never pull in the fallback
      *  method body, and the linker's ancestor-walk in
-     *  [[PyLinker.requireInstanceMethod]] would fail validation. */
+     *  [[PyLinker.requireInstanceMethod]] would fail validation.
+     *
+     *  Runtime-provided receivers (e.g. `scala.FunctionN`) are *not*
+     *  short-circuited: when stdlib code calls `pred.apply(elem)` on a
+     *  `Function1` argument, the static receiver is the runtime-provided
+     *  `Function1` interface but the implementation lives on instantiated
+     *  subclasses (`HashMap`, `HashSet`, `partialNotApplied`, anonymous
+     *  closures, ...). Skipping the log here was a previous source of
+     *  silent DCE that pruned `apply` overrides on Function-extending
+     *  collection classes. See
+     *  `notes/issue-{hashmap-apply-mcii-sp,set-intersect-apply-object,
+     *  list-collect-applyorelse-default}-missing.md`. We still avoid
+     *  enqueuing analysis on runtime-provided owners. */
     private def logVirtualCall(staticRecv: PyClassName, m: PyMethodName): Unit =
-      if isRuntimeProvided(staticRecv) then return
       // Log against the receiver and every ancestor so that a future
       // instantiation of a deeper descendant (whose ancestors transit
       // through `staticRecv`) still sees this call.
@@ -324,18 +335,69 @@ object PyReachability:
       for a <- ancestorsOf(staticRecv) do stateOf(a).virtualCallLog += m
       // Static-receiver fallback: keep whichever class currently owns
       // the default definition in the reachable set.
-      resolveInstanceMethod(staticRecv, m).foreach { case (owner, method) =>
-        enqueue(Work.AnalyzeMethod(owner, method))
-      }
+      if !isRuntimeProvided(staticRecv) then
+        resolveInstanceMethod(staticRecv, m).foreach { case (owner, method) =>
+          if !isRuntimeProvided(owner) then
+            enqueue(Work.AnalyzeMethod(owner, method))
+        }
       // Dispatch to already-instantiated descendants.
       val candidates = staticRecv +: gatherDescendants(staticRecv).toSeq
       for d <- candidates do
         state.get(d).foreach { ds =>
           if ds.isInstantiated then
             resolveInstanceMethod(d, m).foreach { case (owner, method) =>
-              enqueue(Work.AnalyzeMethod(owner, method))
+              if !isRuntimeProvided(owner) then
+                enqueue(Work.AnalyzeMethod(owner, method))
             }
         }
+      // The Python runtime's `_scpy_fn_specialized_forward` (in
+      // `PyIRRuntime.scala`) bridges between `apply_mc<X><Y>_sp__...`
+      // specialized shapes and the unspecialized boxed
+      // `apply__Ljava_lang_Object*__Ljava_lang_Object` form by walking
+      // the receiver's MRO. For that bridge to find a target, the
+      // unspecialized boxed `apply` must survive DCE — but no static
+      // call site references it directly when the user code only goes
+      // through the specialized form (e.g. `m(k)` on a primitive map).
+      // For every `apply*` virtual call we ALSO log the unspecialized
+      // boxed form on the same receiver so it stays reachable on the
+      // class that ultimately resolves the dispatch.
+      applyBoxedFallback(m).foreach { boxed =>
+        if boxed != m then
+          stateOf(staticRecv).virtualCallLog += boxed
+          for a <- ancestorsOf(staticRecv) do stateOf(a).virtualCallLog += boxed
+          if !isRuntimeProvided(staticRecv) then
+            resolveInstanceMethod(staticRecv, boxed).foreach { case (owner, method) =>
+              if !isRuntimeProvided(owner) then
+                enqueue(Work.AnalyzeMethod(owner, method))
+            }
+          for d <- candidates do
+            state.get(d).foreach { ds =>
+              if ds.isInstantiated then
+                resolveInstanceMethod(d, boxed).foreach { case (owner, method) =>
+                  if !isRuntimeProvided(owner) then
+                    enqueue(Work.AnalyzeMethod(owner, method))
+                }
+            }
+      }
+
+    /** When `m` is an `apply` variant of a Scala `FunctionN` (boxed,
+     *  primitive-specialized `apply_mc..._sp`, or any `apply<suffix>`
+     *  shape), return the canonical unspecialized boxed form
+     *  `apply__Ljava_lang_Object*__Ljava_lang_Object` of the same
+     *  arity. Returns `None` if `m`'s simple name is not an `apply*`
+     *  variant. */
+    private def applyBoxedFallback(m: PyMethodName): Option[PyMethodName] =
+      val simpleName = m.simple.name
+      if simpleName != "apply" && !simpleName.startsWith("apply_") && !simpleName.startsWith("apply$") then
+        None
+      else
+        val objectRef = PyClassRef(PyClassName.ObjectClass)
+        val arity = m.paramTypeRefs.size
+        Some(PyMethodName(
+          PySimpleMethodName("apply"),
+          List.fill(arity)(objectRef),
+          objectRef
+        ))
 
     private def gatherDescendants(cls: PyClassName): Set[PyClassName] =
       val seen = mutable.HashSet.empty[PyClassName]
