@@ -423,7 +423,7 @@ object PyIREmitter:
         .flatMap(_.args.iterator.map(_.name.name))
         .toSet
       for f <- cls.fields if !ctorParamNames.contains(f.name.simple.name) do
-        line(s"self.${f.name.simple.name} = ${fieldDefaultExpr(f.ftpe)}")
+        line(s"self.${f.name.simple.name} = ${fieldInitExpr(f)}")
 
       val orderedCtors =
         ctors.sortBy(ctor => (-constructorSpecificity(ctor), ctor.args.length))
