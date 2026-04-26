@@ -1752,10 +1752,19 @@ private class PyCodeGen()(using genCtx: Context):
       val elemTpe = encoding.encodeType(app.tpe)
       PyArraySelect(genExpr(receiver), genExpr(args.head))(elemTpe, pos)
     else if isArraySet(code) then
-      PyAssign(
+      // Array stores are Unit-typed but routinely appear in expression
+      // position (e.g. as a Match-arm body, or a then/else branch of an
+      // `If` rendered as a Python ternary). Mirror the `WhileDo | Assign`
+      // hoisting in `genExpr`: push the assignment to `pendingLocalDefs`
+      // so the existing If/Match hoisting can materialise statement-form
+      // code, and supply a Unit value in its place. Without this, a bare
+      // `PyAssign` returned as the value of an `Apply` falls through the
+      // emitter's `exprToStr` and gets silently dropped to `None`.
+      pendingLocalDefs += PyAssign(
         PyArraySelect(genExpr(receiver), genExpr(args(0)))(PyAnyType, pos),
         genExpr(args(1))
       )(pos)
+      PyUnitLit()(pos)
     else if isArrayNew(code) then
       val elemRef: PyTypeRef = code match
         case NEW_ZARRAY => PyPrimRef.BooleanRef

@@ -674,6 +674,13 @@ object PyIREmitter:
             tail match
               case _: PyUnitLit => line("return")
               case _            => line(s"return ${exprToStr(tail)}")
+          case assign: PyAssign =>
+            // Defence-in-depth: same swallow shape as `emitRaiseLabel` —
+            // a `PyAssign` returned as the value of a `PyReturn` would
+            // otherwise degrade to `"None"` via `exprToStr`. Emit it as a
+            // statement, then a bare `return`.
+            emitStmt(assign)
+            line("return")
           case _            => line(s"return ${exprToStr(value)}")
 
       case PyWhile(cond, body) =>
@@ -833,6 +840,13 @@ object PyIREmitter:
           tail match
             case _: PyUnitLit => line(s"raise $className()")
             case _            => line(s"raise $className(${exprToStr(tail)})")
+        case assign: PyAssign =>
+          // Defence-in-depth: a `PyAssign` returned as the value of a
+          // label-escape would otherwise hit the `case other => "None"`
+          // swallow in `exprToStr` and silently drop the side effect.
+          // Emit the assignment as a statement, then a no-arg raise.
+          emitStmt(assign)
+          line(s"raise $className()")
         case _: PyUnitLit =>
           line(s"raise $className()")
         case _ =>
