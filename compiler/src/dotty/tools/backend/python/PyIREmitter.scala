@@ -1073,12 +1073,32 @@ object PyIREmitter:
 
       case PyApplyStatically(_, receiver, className, method, args) =>
         val argsStr = args.map(exprToStr).mkString(", ")
+        // Bypass Python's MRO and dispatch directly to the resolved
+        // class. `PyApplyStatically.className` already names the exact
+        // class in which the method is resolved (per PyIR docs), so
+        // we honour Scala's source-level resolution rather than letting
+        // Python C3 walk pick a different override.
+        //
+        // Why not `super()`? Python's MRO and Scala's linearization
+        // disagree in two directions:
+        //   1. Trait re-overrides: `class C extends B with T` linearizes
+        //      T after B in Scala (T wins); Python MRO with bases `(B, T)`
+        //      walks B before T (B wins). Reversing the bases tuple to
+        //      `(T, B)` flips this case but breaks
+        //   2. Abstract trait declarations: `class C extends B with T`
+        //      where T declares `m` abstractly and B implements it.
+        //      Scala's linearization preserves B's concrete impl; Python
+        //      with `(T, B)` would pick T's abstract declaration.
+        // Calling `ClassName.method(self, args)` sidesteps both: we use
+        // exactly the class the Scala compiler resolved.
+        //
+        // See notes/issue-arraydeque-map-class-walk-recursion.md.
+        val sep = if args.isEmpty then "" else ", "
         receiver match
           case _: PyThis =>
-            s"super().${method.encoded}($argsStr)"
+            s"${classIdentifier(className)}.${method.encoded}(self$sep$argsStr)"
           case _ =>
             val prefix = parenthesize(receiver)
-            val sep    = if args.isEmpty then "" else ", "
             s"${classIdentifier(className)}.${method.encoded}($prefix$sep$argsStr)"
 
       case PyApplyStatic(_, className, method, args) =>
