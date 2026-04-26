@@ -1,0 +1,12 @@
+build:0:true:3:2
+access:1:5:20:true:40:-1
+order:1=10,2=20,3=30,4=40,5=50
+keys:1,2,3,4,5
+values:10,20,30,40,50
+transform:3:3:5
+updated:6:6:60
+removed:4:2:false
+aggregate:150:150:5
+union:4:1=1,2=20,3=30,4=40
+intersect:2:2=2,3=3
+convert:5:5:5

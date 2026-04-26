@@ -1,0 +1,10 @@
+build:0:true:3
+access:1:5:5:true:false
+order:1,2,3,4,5
+tail:2,3,4,5
+plus:6:true
+minus:4:false
+plusMany:7:true
+minusMany:3:true
+aggregate:15:15:3:2:true:true
+convert:5:5:5

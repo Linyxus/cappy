@@ -1,0 +1,15 @@
+build:0:true:3
+access:a=1:d=4:4:true
+getOrElse:1:-1:2
+order:a=1,b=2,c=3,d=4
+keys:a,b,c,d
+values:1,2,3,4
+transform:3:2:true
+mutate1:5:e:5
+mutate2:6:f
+mutate3:5:b:false
+mutate4:7:h
+aggregate:35:35
+convert:7:7:7
+clone:7
+clear:0:7

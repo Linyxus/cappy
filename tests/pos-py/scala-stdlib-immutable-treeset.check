@@ -1,0 +1,12 @@
+build:0:true:3
+access:1:5:1:5:true:false
+order:1,2,3,4,5
+plus:6:99
+minus:4:2
+plusMany:7:20
+minusMany:3:3
+range:2,3
+rangeFrom:3,4,5
+rangeUntil:1,2,3
+aggregate:15:15:3:2
+convert:5:5:5
