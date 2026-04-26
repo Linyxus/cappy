@@ -2241,26 +2241,22 @@ private class PyCodeGen()(using genCtx: Context):
           callArgs
         )(resultTpe, pos)
       else
-        // Instance-method target: the first env value is the receiver.
-        envValues match
-          case receiver :: rest =>
-            val instanceCallArgs = rest ++ samArgRefs
-            PyApply(
-              PyApplyFlags.empty,
-              receiver,
-              ownerClass,
-              methodName,
-              instanceCallArgs
-            )(resultTpe, pos)
-          case Nil =>
-            // Instance method with no receiver env — fall back to `this`.
-            PyApply(
-              PyApplyFlags.empty,
-              PyThis()(PyClassType(encoding.encodeClassName(currentClassSym)), pos),
-              ownerClass,
-              methodName,
-              samArgRefs
-            )(resultTpe, pos)
+        // Instance-method target: env values fill the first env.length
+        // *parameters* of the target method (Trees.scala:594-606); the
+        // receiver is encoded in `tree.meth`, typically `Select(qual, _)`
+        // where `qual` is the captured `this`. A bare `Ident` means the
+        // target is on the enclosing class with the qualifier elided.
+        val receiver: PyTree = tree.meth match
+          case Select(qual, _) => genExpr(qual)
+          case _ =>
+            PyThis()(PyClassType(encoding.encodeClassName(currentClassSym)), pos)
+        PyApply(
+          PyApplyFlags.empty,
+          receiver,
+          ownerClass,
+          methodName,
+          callArgs
+        )(resultTpe, pos)
 
     PyClosure(
       captureParams = Nil,
