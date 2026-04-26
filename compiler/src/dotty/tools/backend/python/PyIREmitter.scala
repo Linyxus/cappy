@@ -1154,7 +1154,17 @@ object PyIREmitter:
         // there is no `_scpy_mod_<className>_` binding. The static method
         // is already attached to the class with `@staticmethod`, so call
         // it directly on the class identifier.
+        //
+        // Additionally, if the named class itself is a non-ModuleClass
+        // and locally defines this `@staticmethod` (e.g. a class-level
+        // lifted lambda like `TreeMap#filter$$anonfun$1`), dispatch
+        // there directly instead of routing to the underscored
+        // companion module — which exists in the bundle but does not
+        // carry that helper. See
+        // `notes/issue-treemap-filter-anonfun-wrong-owner.md`.
         if hasNoModuleVarBinding(className) then
+          s"${classIdentifier(className)}.${method.encoded}($argsStr)"
+        else if hasOwnStaticMethod(className, method) then
           s"${classIdentifier(className)}.${method.encoded}($argsStr)"
         else
           s"${moduleAccessExpr(routeToModuleVar(className))}.${method.encoded}($argsStr)"
@@ -1581,6 +1591,22 @@ object PyIREmitter:
           classByName.get(underscored) match
             case Some(uc) if uc.kind == PyClassKind.ModuleClass => false
             case _ => true
+        case _ => false
+
+    /** True iff `cn` is a non-ModuleClass in this bundle that locally
+     *  defines a `@staticmethod` named `method`. Used by
+     *  `PyApplyStatic` rendering to detect class-level lifted helpers
+     *  (e.g. `filter$$anonfun$1` lifted onto a value class whose
+     *  companion module also exists) that must be dispatched on the
+     *  class itself, not on the underscored companion module. */
+    private def hasOwnStaticMethod(cn: PyClassName, method: PyMethodName): Boolean =
+      classByName.get(cn) match
+        case Some(c) if c.kind != PyClassKind.ModuleClass =>
+          c.methods.exists { m =>
+            (m.flags.namespace == PyMemberNamespace.PublicStatic
+              || m.flags.namespace == PyMemberNamespace.PrivateStatic)
+            && m.name == method
+          }
         case _ => false
 
     /** Replace `$` with `_`, escape Python keywords. */
