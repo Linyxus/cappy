@@ -168,7 +168,7 @@ object PyIRRuntime:
         javaProvided = true,
         instanceMethods = MethodMatcher(
           simpleNamePrefixes = Set(
-            "getName", "toString",
+            "getName", "getSimpleName", "toString",
             "getSuperclass", "getInterfaces", "getComponentType",
             "isPrimitive", "isInterface", "isArray",
             "isInstance", "isAssignableFrom",
@@ -688,6 +688,24 @@ object PyIRRuntime:
        |    def getName__Ljava_lang_String(self):
        |        return self._scpy_name
        |
+       |    def getSimpleName__Ljava_lang_String(self):
+       |        if self._scpy_kind == "array":
+       |            comp = self._scpy_component_type
+       |            if comp is None:
+       |                return "[]"
+       |            return comp.getSimpleName__Ljava_lang_String() + "[]"
+       |        name = self._scpy_name
+       |        # Strip the outer-class prefix (after the last `$`) for
+       |        # nested types, then the package prefix (after the last `.`).
+       |        dollar = name.rfind("$")
+       |        if dollar >= 0:
+       |            name = name[dollar + 1:]
+       |        else:
+       |            dot = name.rfind(".")
+       |            if dot >= 0:
+       |                name = name[dot + 1:]
+       |        return name
+       |
        |    def getSuperclass__Ljava_lang_Class(self):
        |        if self._scpy_kind == "primitive" or self._scpy_kind == "interface":
        |            return None
@@ -745,6 +763,8 @@ object PyIRRuntime:
        |        return self.toString__Ljava_lang_String()
        |
        |    def __getattr__(self, name):
+       |        if name.startswith("getSimpleName"):
+       |            return self.getSimpleName__Ljava_lang_String
        |        if name.startswith("getName"):
        |            return self.getName__Ljava_lang_String
        |        if name.startswith("getSuperclass"):

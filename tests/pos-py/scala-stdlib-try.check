@@ -1,8 +1,8 @@
 build:ok=true:bad=true:ok2=true:bad2=true
 access:true:false:false:true
 getSuccess:42
-badClass:java.lang.ArithmeticException
-bad2Class:java.lang.IllegalStateException
+badClass:ArithmeticException
+bad2Class:IllegalStateException
 transform:43:true:84:true
 recovery:-1:-2:42
 getOrElse:42:-1

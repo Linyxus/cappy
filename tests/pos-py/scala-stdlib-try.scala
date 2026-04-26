@@ -1,6 +1,6 @@
 // Broad coverage of scala.util.Try / Success / Failure operations.
 // Don't print Failure(...) directly: the exception toString varies. Instead
-// print isFailure plus the class name of the captured throwable.
+// print isFailure plus the simple class name of the captured throwable.
 
 import scala.util.{Try, Success, Failure}
 
@@ -15,8 +15,8 @@ import scala.util.{Try, Success, Failure}
   // 2. predicates / accessors (success path only — get on Failure throws)
   println("access:" + ok.isSuccess + ":" + ok.isFailure + ":" + bad.isSuccess + ":" + bad.isFailure)
   println("getSuccess:" + ok.get)
-  println("badClass:" + bad.failed.get.getClass.getName)
-  println("bad2Class:" + bad2.failed.get.getClass.getName)
+  println("badClass:" + bad.failed.get.getClass.getSimpleName)
+  println("bad2Class:" + bad2.failed.get.getClass.getSimpleName)
 
   // 3. map / flatMap
   val mapped = ok.map(_ + 1)
