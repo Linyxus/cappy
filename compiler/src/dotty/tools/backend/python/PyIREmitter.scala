@@ -276,10 +276,83 @@ object PyIREmitter:
         spacer()
         emitMethodDef(cls, m)
 
+      // Python data-model rule: a class that defines `__eq__` but not
+      // `__hash__` has `__hash__` implicitly set to `None`, even if a
+      // base class defines `__hash__`. That makes instances unhashable
+      // and `obj.__hash__()` raise `TypeError: 'NoneType' object is not
+      // callable`. Scala's contract is the opposite: every `Object`
+      // subclass has a `hashCode`, and overriding `equals` does NOT
+      // wipe out an inherited `hashCode`. Re-thread the inherited slot
+      // so `tm.hashCode` works on classes like `immutable.TreeMap` that
+      // override `equals` while inheriting `hashCode` from `Map`.
+      maybeRebindInheritedHash(cls)
+
       // If the class has no members at all, emit `pass`
       if first then line("pass")
 
       dedent()
+
+    /** If `cls` emitted `__eq__` locally but did not emit `__hash__`,
+     *  add `__hash__ = <Ancestor>.__hash__` so Python doesn't shadow
+     *  the inherited hash with `None`. The ancestor is the first class
+     *  in the MRO (`superClass` first, then declared interfaces) that
+     *  has its own `__hash__` method, walking transitively through the
+     *  bundle and runtime-provided classes. Falls back to `_scpy_Object`
+     *  (i.e. Python `object`'s identity hash) when no ancestor defines
+     *  one explicitly — that's still callable, so the slot is no longer
+     *  `None`.
+     */
+    private def maybeRebindInheritedHash(cls: PyClassDef): Unit =
+      val hasLocalEq   = cls.methods.exists(m => methodEmitsAsDunder(m, "__eq__"))
+      val hasLocalHash = cls.methods.exists(m => methodEmitsAsDunder(m, "__hash__"))
+      if hasLocalEq && !hasLocalHash then
+        val ancestor = findAncestorWithHash(cls).getOrElse(PyClassName.ObjectClass)
+        line(s"__hash__ = ${classIdentifier(ancestor)}.__hash__")
+
+    /** True iff `m` would be emitted as the Python dunder `name` (e.g.
+     *  `__eq__`, `__hash__`). Constructor methods take a different
+     *  emission path so they are excluded. */
+    private def methodEmitsAsDunder(m: PyMethodDef, name: String): Boolean =
+      m.flags.namespace != PyMemberNamespace.Constructor
+        && m.name.simple.name == name
+
+    /** Walk `cls`'s ancestor chain (bundle + runtime-provided) breadth-
+     *  first and return the first class that locally defines `__hash__`.
+     *  `_scpy_Object` is treated as not having a Scala `__hash__` (the
+     *  prelude doesn't write one — Python falls back to `object.__hash__`
+     *  via MRO, which is fine, but we don't return it here so callers
+     *  default to `_scpy_Object`/`PyClassName.ObjectClass` only when
+     *  nothing better exists). */
+    private def findAncestorWithHash(cls: PyClassDef): Option[PyClassName] =
+      val seen = mutable.Set.empty[PyClassName]
+      val queue = mutable.Queue.empty[PyClassName]
+      // Seed with direct parents in the bases-list order so the choice
+      // matches Python's MRO walk for simple linearizations.
+      cls.superClass.foreach(queue.enqueue)
+      cls.interfaces.foreach(queue.enqueue)
+      while queue.nonEmpty do
+        val n = queue.dequeue()
+        if seen.add(n) then
+          if classDefinesHash(n) then return Some(n)
+          classByName.get(n) match
+            case Some(c) =>
+              c.superClass.foreach(queue.enqueue)
+              c.interfaces.foreach(queue.enqueue)
+            case None =>
+              PyIRRuntime.providedClass(n).foreach { pc =>
+                pc.superClass.foreach(queue.enqueue)
+                pc.interfaces.foreach(queue.enqueue)
+              }
+      None
+
+    /** True iff the bundle class `name` locally defines a `__hash__`
+     *  method. Runtime-provided classes don't carry method bodies that
+     *  the emitter can rebind to, so they're never "hash-defining" for
+     *  this purpose; the `_scpy_Object` fallback covers that path. */
+    private def classDefinesHash(name: PyClassName): Boolean =
+      classByName.get(name).exists { c =>
+        c.methods.exists(m => methodEmitsAsDunder(m, "__hash__"))
+      }
 
     private def emitClassMetadata(cls: PyClassDef): Unit =
       line("_scpy_full_name = \"" + escapeString(cls.name.nameString) + "\"")

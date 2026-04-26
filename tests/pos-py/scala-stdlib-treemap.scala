@@ -51,3 +51,12 @@ import scala.collection.immutable.TreeMap
 
   // 12. mkString of entries (deterministic)
   println("mkString:" + tm.mkString(";"))
+
+  // 13. hashCode equality across two TreeMaps with the same key/value
+  //     content but different insertion orders. Regression coverage for
+  //     `notes/issue-treemap-hashcode-none.md`: TreeMap inherits
+  //     `hashCode` from `Map`, but its own `equals` would otherwise
+  //     null-out Python's `__hash__` slot.
+  val tmA = TreeMap(1 -> 10, 2 -> 20, 3 -> 30)
+  val tmB = TreeMap(3 -> 30, 1 -> 10, 2 -> 20)
+  println("hashEq:" + (tmA.hashCode == tmB.hashCode))
