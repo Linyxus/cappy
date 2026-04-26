@@ -447,6 +447,20 @@ object PyReachability:
     private def isInstanceMethod(ns: PyMemberNamespace): Boolean =
       ns == PyMemberNamespace.Public || ns == PyMemberNamespace.Private
 
+    /** When `className` is a non-ModuleClass that has a `<className>_`
+     *  ModuleClass companion in the bundle, return the companion module
+     *  name. Mirrors `PyIREmitter.routeToModuleVar`: the emitter routes
+     *  `PyLoadModule(C)` to `<C>_` whenever such a module class exists,
+     *  so reachability must keep that module class alive too. */
+    private def loadModuleCompanion(className: PyClassName): Option[PyClassName] =
+      classByName.get(className) match
+        case Some(c) if c.kind == PyClassKind.ModuleClass => None
+        case _ =>
+          val underscored = PyClassName(className.nameString + "_")
+          classByName.get(underscored) match
+            case Some(c) if c.kind == PyClassKind.ModuleClass => Some(underscored)
+            case _ => None
+
     /** Python dunder predicate: `__foo__` with length ≥ 5. Mirrors the
      *  convention in `PyNames.PyMethodName.isDunder`. */
     private def isPythonDunder(name: String): Boolean =
@@ -542,6 +556,24 @@ object PyReachability:
         // lazy-module wrapper; their Constructor/<clinit> run on first
         // access. Force the class instantiated and analyze whichever
         // init entry points exist.
+        //
+        // When the loaded class is a non-ModuleClass (e.g. `java.lang.Void`,
+        // a JVM-style Java class for which dotc treats `Void.TYPE` as a
+        // static field on the *class*) and there is a `<className>_`
+        // ModuleClass in the bundle that holds the corresponding Scala-side
+        // members (the static field forwarder synthesized by
+        // `GenPython.genStaticFieldForwarders` is a `PublicStatic` field
+        // on the class, but its actual value is initialized by the
+        // module's ctor), the emitter routes the `PyLoadModule` through
+        // the module variable (see `PyIREmitter.routeToModuleVar`).
+        // Without seeding the module here, DCE drops the module class
+        // and the emitter falls back to the bare class identifier, which
+        // has no value for the static field — `AttributeError: type
+        // object 'java_lang_Void' has no attribute 'TYPE'` at runtime.
+        // This unblocks every code path that discriminates on
+        // `java.lang.Void.TYPE` (`Array.copyAs`, `ArrayBuilder.make`),
+        // i.e. essentially every primitive-specialized ArraySeq /
+        // grouped / sliding operation.
         enqueue(Work.ReachClass(t.className))
         enqueue(Work.Instantiate(t.className))
         classByName.get(t.className).foreach { cd =>
@@ -549,6 +581,16 @@ object PyReachability:
             val ns = m.flags.namespace
             if ns == PyMemberNamespace.Constructor || ns == PyMemberNamespace.StaticConstructor then
               enqueue(Work.AnalyzeMethod(t.className, m.name))
+        }
+        loadModuleCompanion(t.className).foreach { mod =>
+          enqueue(Work.ReachClass(mod))
+          enqueue(Work.Instantiate(mod))
+          classByName.get(mod).foreach { cd =>
+            for m <- cd.methods do
+              val ns = m.flags.namespace
+              if ns == PyMemberNamespace.Constructor || ns == PyMemberNamespace.StaticConstructor then
+                enqueue(Work.AnalyzeMethod(mod, m.name))
+          }
         }
 
       case t: PyIsInstanceOf =>

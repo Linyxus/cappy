@@ -1,0 +1,8 @@
+list-grouped:3:1,2,3:7,8
+list-sliding:6:1,2,3:6,7,8
+list-sliding-step:4:1,2,3:7,8
+vec-grouped:3:10,20:50,60
+vec-sliding:5:10,20:50,60
+lazy-grouped:3:1,2:5
+lazy-sliding:4:1,2:4,5
+remainder:3:1:5
