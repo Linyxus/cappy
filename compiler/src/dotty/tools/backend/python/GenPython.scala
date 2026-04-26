@@ -585,8 +585,46 @@ private class PyCodeGen()(using genCtx: Context):
               PyReturn(value)(pos)
 
       case WhileDo(cond, body) =>
-        val genCond = if cond == EmptyTree then PyBooleanLit(true)(pos) else genExpr(cond)
-        PyWhile(genCond, genStat(body))(pos)
+        // The condition itself may lower to side-effecting statements +
+        // a value (e.g. a hoisted `&&`/`||` short-circuit `if` that
+        // reads a `.nn`-checked field). Those statements must run on
+        // every iteration, not once before the loop, otherwise the
+        // condition stays stale: `while cond` re-reads the temp
+        // without re-running the locals that wrote into it. The bug
+        // surfaced as a `null.parent` deref in the iterative tree-walk
+        // in `mutable.RedBlackTree.successor`.
+        if cond == EmptyTree then
+          PyWhile(PyBooleanLit(true)(pos), genStat(body))(pos)
+        else
+          val (condLocals, condExpr) = genExprWithPending(cond)
+          val genBody = genStat(body)
+          if condLocals.isEmpty then
+            PyWhile(condExpr, genBody)(pos)
+          else
+            // Use a flag variable so the cond locals are re-run each
+            // iteration. Lower `while c { body }` to:
+            //   var __keep = True
+            //   while __keep:
+            //     <condLocals>
+            //     if not c: __keep = False
+            //     else: <body>
+            val flagName = freshLoopFlagName()
+            val flagVar  = PyVarRef(flagName)(PyBooleanType, pos)
+            val flagDef  = PyVarDef(
+              name         = flagName,
+              originalName = PyOriginalName.NoOriginalName,
+              vtpe         = PyBooleanType,
+              mutable      = true,
+              rhs          = PyBooleanLit(true)(pos)
+            )(pos)
+            val checkIf = PyIf(
+              condExpr,
+              genBody,
+              PyAssign(flagVar, PyBooleanLit(false)(pos))(pos)
+            )(PyVoidType, pos)
+            val loopBodyStmts = condLocals :+ checkIf
+            val loop = PyWhile(flagVar, stmtsToBody(loopBodyStmts, pos))(pos)
+            PyBlock(List(flagDef), loop)(pos)
 
       case t: Try =>
         genTry(t)
@@ -2063,6 +2101,11 @@ private class PyCodeGen()(using genCtx: Context):
   private def freshSynchronizedResultName(): PyLocalName =
     synchronizedResultCounter += 1
     PyLocalName(s"_scpy_sync_result_$synchronizedResultCounter")
+
+  private var loopFlagCounter = 0
+  private def freshLoopFlagName(): PyLocalName =
+    loopFlagCounter += 1
+    PyLocalName(s"_scpy_loop_keep_$loopFlagCounter")
 
   /** Lower an expression-position `Labeled` to a temp-var assign +
    *  statement-position `PyLabeled`.

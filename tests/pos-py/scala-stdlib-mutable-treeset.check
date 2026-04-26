@@ -1,0 +1,15 @@
+build:0:true:3
+access:1:5:1:5:true:false
+order:1,2,3,4,5
+transform:3:2:true
+range:2,3,4
+rangeFrom:3,4,5
+rangeUntil:1,2,3
+mutate1:6:99:true
+mutate2:5:2:false
+mutate3:7:200
+mutate4:5:4
+aggregate:408
+convert:5:5:5
+clone:5:200
+clear:0:5
