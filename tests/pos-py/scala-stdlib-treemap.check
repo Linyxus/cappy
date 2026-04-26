@@ -1,0 +1,18 @@
+empty:0:true
+fromPairs:3:1:3
+headLast:1:10:5:50
+firstLastKey:1:5
+lookup:20:true:-1
+keys:1,2,3,4,5
+values:10,20,30,40,50
+pairs:1=10,2=20,3=30,4=40,5=50
+preds:true:3
+filter:3:120
+range:2:2,3
+fromUntil:3:2
+updates:70:4:80
+folds:150:150
+takeDrop:1,2:4,5
+conv:5:5:5
+minMax:1:5
+mkString:1 -> 10;2 -> 20;3 -> 30;4 -> 40;5 -> 50

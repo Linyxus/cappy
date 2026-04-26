@@ -1,0 +1,12 @@
+ctor:5:0:0
+access:h:o:h:o:5:false:true
+append:xyz 42true:10
+insert-delete:Xcde:4
+delete:cdef:4
+replace:XYcdef:6
+reverse:fedcba:abcdef
+clear:0:true
+search:2:4:true
+substring:bcd:bcd
+convert:abc:3:abc
+chain:abc:true

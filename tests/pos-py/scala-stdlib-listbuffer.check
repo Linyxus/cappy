@@ -1,0 +1,12 @@
+ctor:6:0:3:5:3
+access:1:8:5:5:false:true
+search:true:4:true:true:3
+find:6
+slice:2:4:2:3:3
+partition:3:3
+hof:3:12:3:60
+fold:27:27:27:1:8
+mutate:0:99:5:-1
+concat-clone:5:5:false
+sort:1:9:6
+convert:6:6:6:1,2,3,6,7,8:0

@@ -1,0 +1,16 @@
+fill:4:7:7
+tabulate:5:0:8
+range:5:0:4
+headLast:1:8
+hOpt:1:8
+tailInit:7:7
+preds:true:4:true:true
+findCount:6:3
+slice:3:5:3
+twDw:4:4
+folds:10:24:20
+rmm:36:1:8
+upd:99:0:-1
+conv:8:8:8
+mkString:1,2,3
+sortRev:1:5

@@ -1,0 +1,14 @@
+headLast:1:8
+hOpt:1:8
+emptyChk:false:true
+preds:true:4:true:true
+findCount:6:3
+folds:10:24:20
+rmm:36:1:8
+foreachSum:36
+mkString:1,2,3
+prependAppend:5:1:5
+removeHL:10:40:2:20:30
+clone:3:4:99
+clear:true:0
+sorted:1:5
