@@ -1,0 +1,7 @@
+list-groupBy:3:3:3:3:18:12
+vec-groupBy:3:3:3:3:18:15
+list-groupMap:3:180:120:150
+vec-groupMap:3:180:120:150
+list-groupMapReduce:3:18:12:15
+vec-groupMapReduce:3:18:12:15
+signed:3:2:1:3

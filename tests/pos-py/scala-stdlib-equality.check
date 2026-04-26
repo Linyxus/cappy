@@ -1,0 +1,12 @@
+List:eq:true:hashEq:true:sameElems:true:neq:false
+Vector:eq:true:hashEq:true:sameElems:true:neq:false
+LazyList:eq:true:hashEq:true:sameElems:true:neq:false
+ArrayBuffer:eq:true:hashEq:true:sameElems:true:neq:false
+ArrayDeque:eq:true:hashEq:true:sameElems:true:neq:false
+ListBuffer:eq:true:hashEq:true:sameElems:true:neq:false
+ImmutableHashMap:eq:true:hashEq:true:sameElems:na:neq:false
+ImmutableHashSet:eq:true:hashEq:true:sameElems:na:neq:false
+MutableHashMap:eq:true:hashEq:true:sameElems:na:neq:false
+MutableHashSet:eq:true:hashEq:true:sameElems:na:neq:false
+TreeMap:eq:true:hashEq:true:sameElems:na:neq:false
+StringBuilder:eq:true:hashEq:true:sameElems:true:neq:false
