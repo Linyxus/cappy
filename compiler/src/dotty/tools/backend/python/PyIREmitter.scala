@@ -1366,9 +1366,12 @@ object PyIREmitter:
         case IntOr   => wrapI32(s"$l | $r")
         case IntAnd  => wrapI32(s"$l & $r")
         case IntXor  => wrapI32(s"$l ^ $r")
-        case IntShl  => wrapI32(s"$l << $r")
-        case IntShr  => wrapI32(s"$l >> $r")
-        case IntUShr => wrapI32(s"($l & 0xFFFFFFFF) >> $r")
+        // JVM masks shift amount to low 5 bits for `int`. Python's
+        // arbitrary-precision shift does no such masking, so e.g.
+        // `1 << 32` yields 4294967296 instead of 1. Mask explicitly.
+        case IntShl  => wrapI32(s"$l << ($r & 0x1F)")
+        case IntShr  => wrapI32(s"$l >> ($r & 0x1F)")
+        case IntUShr => wrapI32(s"($l & 0xFFFFFFFF) >> ($r & 0x1F)")
         case IntEq   => s"($l == $r)"
         case IntNe   => s"($l != $r)"
         case IntLt   => s"($l < $r)"
@@ -1387,9 +1390,14 @@ object PyIREmitter:
         case LongOr   => wrapI64(s"$l | $r")
         case LongAnd  => wrapI64(s"$l & $r")
         case LongXor  => wrapI64(s"$l ^ $r")
-        case LongShl  => wrapI64(s"$l << $r")
-        case LongShr  => wrapI64(s"$l >> $r")
-        case LongUShr => wrapI64(s"($l & 0xFFFFFFFFFFFFFFFF) >> $r")
+        // JVM masks shift amount to low 6 bits for `long`. Python's
+        // arbitrary-precision shift gives `1L << 64 == 2^64`, which
+        // gets normalised by `_scpy_i64` to `0` rather than the JVM
+        // value `1L`. That silently loses bits in BitSet's `1L << elem`
+        // when `elem >= 64` lands on a higher word. Mask explicitly.
+        case LongShl  => wrapI64(s"$l << ($r & 0x3F)")
+        case LongShr  => wrapI64(s"$l >> ($r & 0x3F)")
+        case LongUShr => wrapI64(s"($l & 0xFFFFFFFFFFFFFFFF) >> ($r & 0x3F)")
         case LongEq   => s"($l == $r)"
         case LongNe   => s"($l != $r)"
         case LongLt   => s"($l < $r)"
