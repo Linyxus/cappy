@@ -1,0 +1,8 @@
+build:3:0:2
+access:1:Some(2):-1:true
+transform:a,b,c|1,2,3|(a,1),(b,2),(c,3)
+higherOrder:2:true:3:Some(b)
+aggregate:6:6
+mutate:3:Some(1):false:false
+concurrentOps:Some(1):None:Some(1):true:false:true:false:1
+convert:3:3:3
