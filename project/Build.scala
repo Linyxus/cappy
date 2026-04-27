@@ -2759,6 +2759,29 @@ object Build {
     )
     .enablePlugins(JmhPlugin)
 
+  val runBench = taskKey[Unit]("Compile + run the Python-backend stdlib benchmarks (mirror of stdlib-bench).")
+
+  /** Python-backend mirror of stdlib-bench. The Driver lives under
+   *  `driver-src/` (plain JVM Scala) and shells out to `bin/scpyc` per bench
+   *  source, then `uv run` per generated `.py`. The bench sources under
+   *  `src/main/scala/.../py/` are NOT compiled by sbt's normal compile —
+   *  they are -scalapy-only and the Driver compiles them on demand.
+   *  JMH is JVM-only so this path uses a hand-rolled harness. */
+  lazy val `stdlib-bench-py` = project.in(file("stdlib-bench-py"))
+    .dependsOn(`scala3-library-bootstrapped`)
+    .settings(commonBootstrappedSettings)
+    .settings(
+      bootstrappedScalaInstanceSettings,
+      publish / skip := true,
+      bspEnabled := false,
+      Compile / unmanagedSourceDirectories := Seq(baseDirectory.value / "driver-src"),
+      Compile / mainClass := Some("dotty.tools.benchmarks.py.Driver"),
+      runBench := Def.taskDyn {
+        val root = (ThisBuild / baseDirectory).value.getAbsolutePath
+        (Compile / runMain).toTask(s""" dotty.tools.benchmarks.py.Driver "$root" """)
+      }.value,
+    )
+
   val testcasesOutputDir = taskKey[Seq[String]]("Root directory where tests classes are generated")
   val testcasesSourceRoot = taskKey[String]("Root directory where tests sources are generated")
   val testDocumentationRoot = taskKey[String]("Root directory where tests documentation are stored")

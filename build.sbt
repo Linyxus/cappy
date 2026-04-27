@@ -59,6 +59,8 @@ val `scala-library-py` = Build.`scala-library-py`
 
 // Stdlib benchmarks (JVM backend, JMH)
 val `stdlib-bench` = Build.`stdlib-bench`
+// Stdlib benchmarks for the Python backend (mirror of stdlib-bench).
+val `stdlib-bench-py` = Build.`stdlib-bench-py`
 // Run every test for Python backend. Builds the javalib + library-py jars
 // first so that the test classpath includes their .pyir artifacts.
 addCommandAlias(
