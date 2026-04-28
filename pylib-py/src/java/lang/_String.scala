@@ -13,6 +13,7 @@ import java.nio.ByteBuffer
 import java.nio.charset.Charset
 import java.util.Comparator
 import java.util.regex.Pattern
+import scala.python.runtime.PyBuiltins
 
 object _String:
   final val CASE_INSENSITIVE_ORDER: Comparator[String] =
@@ -27,13 +28,8 @@ object _String:
     `new`(value, 0, value.length)
 
   def `new`(value: Array[Char], offset: Int, count: Int): String =
-    val end = checkBoundsForNewFromArray(offset, count, value.length)
-    var out = ""
-    var i = offset
-    while i < end do
-      out += value(i)
-      i += 1
-    out
+    checkBoundsForNewFromArray(offset, count, value.length)
+    PyBuiltins.string_from_chars(value, offset, count)
 
   def `new`(bytes: Array[scala.Byte]): String =
     decodeBytes(bytes, Charset.forName("UTF-8"))

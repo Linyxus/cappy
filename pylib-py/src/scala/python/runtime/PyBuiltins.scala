@@ -33,7 +33,10 @@ object PyBuiltins:
     def decode(encoding: String): String = native
 
   @extern("operator", "getitem")
-  private def getItem(value: Any, index: Int): Any = native
+  private def getItem(value: Any, key: Any): Any = native
+
+  @extern("builtins", "slice")
+  private def sliceOf(start: Int, stop: Int): Any = native
 
   @extern("operator", "eq")
   private def operatorEq(a: Any, b: Any): Boolean = native
@@ -62,6 +65,7 @@ object PyBuiltins:
     def lstrip(): String = native
     def rstrip(): String = native
     def encode(encoding: String): PyAny = native
+    def join(it: Any): String = native
 
   private inline def asStr(s: String): PyStr = s.asInstanceOf[PyStr]
   private inline def asFloat(value: Double): PyFloat = value.asInstanceOf[PyFloat]
@@ -80,6 +84,19 @@ object PyBuiltins:
 
   def chr_of(codePoint: Int): String =
     builtins.chr(codePoint).asInstanceOf[String]
+
+  /** Bulk-build a Scala/Python `str` from a slice of an `Array[Char]`.
+   *  Compiles to one Scala→Python boundary crossing — the iteration,
+   *  per-codepoint `chr`, and `str` concatenation all happen in
+   *  CPython's C-level `str.join(map(...))`. The original
+   *  `var out = ""; out += chr(c); ...` loop in `String.new(Array[Char])`
+   *  was the StringBuilder.toString hot path. */
+  def string_from_chars(value: Array[Char], offset: Int, count: Int): String =
+    val end = offset + count
+    val src: Any =
+      if offset == 0 && end == value.length then value
+      else getItem(value, sliceOf(offset, end))
+    asStr("").join(builtins.map(builtins.chr, src))
 
   def ord_of(c: String): Int =
     builtins.ord(c).asInstanceOf[Int]
