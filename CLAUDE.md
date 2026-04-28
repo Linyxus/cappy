@@ -43,7 +43,22 @@ sbt --client "scala3-compiler-bootstrapped/runMain dotty.tools.dotc.Main -scalap
 # Execute generated Python through the repo's pinned uv project.
 uv sync --frozen
 uv run --project . --no-sync python /tmp/out/foo.py
+
+# Stdlib benchmark suite (Python backend, pyperf-driven).
+sbt --client "stdlib-bench-py/runBench"
 ```
+
+The Python-side bench harness is `pyperf` running through
+`stdlib-bench-py/python-shim/run_bench.py`; the JVM-side `Driver.scala`
+just compiles bundles, fans out one shim invocation per bundle, and
+finally calls `python-shim/results_to_md.py` to write `notes/benchmark.md`
+plus `results.jsonl`. Configurable via env vars (defaults shown):
+`BENCH_PROCESSES=1 BENCH_WARMUPS=3 BENCH_VALUES=5 BENCH_MIN_TIME=1
+BENCH_INNER_LOOPS=10`. Match against JMH with the same per-cell budget:
+`Jmh / run -f $BENCH_PROCESSES -wi $BENCH_WARMUPS -i $BENCH_VALUES
+-w $BENCH_MIN_TIME -r $BENCH_MIN_TIME -rf json -rff target/jmh.json`,
+then re-invoke `runBench` with `JMH_RESULTS_JSON=target/jmh.json` to fold
+the ratio column into the markdown.
 
 Generated Python must run through `uv run --project <repo-root> --no-sync python`, never bare `python3`. `PyRun.scala` enforces this and checks `uv sync --frozen --check` before running harness output.
 

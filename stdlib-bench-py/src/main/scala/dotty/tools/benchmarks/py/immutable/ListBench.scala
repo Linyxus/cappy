@@ -1,9 +1,8 @@
 package dotty.tools.benchmarks.py.immutable
 
-import dotty.tools.benchmarks.py.{BenchmarkSuite, Harness}
 import scala.compiletime.uninitialized
 
-class ListBench extends BenchmarkSuite:
+class ListBench:
   var size: Int = 0
   var list: List[Int] = uninitialized
   var half: Int = 0
@@ -20,5 +19,4 @@ class ListBench extends BenchmarkSuite:
     "mutate"    -> (() => 0 :: list),
   )
 
-@main def main(args: String*): Unit =
-  Harness.runFromArgs(new ListBench, "immutable.ListBench", args.toArray)
+@main def main(): Unit = ()

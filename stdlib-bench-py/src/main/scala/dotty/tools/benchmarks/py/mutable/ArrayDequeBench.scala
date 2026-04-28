@@ -1,10 +1,9 @@
 package dotty.tools.benchmarks.py.mutable
 
-import dotty.tools.benchmarks.py.{BenchmarkSuite, Harness}
 import scala.collection.mutable.ArrayDeque
 import scala.compiletime.uninitialized
 
-class ArrayDequeBench extends BenchmarkSuite:
+class ArrayDequeBench:
   var size:  Int = 0
   var deque: ArrayDeque[Int] = uninitialized
   var half:  Int = 0
@@ -29,8 +28,11 @@ class ArrayDequeBench extends BenchmarkSuite:
     },
     "access"    -> (() => deque(half)),
     "transform" -> (() => deque.map(_ + 1)),
-    "mutate"    -> { () => deque(half) = deque(half) },
+    "mutate"    -> { () =>
+      val v = deque(half)
+      deque(half) = v
+      v
+    },
   )
 
-@main def main(args: String*): Unit =
-  Harness.runFromArgs(new ArrayDequeBench, "mutable.ArrayDequeBench", args.toArray)
+@main def main(): Unit = ()

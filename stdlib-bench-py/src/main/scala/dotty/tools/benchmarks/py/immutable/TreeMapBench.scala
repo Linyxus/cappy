@@ -1,10 +1,9 @@
 package dotty.tools.benchmarks.py.immutable
 
-import dotty.tools.benchmarks.py.{BenchmarkSuite, Harness}
 import scala.collection.immutable.TreeMap
 import scala.compiletime.uninitialized
 
-class TreeMapBench extends BenchmarkSuite:
+class TreeMapBench:
   var size: Int = 0
   var tm:   TreeMap[Int, Int] = uninitialized
   var half: Int = 0
@@ -21,5 +20,4 @@ class TreeMapBench extends BenchmarkSuite:
     "mutate"    -> (() => tm.updated(-1, -1)),
   )
 
-@main def main(args: String*): Unit =
-  Harness.runFromArgs(new TreeMapBench, "immutable.TreeMapBench", args.toArray)
+@main def main(): Unit = ()

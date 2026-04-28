@@ -1,10 +1,9 @@
 package dotty.tools.benchmarks.py.mutable
 
-import dotty.tools.benchmarks.py.{BenchmarkSuite, Harness}
 import scala.collection.mutable.HashMap
 import scala.compiletime.uninitialized
 
-class HashMapBench extends BenchmarkSuite:
+class HashMapBench:
   var size: Int = 0
   var map:  HashMap[Int, Int] = uninitialized
   var half: Int = 0
@@ -29,8 +28,11 @@ class HashMapBench extends BenchmarkSuite:
     },
     "access"    -> (() => map.get(half)),
     "transform" -> (() => map.map((k, v) => (k, v + 1))),
-    "mutate"    -> { () => map(half) = map(half) },
+    "mutate"    -> { () =>
+      val v = map(half)
+      map(half) = v
+      v
+    },
   )
 
-@main def main(args: String*): Unit =
-  Harness.runFromArgs(new HashMapBench, "mutable.HashMapBench", args.toArray)
+@main def main(): Unit = ()

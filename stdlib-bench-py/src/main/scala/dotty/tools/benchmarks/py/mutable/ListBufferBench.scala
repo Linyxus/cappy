@@ -1,10 +1,9 @@
 package dotty.tools.benchmarks.py.mutable
 
-import dotty.tools.benchmarks.py.{BenchmarkSuite, Harness}
 import scala.collection.mutable.ListBuffer
 import scala.compiletime.uninitialized
 
-class ListBufferBench extends BenchmarkSuite:
+class ListBufferBench:
   var size: Int = 0
   var buf:  ListBuffer[Int] = uninitialized
 
@@ -29,9 +28,8 @@ class ListBufferBench extends BenchmarkSuite:
     "transform" -> (() => buf.map(_ + 1)),
     "mutate"    -> { () =>
       0 +=: buf
-      buf.remove(0)
+      buf.remove(0)  // returns the removed Int → consumed by sink, DCE-safe
     },
   )
 
-@main def main(args: String*): Unit =
-  Harness.runFromArgs(new ListBufferBench, "mutable.ListBufferBench", args.toArray)
+@main def main(): Unit = ()

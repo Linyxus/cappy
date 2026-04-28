@@ -1,10 +1,9 @@
 package dotty.tools.benchmarks.py.mutable
 
-import dotty.tools.benchmarks.py.{BenchmarkSuite, Harness}
 import scala.collection.mutable.StringBuilder
 import scala.compiletime.uninitialized
 
-class StringBuilderBench extends BenchmarkSuite:
+class StringBuilderBench:
   var size: Int = 0
   var sb:   StringBuilder = uninitialized
   var half: Int = 0
@@ -29,8 +28,11 @@ class StringBuilderBench extends BenchmarkSuite:
     },
     "access"    -> (() => sb.charAt(half)),
     "transform" -> (() => sb.toString),
-    "mutate"    -> { () => sb.setCharAt(half, sb.charAt(half)) },
+    "mutate"    -> { () =>
+      val v = sb.charAt(half)
+      sb.setCharAt(half, v)
+      v
+    },
   )
 
-@main def main(args: String*): Unit =
-  Harness.runFromArgs(new StringBuilderBench, "mutable.StringBuilderBench", args.toArray)
+@main def main(): Unit = ()

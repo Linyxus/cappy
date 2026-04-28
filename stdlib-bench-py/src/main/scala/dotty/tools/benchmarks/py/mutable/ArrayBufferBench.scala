@@ -1,10 +1,9 @@
 package dotty.tools.benchmarks.py.mutable
 
-import dotty.tools.benchmarks.py.{BenchmarkSuite, Harness}
 import scala.collection.mutable.ArrayBuffer
 import scala.compiletime.uninitialized
 
-class ArrayBufferBench extends BenchmarkSuite:
+class ArrayBufferBench:
   var size: Int = 0
   var buf:  ArrayBuffer[Int] = uninitialized
   var half: Int = 0
@@ -29,8 +28,11 @@ class ArrayBufferBench extends BenchmarkSuite:
     },
     "access"    -> (() => buf(half)),
     "transform" -> (() => buf.map(_ + 1)),
-    "mutate"    -> { () => buf(half) = buf(half) },
+    "mutate"    -> { () =>
+      val v = buf(half)
+      buf(half) = v
+      v
+    },
   )
 
-@main def main(args: String*): Unit =
-  Harness.runFromArgs(new ArrayBufferBench, "mutable.ArrayBufferBench", args.toArray)
+@main def main(): Unit = ()
