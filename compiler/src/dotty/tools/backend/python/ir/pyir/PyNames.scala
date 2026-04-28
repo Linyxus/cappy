@@ -136,6 +136,14 @@ final case class PyMethodName(
    *      `paramRefs` as `ref1_ref2_...` (underscore-joined; empty if
    *      no params). Distinct `PyMethodName` values produce distinct
    *      strings.
+   *
+   *  Injectivity of the joined `paramRefs`/`resultRef` form depends on
+   *  the underlying ref encodings keeping every internal `_` followed
+   *  by a fixed lowercase escape letter (`u` for literal underscore,
+   *  `d` for a class FQN segment break — see `PyClassRef.encoded`).
+   *  All current `PyTypeRef` flavours start with an uppercase tag
+   *  letter (`L`, `A`, `Z`, `I`, ...), so the inter-ref `_` separator
+   *  is unambiguous against ref-internal `_u`/`_d`.
    */
   def encoded: String =
     if simple.isConstructor then "__init__"

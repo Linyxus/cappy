@@ -2,6 +2,7 @@ package dotty.tools.backend.python
 
 import dotty.tools.backend.python.ir.pyir.serialization.{PyIRDeserializer, PyIRException}
 import dotty.tools.dotc.core.Contexts.Context
+import dotty.tools.dotc.report
 
 import java.io.File
 import java.util.jar.JarFile
@@ -26,8 +27,23 @@ import scala.collection.mutable
  *  Results are deduped by canonical file path so that `.pyir` reachable
  *  both via the output directory and via an overlapping classpath entry
  *  (e.g. default `-cp .` + default `-d .`) is only loaded once.
+ *
+ *  Diagnostics for corrupt/unreadable `.pyir` are routed through the
+ *  compiler [[report]] facility. Failures inside the ScalaPy support
+ *  classpath entries (the `scala-pylib-py` / `scala-library-py` artifacts)
+ *  are reported as hard errors, since a missing support symbol almost
+ *  always cascades into confusing secondary link errors. Failures in any
+ *  other classpath entry are reported as warnings.
  */
 object PyClasspathLoader:
+
+  /** Substrings that identify a classpath entry as a required ScalaPy
+   *  support input. Both the packaged jar names and the raw class
+   *  directory paths contain these tokens (the sbt project names),
+   *  so a canonical-path substring check is robust.
+   */
+  private val SupportEntryMarkers: List[String] =
+    List("scala-pylib-py", "scala-library-py")
 
   /** Load every `.pyir` on the classpath (and any left over at the top
    *  level of the output dir), tagged [[PyLinker.InputSource.Support]].
@@ -60,18 +76,22 @@ object PyClasspathLoader:
     // library's `target/.../classes/*.pyir` when `-d .` happens to equal
     // cwd) are not our output. They will be picked up by the classpath
     // scan below, so nothing is lost.
+    //
+    // The output directory is never treated as "required support":
+    // strays here belong to a previous compile, not the support libs.
     outDir.foreach { dir =>
       val f = new File(dir)
       if f.isDirectory then
-        loadFromDirTopLevel(f, PyLinker.InputSource.Support, visitedFiles, inputs)
+        loadFromDirTopLevel(f, PyLinker.InputSource.Support, required = false, visitedFiles, inputs)
     }
 
     for entry <- cp.split(File.pathSeparator) do
       val f = new File(entry)
+      val required = isSupportEntry(f)
       if f.isFile && f.getName.endsWith(".jar") then
-        loadFromJar(f, PyLinker.InputSource.Support, visitedFiles, inputs)
+        loadFromJar(f, PyLinker.InputSource.Support, required, visitedFiles, inputs)
       else if f.isDirectory then
-        loadFromDir(f, PyLinker.InputSource.Support, visitedFiles, inputs)
+        loadFromDir(f, PyLinker.InputSource.Support, required, visitedFiles, inputs)
 
     inputs.toList
 
@@ -81,12 +101,46 @@ object PyClasspathLoader:
     if jpath == null then None
     else try Some(jpath.toFile.getCanonicalPath.nn) catch case _: java.io.IOException => None
 
+  /** True if `entry` is one of the ScalaPy support classpath inputs.
+   *  Matched by canonical-path substring against the sbt project names
+   *  (`scala-pylib-py`, `scala-library-py`), which appear both in the
+   *  packaged jar filenames and in the raw class-directory paths.
+   */
+  private def isSupportEntry(entry: File): Boolean =
+    val path =
+      try entry.getCanonicalPath.nn catch case _: java.io.IOException => entry.getAbsolutePath.nn
+    SupportEntryMarkers.exists(path.contains)
+
+  /** Describe the original throwable for inclusion in a diagnostic. */
+  private def describeCause(e: Throwable): String =
+    val msg = e.getMessage
+    if msg == null || msg.isEmpty then e.getClass.getName.nn
+    else s"${e.getClass.getName}: $msg"
+
+  /** Report a corrupt/unreadable `.pyir` through the compiler reporter.
+   *  Required (support) entries become hard errors; everything else is
+   *  a warning.
+   */
+  private def reportLoadFailure(file: File, required: Boolean, e: Throwable)(using Context): Unit =
+    val path =
+      try file.getCanonicalPath.nn catch case _: java.io.IOException => file.getAbsolutePath.nn
+    val cause = describeCause(e)
+    if required then
+      report.error(
+        s"[scalapy] cannot load required ScalaPy support classpath entry $path: $cause. " +
+        s"This usually means the support libraries are stale or built against an incompatible " +
+        s"PyIR format; rebuild scala-pylib-py and scala-library-py."
+      )
+    else
+      report.warning(s"[scalapy] skipping classpath entry $path: $cause")
+
   private def loadFromJar(
       jarFile: File,
       source: PyLinker.InputSource,
+      required: Boolean,
       visitedFiles: mutable.HashSet[String],
       inputs: mutable.ListBuffer[PyLinker.Input]
-  ): Unit =
+  )(using Context): Unit =
     val canon =
       try jarFile.getCanonicalPath.nn catch case _: java.io.IOException => jarFile.getAbsolutePath.nn
     if !visitedFiles.add(canon) then return
@@ -106,24 +160,23 @@ object PyClasspathLoader:
             finally is.close()
       finally jar.close()
     catch
-      case e: PyIRException =>
-        System.err.println(s"[scalapy] warning: skipping ${jarFile.getName}: ${e.getMessage}")
-      case e: java.io.IOException =>
-        System.err.println(s"[scalapy] warning: cannot read ${jarFile.getName}: ${e.getMessage}")
+      case e: PyIRException        => reportLoadFailure(jarFile, required, e)
+      case e: java.io.IOException  => reportLoadFailure(jarFile, required, e)
 
   private def loadFromDir(
       dir: File,
       source: PyLinker.InputSource,
+      required: Boolean,
       visitedFiles: mutable.HashSet[String],
       inputs: mutable.ListBuffer[PyLinker.Input]
-  ): Unit =
+  )(using Context): Unit =
     def walk(d: File): Unit =
       val children = d.listFiles()
       if children != null then
         for child <- children do
           if child.isDirectory then walk(child)
           else if child.getName.endsWith(".pyir") then
-            ingest(child, source, visitedFiles, inputs)
+            ingest(child, source, required, visitedFiles, inputs)
     walk(dir)
 
   /** Scan only the direct contents of `dir`, not subdirectories.
@@ -133,21 +186,23 @@ object PyClasspathLoader:
   private def loadFromDirTopLevel(
       dir: File,
       source: PyLinker.InputSource,
+      required: Boolean,
       visitedFiles: mutable.HashSet[String],
       inputs: mutable.ListBuffer[PyLinker.Input]
-  ): Unit =
+  )(using Context): Unit =
     val children = dir.listFiles()
     if children != null then
       for child <- children do
         if !child.isDirectory && child.getName.endsWith(".pyir") then
-          ingest(child, source, visitedFiles, inputs)
+          ingest(child, source, required, visitedFiles, inputs)
 
   private def ingest(
       child: File,
       source: PyLinker.InputSource,
+      required: Boolean,
       visitedFiles: mutable.HashSet[String],
       inputs: mutable.ListBuffer[PyLinker.Input]
-  ): Unit =
+  )(using Context): Unit =
     val canon =
       try child.getCanonicalPath.nn catch case _: java.io.IOException => child.getAbsolutePath.nn
     if visitedFiles.add(canon) then
@@ -157,7 +212,5 @@ object PyClasspathLoader:
         if cu.classes.nonEmpty then
           inputs += PyLinker.Input(cu.classes, cu.mainEntry, source)
       catch
-        case e: PyIRException =>
-          System.err.println(s"[scalapy] warning: skipping ${child.getName}: ${e.getMessage}")
-        case e: java.io.IOException =>
-          System.err.println(s"[scalapy] warning: cannot read ${child.getName}: ${e.getMessage}")
+        case e: PyIRException       => reportLoadFailure(child, required, e)
+        case e: java.io.IOException => reportLoadFailure(child, required, e)

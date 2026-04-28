@@ -216,17 +216,12 @@ object PyLinker:
       owners.toSet
 
     private def pruneClassMethods(c: PyClassDef, reach: PyReachability.Result): PyClassDef =
-      val instantiated = reach.isInstantiated(c.name)
       def keepMethod(m: PyMethodDef): Boolean =
         val ns = m.flags.namespace
         if reach.isMethodReachable(c.name, m.name) then true
         // `<clinit>` runs on class definition; keep it when the class
         // is kept. Matches the analyzer's proactive <clinit> analysis.
         else if ns == PyMemberNamespace.StaticConstructor then true
-        // The runtime ctor dispatcher sees every ctor of the class;
-        // keep them all for any instantiated class. The analyzer has
-        // already walked their bodies (see `instantiate`).
-        else if ns == PyMemberNamespace.Constructor && instantiated then true
         // Abstract declarations have no body to pull anything in, and
         // preserving them keeps the interface surface intact for
         // downstream consumers.
@@ -280,18 +275,15 @@ object PyLinker:
       def isDeclaredSupportField(field: PyFieldName): Boolean =
         declaredSupportFields.contains(field)
 
+      // Scala 2/3 module-class vs companion-class share the same backing
+      // PyIR field when the GenPython static-forwarder pass folds them.
+      // A read of `Foo.x` must keep `Foo_.x` alive (and vice versa). The
+      // suffix-flip itself is centralized in
+      // `PyEncoding.companionFieldOf` — DCE never re-derives the
+      // underscore convention inline.
       def linkedFieldAlias(field: PyFieldName): Option[PyFieldName] =
-        val ownerName = field.owner.nameString
-        if ownerName.endsWith("_") then
-          val linkedOwner = PyClassName(ownerName.stripSuffix("_"))
-          val linkedField = PyFieldName(linkedOwner, field.simple)
-          if declaredSupportFields.contains(linkedField) then Some(linkedField)
-          else None
-        else
-          val moduleOwner = PyClassName(s"${ownerName}_")
-          val moduleField = PyFieldName(moduleOwner, field.simple)
-          if declaredSupportFields.contains(moduleField) then Some(moduleField)
-          else None
+        val alias = PyEncoding.companionFieldOf(field)
+        if declaredSupportFields.contains(alias) then Some(alias) else None
 
       def isFieldRead(field: PyFieldName): Boolean =
         reach.isFieldRead(field.owner, field) ||
@@ -367,9 +359,6 @@ object PyLinker:
 
         case PyWhile(cond, body) =>
           PyWhile(rewriteTree(cond, ctx), rewriteTree(body, ctx))(tree.pos)
-
-        case PyForEach(varName, iterable, body) =>
-          PyForEach(varName, rewriteTree(iterable, ctx), rewriteTree(body, ctx))(tree.pos)
 
         case _: PySkip =>
           tree
@@ -460,13 +449,11 @@ object PyLinker:
         case PyBinaryOp(op, lhs, rhs) =>
           PyBinaryOp(op, rewriteTree(lhs, ctx), rewriteTree(rhs, ctx))(tree.pos)
 
-        case PyClosure(captureParams, params, resultType, body, captureValues) =>
+        case PyClosure(params, resultType, body) =>
           PyClosure(
-            captureParams,
             params,
             resultType,
-            rewriteTree(body, ctx),
-            captureValues.map(rewriteTree(_, ctx))
+            rewriteTree(body, ctx)
           )(tree.pos)
 
         case _: PyClassOf | _: PyLiteral =>
@@ -491,7 +478,6 @@ object PyLinker:
         case t: PyAssign         => walk(t.lhs); walk(t.rhs)
         case t: PyReturn         => walk(t.value)
         case t: PyWhile          => walk(t.cond); walk(t.body)
-        case t: PyForEach        => walk(t.iterable); walk(t.body)
         case _: PySkip           => ()
         case t: PyIf             => walk(t.cond); walk(t.thenp); walk(t.elsep)
         case t: PyTryCatch       => walk(t.block); walk(t.handler)
@@ -528,7 +514,7 @@ object PyLinker:
         case t: PyArraySelect    => walk(t.array); walk(t.index)
         case t: PyUnaryOp        => walk(t.lhs)
         case t: PyBinaryOp       => walk(t.lhs); walk(t.rhs)
-        case t: PyClosure        => t.captureValues.foreach(walk); walk(t.body)
+        case t: PyClosure        => walk(t.body)
         case _: PyClassOf        => ()
         case _: PyLiteral        => ()
 
@@ -673,12 +659,9 @@ object PyLinker:
       cls.superClass.foreach { superClass =>
         requireClass(superClass, cls.pos, classInfos, s"superclass '${superClass.nameString}'")
       }
-      // Interfaces are intentionally NOT validated here. Python is
-      // duck-typed and the emitter does not turn interfaces into Python
-      // base classes, so a missing nominal trait does not affect runtime
-      // behavior. Bridging this softness keeps user code that mixes in
-      // synthetic stdlib traits (Mirror, Equals, Product, Serializable)
-      // from failing the linker.
+      cls.interfaces.foreach { iface =>
+        requireClass(iface, cls.pos, classInfos, s"interface '${iface.nameString}'")
+      }
 
       cls.fields.foreach(validateField(_, classInfos))
       cls.methods.foreach(validateMethod(_, classInfos))
@@ -710,10 +693,6 @@ object PyLinker:
 
         case tree: PyWhile =>
           validateTree(tree.cond, classInfos)
-          validateTree(tree.body, classInfos)
-
-        case tree: PyForEach =>
-          validateTree(tree.iterable, classInfos)
           validateTree(tree.body, classInfos)
 
         case _: PySkip =>
@@ -847,10 +826,8 @@ object PyLinker:
           validateTree(tree.rhs, classInfos)
 
         case tree: PyClosure =>
-          tree.captureParams.foreach(validateParam(_, classInfos))
           tree.params.foreach(validateParam(_, classInfos))
           validateType(tree.resultType, tree.pos, classInfos)
-          tree.captureValues.foreach(validateTree(_, classInfos))
           validateTree(tree.body, classInfos)
 
         case tree: PyClassOf =>
@@ -872,6 +849,20 @@ object PyLinker:
         case Some(_) =>
           ()
 
+    /** True when the lookup chain starting at `startClass` includes a
+     *  Java-provided runtime class. These classes are backed by Python
+     *  builtins (`object`, `str`, `type`, `Throwable`, …) and expose
+     *  methods via `__getattr__`-style dispatch we cannot enumerate at
+     *  link time, so we treat them as duck-typed external surface. The
+     *  laxness deliberately does NOT propagate to compiled stdlib
+     *  classes (Predef, Product, …): those have a closed PyIR surface
+     *  and missing methods on them remain hard errors. */
+    private def hasJavaProvidedInChain(
+        startClass: PyClassName,
+        classInfos: Map[PyClassName, ClassInfo]
+    ): Boolean =
+      lookupInAncestors(startClass, classInfos)(_.runtime.exists(_.javaProvided))
+
     private def requireInstanceMethod(
         startClass: PyClassName,
         method: PyMethodName,
@@ -883,16 +874,8 @@ object PyLinker:
           error(s"Unresolved class '${startClass.nameString}'", pos)
         case Some(_) =>
           val resolved = lookupInAncestors(startClass, classInfos)(_.hasInstanceMethod(method))
-          if !resolved then
-            // Be lenient when the lookup chain touches a Java-provided
-            // class: these are backed by Python builtins and expose methods
-            // via `__getattr__`-style dispatch that can't be enumerated.
-            // Compiled stdlib classes (Predef, Product, etc.) are NOT lenient
-            // — missing methods on them are real errors.
-            val touchesJavaProvided =
-              lookupInAncestors(startClass, classInfos)(_.runtime.exists(_.javaProvided))
-            if !touchesJavaProvided then
-              error(s"Unresolved instance method '${startClass.nameString}.${showMethod(method)}'", pos)
+          if !resolved && !hasJavaProvidedInChain(startClass, classInfos) then
+            error(s"Unresolved instance method '${startClass.nameString}.${showMethod(method)}'", pos)
 
     private def requireExactInstanceMethod(
         owner: PyClassName,
@@ -962,12 +945,18 @@ object PyLinker:
         case PyPrimRef(_) =>
           ()
         case PyClassRef(_) =>
-          // Type references are non-binding at runtime - Python is
-          // duck-typed and the emitter strips all nominal type
-          // annotations on parameters and returns. Skip the linker
-          // check so that synthetic methods returning stdlib types
-          // (e.g. `productIterator(): scala.collection.Iterator`) do
-          // not fail the link.
+          // Type references in method signatures (param/result types)
+          // are deliberately NOT linked here. They're carried by PyIR
+          // for method-name uniqueness across overloads and for the
+          // sjsir-style mangled identifier (`foo__I__V`), but the
+          // Python emitter strips all nominal annotations: signatures
+          // become `def foo(self, x):` with no type info. A signature
+          // that mentions an unbundled stdlib class (e.g. an abstract
+          // `productIterator(): scala.collection.Iterator`) therefore
+          // generates working Python even when the named class is DCE'd
+          // away. Linking these would force us to keep nominally-
+          // referenced-but-runtime-unused classes alive, defeating the
+          // class-level DCE pass in `PyReachability`.
           ()
         case PyArrayRef(base, _) =>
           validateTypeRef(base, pos, classInfos)
@@ -979,8 +968,11 @@ object PyLinker:
     ): Unit =
       tpe match
         case PyClassType(_) =>
-          // Soft check, see `validateTypeRef`. Type tags on tree nodes
-          // are descriptive only.
+          // `PyType` tags on tree nodes describe a value's static type
+          // for documentation/diagnostics; they are never emitted as
+          // runtime checks. Same rationale as `validateTypeRef` above:
+          // linking them would couple type tags to reachability and
+          // pin classes that the emitter never references.
           ()
         case _ =>
           ()

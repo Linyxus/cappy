@@ -6,8 +6,22 @@ object PyIRFormat:
   /** Magic bytes 'P','Y','I','R' as a big-endian u32. */
   final val Magic: Int = 0x50594952
 
-  /** Major version. Bumping is a breaking format change. */
-  final val MajorVersion: Int = 1
+  /** Major version. Bumping is a breaking format change.
+   *
+   *  Bumped to 2 when `PyClosure` lost its `captureParams` /
+   *  `captureValues` fields: the old layout would deserialize as
+   *  truncated capture lists, so old `.pyir` files cannot be read.
+   *
+   *  Bumped to 3 when several never-produced IR variants were dropped
+   *  from the format: `PyForEach`, `PyClassKind.AbstractClass`,
+   *  `PyUndefinedType`, and a swathe of unary / binary opcodes
+   *  (StringLength, CheckNotNull, GetClass, IdentityHashCode, Clone,
+   *  WrapAsThrowable, UnwrapFromThrowable, Float/Double bit-cast ops,
+   *  class-reflection unary/binary ops, `IntU*` / `LongU*` unsigned ops,
+   *  `StringCharAt`). Old `.pyir` files containing these tags cannot be
+   *  read by this version. The freed tag values are reserved.
+   */
+  final val MajorVersion: Int = 3
 
   /** Minor version. Reader accepts older minors and rejects newer. */
   final val MinorVersion: Int = 0

@@ -47,9 +47,38 @@ object PyPrimRef:
   val NullRef:    PyPrimRef = PyPrimRef(Tag.NullRef)
   val NothingRef: PyPrimRef = PyPrimRef(Tag.NothingRef)
 
-/** Reference to a class or interface by fully qualified name. */
+/** Reference to a class or interface by fully qualified name.
+ *
+ *  The FQN is rendered as a Python identifier by escaping the two
+ *  characters whose naive treatment used to alias distinct names:
+ *    - a literal `_` in any segment becomes `_u`
+ *    - a `.` between segments becomes `_d`
+ *  After escaping, every `_` in the encoded output is immediately
+ *  followed by a fixed marker letter (`u` for a literal underscore,
+ *  `d` for a segment break), so the mapping `nameString -> encoded`
+ *  is injective. Previously `nameString.replace('.', '_')` collapsed
+ *  `a_b.c.D` and `a.b_c.D` onto the same `La_b_c_D`. */
 final case class PyClassRef(className: PyClassName) extends PyTypeRef:
-  def encoded: String = "L" + className.nameString.replace('.', '_')
+  def encoded: String = "L" + PyClassRef.encodeFqn(className.nameString)
+
+object PyClassRef:
+  /** Injective encoding of a dot-separated FQN as a Python identifier.
+   *
+   *  Implementation: scan once and emit `_u` for each `_` and `_d`
+   *  for each `.`; all other characters pass through unchanged.
+   *  Doing the substitutions in a single pass (rather than chained
+   *  `String.replace` calls) is what guarantees the `_` we emit when
+   *  encoding `.` is not itself re-escaped. */
+  private[pyir] def encodeFqn(fqn: String): String =
+    val sb = new java.lang.StringBuilder(fqn.length + 4)
+    var i = 0
+    while i < fqn.length do
+      val ch = fqn.charAt(i)
+      if ch == '_' then sb.append("_u")
+      else if ch == '.' then sb.append("_d")
+      else sb.append(ch)
+      i += 1
+    sb.toString
 
 /** Reference to an array type.
  *
@@ -78,7 +107,6 @@ case object PyAnyType       extends PyType  // catch-all
 case object PyVoidType      extends PyType  // statement-typed nodes
 case object PyNothingType   extends PyType  // diverging (return, throw)
 case object PyNullType      extends PyType  // None
-case object PyUndefinedType extends PyType  // undefined; rare
 
 // Primitive value types (distinct at IR level to drive numeric wrapping)
 case object PyBooleanType extends PyType
@@ -114,7 +142,6 @@ object PyTypes:
     case PyVoidType      => PyPrimRef.VoidRef
     case PyNothingType   => PyPrimRef.NothingRef
     case PyNullType      => PyPrimRef.NullRef
-    case PyUndefinedType => PyClassRef(PyClassName.ObjectClass)
     case PyBooleanType   => PyPrimRef.BooleanRef
     case PyCharType      => PyPrimRef.CharRef
     case PyByteType      => PyPrimRef.ByteRef

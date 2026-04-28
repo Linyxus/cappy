@@ -61,7 +61,6 @@ object PyIRPrinter:
         case PyClassKind.Class         => "class"
         case PyClassKind.ModuleClass   => "module class"
         case PyClassKind.Interface     => "interface"
-        case PyClassKind.AbstractClass => "abstract class"
       val sup = cls.superClass.fold("")(s => s" extends ${s.nameString}")
       val ifs =
         if cls.interfaces.isEmpty then ""
@@ -126,7 +125,6 @@ object PyIRPrinter:
       case PyVoidType        => "void"
       case PyNothingType     => "nothing"
       case PyNullType        => "null"
-      case PyUndefinedType   => "undef"
       case PyBooleanType     => "bool"
       case PyCharType        => "char"
       case PyByteType        => "byte"
@@ -190,10 +188,6 @@ object PyIRPrinter:
         line(s"}: ${typeString(tree.tpe)}")
       case PyWhile(cond, body) =>
         line(s"while (${exprString(cond)}) {")
-        withIndent { printTreeAsBlock(body) }
-        line("}")
-      case PyForEach(varName, iter, body) =>
-        line(s"for (${varName.name} <- ${exprString(iter)}) {")
         withIndent { printTreeAsBlock(body) }
         line("}")
       case PyVarDef(name, _, vt, mut, rhs) =>
@@ -274,7 +268,7 @@ object PyIRPrinter:
       // Closures / misc
       case PyClassOf(tr) =>
         s"classOf[${typeRefString(tr)}]"
-      case PyClosure(_, params, _, body, _) =>
+      case PyClosure(params, _, body) =>
         val ps = params.map(_.name.name).mkString(", ")
         s"(($ps) => ${exprString(body)})"
       // Block as expression
@@ -291,7 +285,6 @@ object PyIRPrinter:
       case PyAssign(lhs, rhs)           => s"${exprString(lhs)} := ${exprString(rhs)}"
       case PyReturn(value)              => s"return(${exprString(value)})"
       case PyWhile(cond, body)          => s"while(${exprString(cond)}) ${exprString(body)}"
-      case PyForEach(v, it, body)       => s"foreach(${v.name} <- ${exprString(it)}) ${exprString(body)}"
       case PySkip()                     => "skip"
       case PyTryCatch(block, errVar, _, handler) =>
         s"try ${exprString(block)} catch ${errVar.name} => ${exprString(handler)}"

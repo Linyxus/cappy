@@ -92,12 +92,145 @@ class PyIRSerializationTests:
       case _: CorruptIRException => ()
 
   // ---------------------------------------------------------------
+  //  Hardening: malformed input must surface as PyIRException, not
+  //  raw JVM exceptions like ArrayIndexOutOfBoundsException.
+  // ---------------------------------------------------------------
+
+  /** Helper: wrap any deserialization attempt and assert that it raises
+   *  a `PyIRException` (or subclass) — never a raw JVM exception. */
+  private def assertPyIRException(label: String, bytes: Array[Byte]): Unit =
+    try
+      PyIRDeserializer.deserialize(bytes)
+      fail(s"$label: expected PyIRException, but deserialization succeeded")
+    catch
+      case _: PyIRException => () // expected
+      case e: Throwable =>
+        fail(s"$label: expected PyIRException, got ${e.getClass.getName}: ${e.getMessage}")
+
+  @Test def detectsTruncatedHeader(): Unit =
+    // Less than 8 bytes — too small even to hold a trailer hash.
+    assertPyIRException("zero-byte file",   new Array[Byte](0))
+    assertPyIRException("seven-byte file",  new Array[Byte](7))
+
+  @Test def detectsTruncatedAtVariousOffsets(): Unit =
+    // Build a non-trivial valid bundle, then truncate at every byte
+    // offset and confirm we always get a PyIRException.
+    val cn = PyClassName("foo.Bar")
+    val cls = PyClassDef(
+      name = cn,
+      originalName = PyOriginalName.fromString("Bar"),
+      kind = PyClassKind.Class,
+      superClass = Some(PyClassName.ObjectClass),
+      interfaces = Nil,
+      fields = List(PyFieldDef(
+        PyMemberFlags.empty, PyFieldName(cn, PySimpleFieldName("x")),
+        PyOriginalName.NoOriginalName, PyIntType, NoPos)),
+      methods = List(PyMethodDef(
+        PyMemberFlags.empty.withNamespace(PyMemberNamespace.Public),
+        PyMethodName(PySimpleMethodName("m"), Nil, PyPrimRef.VoidRef),
+        PyOriginalName.NoOriginalName, Nil, PyVoidType,
+        Some(PyIntLit(1)(NoPos)), NoPos)),
+      pos = NoPos
+    )
+    val full = PyIRSerializer.serializeToBytes(List(cls), None)
+
+    // Truncate at every length from 0..full.length-1. We don't care
+    // whether each one fails for "small file" or "bad hash" or "pool
+    // index" reasons — only that none of them leak raw JVM exceptions.
+    var i = 0
+    while i < full.length do
+      val truncated = java.util.Arrays.copyOf(full, i)
+      assertPyIRException(s"truncated at $i", truncated)
+      i += 1
+
+  @Test def detectsTruncatedBetweenHeaderAndBody(): Unit =
+    // 16 bytes is enough to satisfy the 8-byte trailer-hash precondition
+    // and even the 8-byte "below trailer" body, but it cannot be a
+    // valid header. The trailer-hash check fails first cleanly.
+    val bytes = new Array[Byte](16)
+    assertPyIRException("16 zero bytes", bytes)
+
+  @Test def detectsBadMagicShortFile(): Unit =
+    // Ensure the catch-all handles a bad magic at the smallest legal
+    // size (8 bytes — exactly the trailer-hash window). The hash check
+    // hits first because all bytes are zero and pjwHash64(0..0) != 0.
+    val bytes = new Array[Byte](8)
+    assertPyIRException("8 zero bytes", bytes)
+
+  @Test def detectsBadTypeRefTag(): Unit =
+    // Build a valid bundle, locate a known type-ref tag byte (0x01..0x03)
+    // in the type-ref pool section, and corrupt it to 0xFE. The trailer
+    // hash will then mismatch, but the test of interest is that even
+    // when we *recompute* the trailer hash, the deserializer rejects
+    // the unknown tag with a CorruptIRException rather than something
+    // like a MatchError.
+    val cls = wrapInClass("X", List(methodOf(PyIntLit(1)(NoPos))))
+    val bytes = PyIRSerializer.serializeToBytes(List(cls), None)
+    // Find any TagPyPrimRef (0x01) that is preceded by a Nat-encoded
+    // pool size. Just scan for the first 0x01 after the magic+version
+    // header (offset 18 = 4 magic + 2 version + 8 hash + 2 flags + 2 nat
+    // for string-pool size -> approximate; use a wider start).
+    var i = 18
+    while i < bytes.length - 8 && bytes(i) != 0x01.toByte do i += 1
+    if i >= bytes.length - 8 then
+      fail("could not locate a TagPyPrimRef byte to corrupt")
+    bytes(i) = 0xFE.toByte
+    // Recompute trailer hash so the corrupt-tag failure is the *first*
+    // failure surfaced (rather than the trailer-hash check).
+    val recomputed = dotty.tools.tasty.TastyHash.pjwHash64(bytes, bytes.length - 8)
+    var j = 0
+    while j < 8 do
+      bytes(bytes.length - 8 + j) = ((recomputed >>> (56 - 8 * j)) & 0xff).toByte
+      j += 1
+    assertPyIRException("bad pool/tree tag byte", bytes)
+
+  @Test def detectsOutOfRangePoolIndex(): Unit =
+    // Build a valid bundle, then walk back from the trailer hash and
+    // overwrite a Nat byte with a clearly-out-of-range value. The Nat
+    // encoding sets bit 0x80 on continuations, so 0x7F is "127, last
+    // byte" — an index that is guaranteed to exceed any pool size in a
+    // tiny test bundle.
+    val cls = wrapInClass("Y", List(methodOf(PyStringLit("hi")(NoPos))))
+    val bytes = PyIRSerializer.serializeToBytes(List(cls), None)
+    // Replace the byte just before the trailer hash. That position is
+    // somewhere in the body / class-list area and is highly likely to
+    // be interpreted as a Nat (a pool index, count, etc.).
+    val target = bytes.length - 9
+    bytes(target) = 0x7F.toByte
+    // Recompute hash so we get past the trailer check.
+    val recomputed = dotty.tools.tasty.TastyHash.pjwHash64(bytes, bytes.length - 8)
+    var j = 0
+    while j < 8 do
+      bytes(bytes.length - 8 + j) = ((recomputed >>> (56 - 8 * j)) & 0xff).toByte
+      j += 1
+    assertPyIRException("out-of-range pool index", bytes)
+
+  @Test def detectsBadTreeTag(): Unit =
+    // Body ends with the literal tree: tag 0x74 (PyIntLit) + 1-byte
+    // position-nat (0 -> NoPosition) + 1-byte value (writeInt of 7
+    // encodes as 0x07). Scan backwards from the trailer hash to find
+    // the last 0x74 byte and overwrite it with an unmapped tag.
+    val cls = wrapInClass("Z", List(methodOf(PyIntLit(7)(NoPos))))
+    val bytes = PyIRSerializer.serializeToBytes(List(cls), None)
+    var i = bytes.length - 9
+    while i > 0 && bytes(i) != 0x74.toByte do i -= 1
+    if i <= 0 then
+      fail("could not locate a TagPyIntLit byte to corrupt")
+    bytes(i) = 0xEE.toByte
+    val recomputed = dotty.tools.tasty.TastyHash.pjwHash64(bytes, bytes.length - 8)
+    var j = 0
+    while j < 8 do
+      bytes(bytes.length - 8 + j) = ((recomputed >>> (56 - 8 * j)) & 0xff).toByte
+      j += 1
+    assertPyIRException("bad tree tag byte", bytes)
+
+  // ---------------------------------------------------------------
   //  Primitive types and refs
   // ---------------------------------------------------------------
 
   @Test def allPyTypesRoundTrip(): Unit =
     val allTypes: List[PyType] = List(
-      PyAnyType, PyVoidType, PyNothingType, PyNullType, PyUndefinedType,
+      PyAnyType, PyVoidType, PyNothingType, PyNullType,
       PyBooleanType, PyCharType, PyByteType, PyShortType, PyIntType,
       PyLongType, PyFloatType, PyDoubleType, PyStringType, PyArrayType,
       PyClassType(PyClassName("foo.Bar"))
@@ -170,7 +303,6 @@ class PyIRSerializationTests:
       PyAssign(PyVarRef(name)(PyIntType, NoPos), PyIntLit(2)(NoPos))(NoPos),
       PyReturn(PyIntLit(3)(NoPos))(NoPos),
       PyWhile(PyBooleanLit(true)(NoPos), PySkip()(NoPos))(NoPos),
-      PyForEach(name, PyArrayValue(PyPrimRef.IntRef, Nil)(NoPos), PySkip()(NoPos))(NoPos),
       PySkip()(NoPos)
     )
     for s <- stmts do
@@ -299,18 +431,13 @@ class PyIRSerializationTests:
   // ---------------------------------------------------------------
 
   @Test def closuresAndClassOfRoundTrip(): Unit =
-    val capParam = PyParamDef(
-      PyLocalName("c"), PyOriginalName.NoOriginalName, PyIntType, false, NoPos
-    )
     val param = PyParamDef(
       PyLocalName("p"), PyOriginalName.NoOriginalName, PyAnyType, false, NoPos
     )
     val closure = PyClosure(
-      captureParams = List(capParam),
-      params        = List(param),
-      resultType    = PyAnyType,
-      body          = PyVarRef(PyLocalName("p"))(PyAnyType, NoPos),
-      captureValues = List(PyIntLit(7)(NoPos))
+      params     = List(param),
+      resultType = PyAnyType,
+      body       = PyVarRef(PyLocalName("p"))(PyAnyType, NoPos)
     )(NoPos)
     val classOf = PyClassOf(PyClassRef(PyClassName("foo.Bar")))(NoPos)
 
@@ -351,7 +478,7 @@ class PyIRSerializationTests:
     val cls = PyClassDef(
       name = cn,
       originalName = PyOriginalName.fromString("Bar"),
-      kind = PyClassKind.AbstractClass,
+      kind = PyClassKind.Class,
       superClass = Some(PyClassName.ObjectClass),
       interfaces = List(PyClassName("a.I"), PyClassName("a.J")),
       fields = List(field),

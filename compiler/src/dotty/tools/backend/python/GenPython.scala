@@ -74,6 +74,99 @@ private class PyCodeGen()(using genCtx: Context):
   private val stringCompanionClassName = PyClassName("java.lang._String_")
   private lazy val charSequenceClass = requiredClassRef("java.lang.CharSequence").symbol.asClass
 
+  /** Centralized table of JDK/runtime intrinsics the backend short-circuits.
+   *
+   *  Each entry binds a Scala `Symbol` (or, when overload disambiguation is
+   *  not available cleanly, an owner+name predicate) to a hand-written PyIR
+   *  rewrite. Sites that previously inlined these checks now route through
+   *  `intrinsicFor*` lookups so the runtime contract lives in one place.
+   *
+   *  Symbol identity is preferred over name strings (especially for
+   *  `java.lang.reflect.Array.newInstance`, whose owner was previously
+   *  matched by a `javaClassName.startsWith` string compare). All looked-up
+   *  symbols are cached lazily so the lookup cost is paid once per
+   *  compilation unit.
+   */
+  private object Intrinsics:
+    /** `java.lang.reflect.Array` module class — owner of `newInstance`,
+     *  `getLength`, etc. Cached so we never fall back to string matching
+     *  on `sym.owner.javaClassName`. */
+    @scala.annotation.threadUnsafe
+    lazy val ArrayReflectModuleClass: Symbol =
+      val mod = requiredModule("java.lang.reflect.Array")
+      if mod.exists then mod.moduleClass else NoSymbol
+
+    /** True when `sym` is an `Array.newInstance(...)` overload from
+     *  `java.lang.reflect.Array`. The overload-specific dispatch (1-D vs
+     *  multi-dim) is decided at the call site by inspecting argument
+     *  shapes; this predicate just guards entry. */
+    def isArrayNewInstance(sym: Symbol): Boolean =
+      sym.exists
+        && ArrayReflectModuleClass.exists
+        && sym.owner == ArrayReflectModuleClass
+        && sym.name.toString == "newInstance"
+
+    /** True when `sym` resolves to `java.lang.System` (class or its
+     *  synthetic module). Used by the intrinsic dispatcher for
+     *  `arraycopy` / `identityHashCode` static calls and for
+     *  `out`/`err`/`in` field reads. */
+    def isSystemOwner(sym: Symbol): Boolean =
+      sym.exists && {
+        sym == defn.SystemClass ||
+          (defn.SystemModule.exists && sym == defn.SystemModule.moduleClass)
+      }
+
+    /** Lookup for static intrinsics that fire from `genNormalApply`'s
+     *  static-target branch. Returns the produced PyIR or `None` to fall
+     *  through to normal codegen.
+     *
+     *  Only contains call shapes whose lowering does not need access to
+     *  the surrounding `Apply` tree (e.g. for receiver re-anchoring).
+     *  String-static and constructor handling stay in their dedicated
+     *  helpers since they need name-mangled signatures.
+     */
+    def applyStaticIntrinsic(
+        sym: Symbol,
+        args: List[PyTree],
+        pos: PyPosition
+    ): Option[PyTree] =
+      if !sym.exists || !sym.is(JavaStatic) then None
+      else if isSystemOwner(sym.owner) then
+        sym.name.mangledString match
+          case "arraycopy" =>
+            Some(PyApplyExternal(PyExternalName("_scpy_arraycopy"), args)(PyVoidType, pos))
+          case "identityHashCode" =>
+            Some(PyApplyExternal(PyExternalName("_scpy_identity_hash_code"), args)(PyIntType, pos))
+          case _ =>
+            None
+      else None
+
+    /** True when `sym` is a non-static instance method whose receiver is
+     *  a `java.lang.String`. The runtime String is a Python `str`, so the
+     *  encoded Scala method name (`length__I`, etc.) does not resolve
+     *  against it and we route to Python-native equivalents in
+     *  `genStringCall`.
+     */
+    def isStringInstanceMethod(sym: Symbol, isStaticTarget: Boolean): Boolean =
+      !isStaticTarget && sym.exists && sym.owner == defn.StringClass
+
+    /** True when `sym` is a static call on `java.lang.String` (covers both
+     *  the Java class and the synthetic linked module class, since
+     *  `String.valueOf` etc. can be referenced through either depending on
+     *  source shape).
+     */
+    def isStringStaticMethod(sym: Symbol, isStaticTarget: Boolean): Boolean =
+      isStaticTarget && sym.exists &&
+        (sym.owner == defn.StringClass || sym.owner == defn.StringModule)
+
+    /** True when `classSym` is `java.lang.String` — used by `genApplyNew`
+     *  to redirect String constructors to the synthetic `_String_`
+     *  companion module.
+     */
+    def isStringClass(classSym: Symbol): Boolean =
+      classSym.exists && classSym == defn.StringClass
+  end Intrinsics
+
   // --- Scoped state --------------------------------------------------
 
   private var currentClassSym: Symbol = NoSymbol
@@ -81,8 +174,34 @@ private class PyCodeGen()(using genCtx: Context):
 
   /** Side-channel for statements produced during expression generation
     * (Block-in-expression-position). Drained by `flattenToStmts` at the
-    * enclosing statement. */
+    * enclosing statement.
+    *
+    * INVARIANT: Mutated only by leaf emit sites (`+=` from `genExpr`'s
+    * `Block`/`Return`/`Assign`/`WhileDo` arms, `genTryExpr`,
+    * `genLabeledExpr`, `genSynchronizedExpr`, `hoistValueIf`,
+    * `hoistValueMatch`, the array-set hoist) and the
+    * `flattenToStmts` drain. Every scope boundary (where
+    * pendings accumulated under a sub-tree must NOT escape into
+    * the enclosing scope) MUST go through `withLocalDefScope`. Do
+    * not add new ad-hoc save/replace/restore patterns. */
   private var pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
+
+  /** Run `body` against a fresh `pendingLocalDefs` buffer and return
+    * `(prefixStatements, bodyResult)`. Restores the previously-installed
+    * buffer regardless of how `body` exits.
+    *
+    * Replaces the older save/replace/restore idiom across the backend so
+    * that side-channel pendings produced inside `body` are surfaced as
+    * a structured prefix (which the caller splices at the right point)
+    * instead of leaking into the enclosing scope. */
+  private inline def withLocalDefScope[A](body: => A): (List[PyTree], A) =
+    val saved = pendingLocalDefs
+    pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
+    try
+      val result = body
+      (pendingLocalDefs.toList, result)
+    finally
+      pendingLocalDefs = saved
 
   // --- Entry point ---------------------------------------------------
 
@@ -520,13 +639,9 @@ private class PyCodeGen()(using genCtx: Context):
    *  scrambles side-effect ordering (e.g. an assignment inside a
    *  `Block`-in-expression would execute before an earlier statement). */
   private def genStat(tree: Tree): PyTree =
-    val saved = pendingLocalDefs
-    pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
-    val result = doGenStat(tree)
-    val locals = pendingLocalDefs
-    pendingLocalDefs = saved
+    val (locals, result) = withLocalDefScope(doGenStat(tree))
     if locals.isEmpty then result
-    else PyBlock(locals.toList, result)(posOf(tree))
+    else PyBlock(locals, result)(posOf(tree))
 
   private def doGenStat(tree: Tree): PyTree =
     val pos = posOf(tree)
@@ -727,12 +842,7 @@ private class PyCodeGen()(using genCtx: Context):
         // When either branch has pending locals, hoist the whole `If`
         // to a statement-form temp assign + `PyVarRef` for the value.
         def scopedBranch(branch: Tree): (List[PyTree], PyTree) =
-          val saved = pendingLocalDefs
-          pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
-          val expr = genExpr(branch)
-          val locals = pendingLocalDefs.toList
-          pendingLocalDefs = saved
-          (locals, expr)
+          withLocalDefScope(genExpr(branch))
         val condIR = genExpr(cond)
         val (thenLocals, thenExpr) = scopedBranch(thenp)
         val (elseLocals, elseExpr) = scopedBranch(elsep)
@@ -881,7 +991,16 @@ private class PyCodeGen()(using genCtx: Context):
       case StringTag  => PyStringLit(value.stringValue)(pos)
       case NullTag    => PyNullLit()(pos)
       case ClazzTag   => PyClassOf(encoding.encodeTypeRef(value.typeValue))(pos)
-      case _          => PyUnitLit()(pos)
+      case _          =>
+        // Unknown literal constant kind reaching the backend means a
+        // post-erasure invariant is broken. Surface a real diagnostic
+        // (so all bad literals in the CU are collected) and fall back to
+        // a Unit value to keep compilation going.
+        report.error(
+          s"Python backend: unsupported literal constant kind ${value.tag} (value ${value.value})",
+          sourcePosOf(pos)
+        )
+        PyUnitLit()(pos)
 
   // --- Apply dispatch ------------------------------------------------
 
@@ -991,7 +1110,7 @@ private class PyCodeGen()(using genCtx: Context):
     val Apply(fun @ Select(New(tpt), _), args) = app: @unchecked
     val classSym = tpt.tpe.typeSymbol
     val pyArgs = args.map(genExpr)
-    if classSym == defn.StringClass then
+    if Intrinsics.isStringClass(classSym) then
       genStringCtorCall(fun.symbol, pyArgs, pos)
     else
       val className = encoding.encodeClassName(classSym)
@@ -1029,11 +1148,7 @@ private class PyCodeGen()(using genCtx: Context):
 
   private def genReflectArrayNewInstance(app: Apply, pos: PyPosition): Option[PyTree] =
     val sym = app.fun.symbol
-    if sym.exists
-       && sym.name.toString == "newInstance"
-       && sym.owner.exists
-       && sym.owner.javaClassName.toString.startsWith("java.lang.reflect.Array")
-    then
+    if Intrinsics.isArrayNewInstance(sym) then
       app.args match
         case List(componentType, length) if length.tpe.typeSymbol == defn.IntClass =>
           Some(
@@ -1113,24 +1228,19 @@ private class PyCodeGen()(using genCtx: Context):
             case _ =>
               ()
 
-        if isStaticTarget && ownerName == PyClassName("java.lang.System") then
-          sym.name.mangledString match
-            case "arraycopy" =>
-              break(PyApplyExternal(PyExternalName("_scpy_arraycopy"), args)(PyVoidType, pos))
-            case "identityHashCode" =>
-              break(PyApplyExternal(PyExternalName("_scpy_identity_hash_code"), args)(PyIntType, pos))
-            case _ =>
-              ()
+        Intrinsics.applyStaticIntrinsic(sym, args, pos) match
+          case Some(tree) => break(tree)
+          case None       => ()
 
         // Intercept `java.lang.String` instance methods — the runtime
         // receiver is a Python `str` which has no `length__I`/`substring__I_I__…`
         // etc. Map the most common calls to Python-native equivalents.
-        if !isStaticTarget && sym.owner == defn.StringClass then
+        if Intrinsics.isStringInstanceMethod(sym, isStaticTarget) then
           app.fun match
             case Select(qual, _) =>
               break(genStringCall(sym, genExpr(qual), args, resultTpe, pos))
             case _ => ()
-        else if isStaticTarget && isStringStaticOwner(sym.owner) then
+        else if Intrinsics.isStringStaticMethod(sym, isStaticTarget) then
           break(genStringStaticCall(sym, args, resultTpe, pos))
 
         app.fun match
@@ -1463,19 +1573,14 @@ private class PyCodeGen()(using genCtx: Context):
    *  by live getters, so rewrite just those field reads to zero-arg static
    *  getter calls on the synthetic `java.lang.System` forwarder.
    *
-   *  Owner check covers both `defn.SystemClass` (the JVM Java class) and
-   *  its synthetic linked module class (`SystemClass.linkedClass.moduleClass`)
-   *  — Scala 3 creates the latter as the term-side handle for static
-   *  members of Java classes, so `System.out` references can land on
-   *  either depending on access shape. */
+   *  Owner check goes through `Intrinsics.isSystemOwner`, which covers both
+   *  `defn.SystemClass` (the JVM Java class) and its synthetic linked
+   *  module class — Scala 3 creates the latter as the term-side handle
+   *  for static members of Java classes, so `System.out` references can
+   *  land on either depending on access shape. */
   private def isSystemStreamStaticFieldRef(sym: Symbol): Boolean =
-    val ownerOk =
-      sym.exists && {
-        val owner = sym.owner
-        owner == defn.SystemClass ||
-          (defn.SystemModule.exists && owner == defn.SystemModule.moduleClass)
-      }
-    ownerOk &&
+    sym.exists &&
+      Intrinsics.isSystemOwner(sym.owner) &&
       !sym.is(Method) &&
       !sym.is(Module) &&
       !sym.is(Package) &&
@@ -1642,12 +1747,7 @@ private class PyCodeGen()(using genCtx: Context):
     PyUnitLit()(pos)
 
   private def genExprWithPending(tree: Tree): (List[PyTree], PyTree) =
-    val saved = pendingLocalDefs
-    pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
-    val expr = genExpr(tree)
-    val locals = pendingLocalDefs.toList
-    pendingLocalDefs = saved
-    (locals, expr)
+    withLocalDefScope(genExpr(tree))
 
   private def genSimpleOp(
       receiver: Tree, args: List[Tree], code: Int, pos: PyPosition
@@ -1806,7 +1906,14 @@ private class PyCodeGen()(using genCtx: Context):
           case _   => RefEq  // fallback - unreachable in practice
         PyBinaryOp(op, lhs, rhsExpr)(pos)
 
-      case _ => PyUnitLit()(pos)
+      case other =>
+        // Scala primitive ops are nullary (unary: POS/NEG/NOT/ZNOT) or
+        // binary; any other arity is a backend invariant violation.
+        report.error(
+          s"Python backend: unexpected primitive op (code=$code) with ${other.length} arguments",
+          sourcePosOf(pos)
+        )
+        PyUnitLit()(pos)
 
   /** `toString` is a Scala method, not Python's `__str__`. Most concrete
    *  receivers should use normal virtual dispatch to
@@ -2001,7 +2108,15 @@ private class PyCodeGen()(using genCtx: Context):
         val handler = catches.foldRight[PyTree](
           PyUnaryOp(PyUnaryCode.Throw, exVarRef)(pos)  // default: rethrow
         ) { (caseDef, elsePart) =>
-          val CaseDef(pat, _, body) = caseDef  // guards dropped
+          val CaseDef(pat, guard, body) = caseDef
+          // Post-erasure invariant: try/catch guards are lifted into the
+          // case body before this backend phase, so `guard` should always
+          // be `EmptyTree`. Assert loudly so a real miscompile from a stray
+          // guard surfaces as a backend error rather than silent dropping.
+          assert(
+            guard.isEmpty,
+            s"Python backend: try/catch CaseDef has a non-empty guard at ${caseDef.sourcePos.show}: ${guard.show}"
+          )
           val (exnTypeRef, bindOpt): (Option[PyTypeRef], Option[Symbol]) = pat match
             case Typed(Ident(nme.WILDCARD), tpt) =>
               (Some(encoding.encodeTypeRef(tpt.tpe)), None)
@@ -2078,14 +2193,10 @@ private class PyCodeGen()(using genCtx: Context):
    *  during `genExpr(expr)` into a local `PyBlock` so they cannot leak
    *  outside the surrounding try-arm. */
   private def genAssignFromExpr(lhs: PyAssignable, expr: Tree, pos: PyPosition): PyTree =
-    val saved = pendingLocalDefs
-    pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
-    val value = genExpr(expr)
-    val locals = pendingLocalDefs
-    pendingLocalDefs = saved
+    val (locals, value) = withLocalDefScope(genExpr(expr))
     val assign = PyAssign(lhs, value)(pos)
     if locals.isEmpty then assign
-    else PyBlock(locals.toList, assign)(pos)
+    else PyBlock(locals, assign)(pos)
 
   private var tryResultCounter = 0
   private def freshTryResultName(): PyLocalName =
@@ -2148,14 +2259,10 @@ private class PyCodeGen()(using genCtx: Context):
     // Scope body pendings so they're captured inside the Labeled — a
     // pending side effect inside a match arm must execute only when
     // that arm runs, not unconditionally before the Labeled.
-    val saved = pendingLocalDefs
-    pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
-    val loweredBody = genStat(body)
-    val locals = pendingLocalDefs
-    pendingLocalDefs = saved
+    val (locals, loweredBody) = withLocalDefScope(genStat(body))
     val bodyWithPendings =
       if locals.isEmpty then loweredBody
-      else PyBlock(locals.toList, loweredBody)(pos)
+      else PyBlock(locals, loweredBody)(pos)
 
     val assignedBody = rewriteLabelReturns(bodyWithPendings, labelName, tempLhs)
 
@@ -2316,12 +2423,7 @@ private class PyCodeGen()(using genCtx: Context):
     // pending locals we hoist the whole `Match` to a statement-form
     // `PyMatch` that assigns each arm's value to a fresh temp.
     def scopedBody(body: Tree): (List[PyTree], PyTree) =
-      val saved = pendingLocalDefs
-      pendingLocalDefs = mutable.ListBuffer.empty[PyTree]
-      val expr = genExpr(body)
-      val locals = pendingLocalDefs.toList
-      pendingLocalDefs = saved
-      (locals, expr)
+      withLocalDefScope(genExpr(body))
 
     val litCases = mutable.ListBuffer.empty[(List[PyMatchableLiteral], List[PyTree], PyTree)]
     var defaultLocals: List[PyTree] = Nil
@@ -2363,11 +2465,11 @@ private class PyCodeGen()(using genCtx: Context):
    *  We model this as:
    *    PyClosure(
    *      params = <one PyParamDef per SAM-method parameter>,
-   *      body   = <static call to `meth` with env + the SAM params>,
-   *      captureValues = <evaluated env>)
+   *      body   = <static call to `meth` with env + the SAM params>)
    *
    *  The emitter renders this as `(lambda p0, p1, ...: owner.meth(e0, e1, ..., p0, p1, ...))`;
-   *  Python's lexical scoping handles capture of `env` values.
+   *  Python's lexical scoping handles capture of `env` values inside
+   *  `body` (e.g. the `genExpr(qual)` receiver for an instance target).
    */
   private def genClosure(tree: Closure): PyTree =
     val pos = posOf(tree)
@@ -2433,11 +2535,9 @@ private class PyCodeGen()(using genCtx: Context):
         )(resultTpe, pos)
 
     PyClosure(
-      captureParams = Nil,
-      params        = samParams,
-      resultType    = resultTpe,
-      body          = body,
-      captureValues = Nil
+      params     = samParams,
+      resultType = resultTpe,
+      body       = body
     )(pos)
 
   private def moduleReceiver(moduleClass: Symbol, pos: PyPosition): PyTree =
@@ -2609,7 +2709,7 @@ private class PyCodeGen()(using genCtx: Context):
 
   private def genDynamicApply(app: Apply, pos: PyPosition): Option[PyTree] =
     val sym = app.fun.symbol
-    if matchesPySymbol(sym, pyDefn.PyDynamic_selectDynamic, "scala.python.PyDynamic.selectDynamic") then
+    if matchesPySymbol(sym, pyDefn.PyDynamic_selectDynamic) then
       app.args match
         case nameArg :: Nil =>
           val nameExpr = genExpr(nameArg)
@@ -2622,7 +2722,7 @@ private class PyCodeGen()(using genCtx: Context):
           ))
         case _ =>
           Some(PyUnitLit()(pos))
-    else if matchesPySymbol(sym, pyDefn.PyDynamic_applyDynamic, "scala.python.PyDynamic.applyDynamic") then
+    else if matchesPySymbol(sym, pyDefn.PyDynamic_applyDynamic) then
       app.args match
         case nameArg :: dynArgs :: Nil =>
           val callee = genDynamicSelect(
@@ -2639,13 +2739,13 @@ private class PyCodeGen()(using genCtx: Context):
           )(encoding.encodeType(app.tpe), pos))
         case _ =>
           Some(PyUnitLit()(pos))
-    else if matchesPySymbol(sym, pyDefn.PyDynamic_applyDynamicNamed, "scala.python.PyDynamic.applyDynamicNamed") then
+    else if matchesPySymbol(sym, pyDefn.PyDynamic_applyDynamicNamed) then
       app.args match
         case nameArg :: kwargsArg :: Nil =>
           Some(genApplyDynamicNamedCall(app, nameArg, kwargsArg, pos))
         case _ =>
           Some(PyUnitLit()(pos))
-    else if matchesPySymbol(sym, pyDefn.PyDynamic_updateDynamic, "scala.python.PyDynamic.updateDynamic") then
+    else if matchesPySymbol(sym, pyDefn.PyDynamic_updateDynamic) then
       app.args match
         case nameArg :: valueArg :: Nil =>
           Some(genDynamicSetAttr(
@@ -2656,13 +2756,13 @@ private class PyCodeGen()(using genCtx: Context):
           ))
         case _ =>
           Some(PyUnitLit()(pos))
-    else if matchesPySymbol(sym, pyDefn.DynamicModule_module, "scala.python.Dynamic.module") then
+    else if matchesPySymbol(sym, pyDefn.DynamicModule_module) then
       app.args match
         case moduleArg :: Nil =>
           Some(genDynamicModuleRef(moduleArg, encoding.encodeType(app.tpe), pos))
         case _ =>
           Some(PyUnitLit()(pos))
-    else if matchesPySymbol(sym, pyDefn.DynamicModule_attr, "scala.python.Dynamic.attr") then
+    else if matchesPySymbol(sym, pyDefn.DynamicModule_attr) then
       app.args match
         case pathArg :: Nil =>
           Some(genDynamicBuiltinsAttr(pathArg, encoding.encodeType(app.tpe), pos))
@@ -2824,8 +2924,8 @@ private class PyCodeGen()(using genCtx: Context):
       case other =>
         List(other)
 
-  private def matchesPySymbol(sym: Symbol, expected: Symbol, expectedFullName: String): Boolean =
-    sym == expected || sym.showFullName == expectedFullName
+  private def matchesPySymbol(sym: Symbol, expected: Symbol): Boolean =
+    sym.exists && sym == expected
 
   private def literalString(tree: Tree): Option[String] =
     tree match

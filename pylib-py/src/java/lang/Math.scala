@@ -416,27 +416,32 @@ object Math:
 
   // ---- floorDiv / floorMod --------------------------------------
   //
-  // Well-defined for negative operands: result is always congruent
-  // with the classical mathematical definition (quotient rounded
-  // toward -infinity, remainder non-negative when divisor is positive).
-  //
-  // Implementation note: the Python backend currently lowers Scala `/`
-  // and `%` on integers to Python `//` and `%`, which already follow
-  // the floor convention. Therefore `floorDiv` / `floorMod` can simply
-  // use the native operators — no need for the scala-js post-correction
-  // (which was needed because JVM `/` truncates toward zero). If the
-  // backend later switches to Java-style truncation, these bodies must
-  // be rewritten to the scala-js post-correction algorithm:
-  //   val quot = a / b
-  //   if ((a ^ b) >= 0 || quot * b == a) quot else quot - 1
+  // Well-defined for negative operands: quotient rounds toward
+  // -infinity and remainder has the SIGN OF THE DIVISOR (matches
+  // the JVM contract). The Python backend now lowers Scala `/` and
+  // `%` on integers to Java-truncation helpers (`_scpy_int_trunc_*`),
+  // so `floorDiv`/`floorMod` need the explicit post-correction.
+  // The algorithm (from scala-js) corrects the truncated quotient
+  // when the operands have opposite signs and the truncation lost
+  // a non-zero remainder.
 
-  @inline def floorDiv(a: scala.Int, b: scala.Int): scala.Int = a / b
-  @inline def floorDiv(a: scala.Long, b: scala.Int): scala.Long = a / b.toLong
-  @inline def floorDiv(a: scala.Long, b: scala.Long): scala.Long = a / b
+  @inline def floorDiv(a: scala.Int, b: scala.Int): scala.Int =
+    val quot = a / b
+    if (a ^ b) >= 0 || quot * b == a then quot else quot - 1
+  @inline def floorDiv(a: scala.Long, b: scala.Int): scala.Long =
+    floorDiv(a, b.toLong)
+  @inline def floorDiv(a: scala.Long, b: scala.Long): scala.Long =
+    val quot = a / b
+    if (a ^ b) >= 0L || quot * b == a then quot else quot - 1L
 
-  @inline def floorMod(a: scala.Int, b: scala.Int): scala.Int = a % b
-  @inline def floorMod(a: scala.Long, b: scala.Int): scala.Int = (a % b.toLong).toInt
-  @inline def floorMod(a: scala.Long, b: scala.Long): scala.Long = a % b
+  @inline def floorMod(a: scala.Int, b: scala.Int): scala.Int =
+    val rem = a % b
+    if rem == 0 || (a ^ b) >= 0 then rem else rem + b
+  @inline def floorMod(a: scala.Long, b: scala.Int): scala.Int =
+    floorMod(a, b.toLong).toInt
+  @inline def floorMod(a: scala.Long, b: scala.Long): scala.Long =
+    val rem = a % b
+    if rem == 0L || (a ^ b) >= 0L then rem else rem + b
 
   // ---- IEEEremainder --------------------------------------------
 

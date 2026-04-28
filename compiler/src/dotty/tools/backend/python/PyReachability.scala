@@ -83,6 +83,66 @@ object PyReachability:
   ): Result =
     new Analyzer(userClasses, supportClasses, mainEntry).run()
 
+  /** Allow-list of Python dunder method *simple names* that must remain
+   *  reachable on every instantiated class. The runtime / Python data
+   *  model invokes these implicitly — never through a PyIR call edge —
+   *  so the analyzer would otherwise prune them.
+   *
+   *  Scope notes:
+   *
+   *    - `__init__` is also covered by the `Constructor` namespace
+   *      branch, but it's listed here for completeness.
+   *    - `__eq__` / `__ne__` / `__hash__` are kept because Python's
+   *      data model invokes them for `==`, `!=`, dict / set membership,
+   *      and `hash()`. The emitter additionally rebinds
+   *      `__hash__ = Ancestor.__hash__` for any class that defines
+   *      `__eq__` but not `__hash__`.
+   *    - `__str__` / `__repr__` are kept because `_scpy_to_str` /
+   *      Python's default printer call them for `String.valueOf` and
+   *      diagnostic output (`print(x)`, `repr(x)`).
+   *    - `__iter__`, `__next__`, `__len__`, `__getitem__`,
+   *      `__setitem__`, `__contains__`, `__bool__` realize iteration,
+   *      sequence, and truthiness protocols used by user-side code that
+   *      writes Pythonic loops over Scala collections wired through
+   *      facades.
+   *    - `__call__` is kept because closures and `FunctionN` instances
+   *      route `f(args)` through `__call__`.
+   *    - `__enter__` / `__exit__` realize the `with` statement protocol
+   *      for context managers (`AutoCloseable`-style facades).
+   *    - The arithmetic dunders (`__add__` etc.) cover BigInteger /
+   *      BigDecimal-style operator-overloading facades in pylib.
+   *
+   *  Excluded on purpose: `__new__`, `__class__`, `__mro__`, `__name__`,
+   *  `__getattr__`, `__setattr__`, `__getattribute__`, `__slots__`,
+   *  `__main__`. Those are either Python-internal (handled by the
+   *  prelude) or never emitted from Scala source. */
+  val KeptDunders: Set[String] = Set(
+    "__init__",
+    // comparison / hash
+    "__eq__", "__ne__", "__hash__",
+    "__lt__", "__le__", "__gt__", "__ge__",
+    // string conversion
+    "__str__", "__repr__",
+    // iteration / sequence
+    "__iter__", "__next__", "__len__",
+    "__getitem__", "__setitem__", "__delitem__",
+    "__contains__", "__reversed__",
+    // truthiness / call
+    "__bool__", "__call__",
+    // context manager
+    "__enter__", "__exit__",
+    // arithmetic (pylib BigInteger / BigDecimal)
+    "__add__", "__sub__", "__mul__",
+    "__truediv__", "__floordiv__", "__mod__", "__divmod__",
+    "__pow__", "__lshift__", "__rshift__",
+    "__and__", "__or__", "__xor__",
+    "__neg__", "__pos__", "__abs__", "__invert__",
+    // numeric conversion
+    "__int__", "__float__", "__index__",
+    // copy / pickle
+    "__copy__", "__deepcopy__",
+  )
+
   // -------------------------------------------------------------------
   // Internal worklist tokens
   // -------------------------------------------------------------------
@@ -245,10 +305,15 @@ object PyReachability:
       enqueue(Work.ReachClass(cls))
       // Three classes of methods must be kept on any instantiated class
       // even if no Scala-side call site mentions them:
-      //   1. Every constructor — the emitter's runtime constructor
-      //      dispatcher (`PyIREmitter.emitConstructorDispatcher`) scans
-      //      every ctor of the class, so dropping one can misroute a
-      //      `new X(...)` matching call somewhere else.
+      //   1. The no-arg constructor (signature `()V`) — the emitter's
+      //      synthesized `__init__(self)` delegates to it for module-
+      //      class lazy initialization, and Python's data model invokes
+      //      `cls()` calls through `__init__` at any unanticipated
+      //      `cls()` site. Other ctor overloads are NOT auto-rooted: they
+      //      must be reached by an explicit `PyNew` (which logs the
+      //      specific encoded ctor) or by `super.<init>(...)` /
+      //      `this(...)` call sites. This is what enables per-constructor
+      //      DCE; runtime arity / type-guard dispatch is gone.
       //   2. Every Python dunder (`__call__`, `__str__`, `__iter__`,
       //      `__enter__`, comparison hooks, etc.). Those are invoked
       //      by the Python runtime — not by any tree we walk — so
@@ -263,7 +328,9 @@ object PyReachability:
         for m <- cd.methods do
           val ns    = m.flags.namespace
           val simp  = m.name.simple.name
-          if ns == PyMemberNamespace.Constructor || isPythonDunder(simp) || isScalaToString(m.name) then
+          val isNoArgCtor =
+            ns == PyMemberNamespace.Constructor && m.name.paramTypeRefs.isEmpty
+          if isNoArgCtor || isPythonDunder(simp) || isScalaToString(m.name) then
             enqueue(Work.AnalyzeMethod(cls, m.name))
       }
       // Replay every accumulated virtual-call log on the new vtable.
@@ -412,7 +479,25 @@ object PyReachability:
     /** Walk `start`'s superchain (including `start`) and return the
      *  first class that defines an instance method with name `m`.
      *  Returns `None` if the method is resolved only via a
-     *  runtime-provided ancestor or isn't in the bundle. */
+     *  runtime-provided ancestor or isn't in the bundle.
+     *
+     *  Resolution order mirrors typical JVM virtual dispatch:
+     *
+     *    1. Walk the superclass chain from `start` upward. The first
+     *       class that locally declares `m` wins.
+     *    2. If no class on the chain declares `m`, fall back to
+     *       interface-default lookup. We walk `start`'s interfaces
+     *       *transitively*: each interface's own super-interfaces are
+     *       searched too, with cycle protection via a `seen` set.
+     *
+     *  Walking interface-of-interface chains is important for
+     *  default-method discovery in deeply layered hierarchies (e.g.
+     *  `LinearSeqOps` -> `SeqOps` -> `IterableOps`); without the
+     *  transitive walk, an interface default living two hops away
+     *  would never be linked, even though the JVM would dispatch to
+     *  it. The transitive walk is breadth-first so the closest default
+     *  wins; cycles (mutual-recursive interface tangles introduced by
+     *  ScalaPy support libraries) are guarded by `seen`. */
     private def resolveInstanceMethod(
         start:  PyClassName,
         m:      PyMethodName
@@ -429,19 +514,31 @@ object PyReachability:
               case None    => cur = cd.superClass
           case None =>
             cur = None
-      // Fall back to interface defaults directly declared on `start`.
-      // We do not walk interface-of-interface chains — `reachClass`
-      // has already pulled those in, and deeper interface defaults
-      // are found via their own concrete-subclass dispatch.
+      // Fall back to a transitive interface-default lookup. BFS through
+      // `start`'s interface graph (interface-of-interface chains
+      // included) with cycle protection. We seed the queue from every
+      // class on the superclass chain so super-classes' interfaces are
+      // also reachable, matching JVM virtual-dispatch semantics for
+      // default methods.
       if found.isEmpty then
-        classByName.get(start).foreach { cd =>
-          val it = cd.interfaces.iterator.flatMap(classByName.get)
-          while it.hasNext && found.isEmpty do
-            val ifd = it.next()
-            ifd.methods.find(md => md.name == m && isInstanceMethod(md.flags.namespace)).foreach { _ =>
-              found = Some((ifd.name, m))
+        val seen = mutable.HashSet.empty[PyClassName]
+        val queue = mutable.ArrayDeque.empty[PyClassName]
+        var hop: Option[PyClassName] = Some(start)
+        while hop.isDefined do
+          val cn = hop.get
+          classByName.get(cn) match
+            case Some(cd) =>
+              cd.interfaces.foreach(queue += _)
+              hop = cd.superClass
+            case None => hop = None
+        while queue.nonEmpty && found.isEmpty do
+          val ifaceName = queue.removeHead()
+          if seen.add(ifaceName) then
+            classByName.get(ifaceName).foreach { ifd =>
+              ifd.methods.find(md => md.name == m && isInstanceMethod(md.flags.namespace)) match
+                case Some(_) => found = Some((ifd.name, m))
+                case None    => ifd.interfaces.foreach(queue += _)
             }
-        }
       found
 
     private def isInstanceMethod(ns: PyMemberNamespace): Boolean =
@@ -461,10 +558,27 @@ object PyReachability:
             case Some(c) if c.kind == PyClassKind.ModuleClass => Some(underscored)
             case _ => None
 
-    /** Python dunder predicate: `__foo__` with length ≥ 5. Mirrors the
-     *  convention in `PyNames.PyMethodName.isDunder`. */
+    /** Python dunder predicate: `__foo__` with length ≥ 5 AND in the
+     *  explicit allow-list of dunders the Scala-to-Python emission can
+     *  actually produce at user-class scope. Mirrors the convention in
+     *  `PyNames.PyMethodName.isDunder` for the shape, but is stricter
+     *  about *which* dunders we keep alive on every instantiated class.
+     *
+     *  Why an explicit allow-list and not "any dunder":
+     *
+     *    * `PyMethodName.encoded` only renders a Scala-source method as
+     *      a bare dunder when the source author explicitly names it
+     *      `__foo__`. The set of names actually used is small.
+     *    * Constructors are handled by the `Constructor` namespace
+     *      branch, not by name match.
+     *    * `__getattr__`, `__setattr__`, `__getattribute__`, `__class__`,
+     *      `__mro__`, `__name__`, `__new__` are Python-internal and
+     *      never emitted as Scala-defined methods we'd want to keep.
+     *
+     *  See [[PyReachability.KeptDunders]] for the canonical list and
+     *  the rationale for each entry. */
     private def isPythonDunder(name: String): Boolean =
-      name.length >= 5 && name.startsWith("__") && name.endsWith("__")
+      KeptDunders.contains(name)
 
     private def isScalaToString(name: PyMethodName): Boolean =
       name.simple.name == "toString" &&
@@ -485,7 +599,6 @@ object PyReachability:
       case t: PyAssign         => walkTree(t.lhs); walkTree(t.rhs)
       case t: PyReturn         => walkTree(t.value)
       case t: PyWhile          => walkTree(t.cond); walkTree(t.body)
-      case t: PyForEach        => walkTree(t.iterable); walkTree(t.body)
       case _: PySkip           => ()
       case t: PyIf             => walkTree(t.cond); walkTree(t.thenp); walkTree(t.elsep)
       case t: PyTryCatch       => walkTree(t.block); walkTree(t.handler)
@@ -619,7 +732,6 @@ object PyReachability:
         walkTree(t.lhs); walkTree(t.rhs)
 
       case t: PyClosure =>
-        t.captureValues.foreach(walkTree)
         walkTree(t.body)
 
       case t: PyClassOf =>

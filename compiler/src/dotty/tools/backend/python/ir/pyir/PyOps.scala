@@ -46,27 +46,10 @@ enum PyUnaryCode:
   case DoubleToFloat
 
   // Primitives & runtime
-  case StringLength
   case ArrayLength
-  case CheckNotNull
-  case GetClass
-  case IdentityHashCode
-  case Clone
 
   // Exception wrapping
-  case WrapAsThrowable
-  case UnwrapFromThrowable
   case Throw
-
-  // Float bit reinterpretation
-  case FloatToBits, FloatFromBits
-  case DoubleToBits, DoubleFromBits
-
-  // Class reflection
-  case ClassGetName
-  case ClassIsPrimitive
-  case ClassIsInterface
-  case ClassIsArray
 
 object PyUnaryCode:
   /** Result type of the given unary op code. */
@@ -77,27 +60,18 @@ object PyUnaryCode:
        | CharToInt | ByteToInt | ShortToInt
        | IntToChar | IntToByte | IntToShort
        | LongToInt | FloatToInt | DoubleToInt
-       | StringLength | ArrayLength | IdentityHashCode
-       | FloatToBits => PyIntType
+       | ArrayLength => PyIntType
 
     case LongNeg | LongNot
-       | IntToLong | FloatToLong | DoubleToLong
-       | DoubleToBits => PyLongType
+       | IntToLong | FloatToLong | DoubleToLong => PyLongType
 
     case FloatNeg | IntToFloat | LongToFloat
-       | DoubleToFloat | FloatFromBits => PyFloatType
+       | DoubleToFloat => PyFloatType
 
     case DoubleNeg | IntToDouble | LongToDouble
-       | FloatToDouble | DoubleFromBits => PyDoubleType
-
-    case CheckNotNull | Clone
-       | WrapAsThrowable | UnwrapFromThrowable => PyAnyType
+       | FloatToDouble => PyDoubleType
 
     case Throw => PyNothingType
-
-    case GetClass => PyClassType(PyClassName.ClassClass)
-    case ClassGetName => PyStringType
-    case ClassIsPrimitive | ClassIsInterface | ClassIsArray => PyBooleanType
 
 // ===================================================================
 //  Binary operation codes
@@ -113,16 +87,12 @@ enum PyBinaryCode:
   case IntOr, IntAnd, IntXor
   case IntShl, IntShr, IntUShr
   case IntEq, IntNe, IntLt, IntLe, IntGt, IntGe
-  case IntUDiv, IntURem
-  case IntULt, IntULe, IntUGt, IntUGe
 
   // Long arithmetic
   case LongAdd, LongSub, LongMul, LongDiv, LongMod
   case LongOr, LongAnd, LongXor
   case LongShl, LongShr, LongUShr
   case LongEq, LongNe, LongLt, LongLe, LongGt, LongGe
-  case LongUDiv, LongURem
-  case LongULt, LongULe, LongUGt, LongUGe
 
   // Float arithmetic (IEEE-754 single-precision)
   case FloatAdd, FloatSub, FloatMul, FloatDiv, FloatMod
@@ -133,13 +103,10 @@ enum PyBinaryCode:
   case DoubleEq, DoubleNe, DoubleLt, DoubleLe, DoubleGt, DoubleGe
 
   // String
-  case StringConcat, StringCharAt, StringEq
+  case StringConcat, StringEq
 
   // Reference identity
   case RefEq, RefNe
-
-  // Class reflection
-  case ClassIsInstance, ClassIsAssignableFrom, ClassCast, ClassNewArray
 
 object PyBinaryCode:
   /** Result type of the given binary op code. */
@@ -147,26 +114,21 @@ object PyBinaryCode:
     // Boolean results
     case BoolEq | BoolNe | BoolOr | BoolAnd
        | IntEq | IntNe | IntLt | IntLe | IntGt | IntGe
-       | IntULt | IntULe | IntUGt | IntUGe
        | LongEq | LongNe | LongLt | LongLe | LongGt | LongGe
-       | LongULt | LongULe | LongUGt | LongUGe
        | FloatEq | FloatNe | FloatLt | FloatLe | FloatGt | FloatGe
        | DoubleEq | DoubleNe | DoubleLt | DoubleLe | DoubleGt | DoubleGe
        | StringEq
-       | RefEq | RefNe
-       | ClassIsInstance | ClassIsAssignableFrom => PyBooleanType
+       | RefEq | RefNe => PyBooleanType
 
     // Int results
     case IntAdd | IntSub | IntMul | IntDiv | IntMod
        | IntOr | IntAnd | IntXor
-       | IntShl | IntShr | IntUShr
-       | IntUDiv | IntURem => PyIntType
+       | IntShl | IntShr | IntUShr => PyIntType
 
     // Long results
     case LongAdd | LongSub | LongMul | LongDiv | LongMod
        | LongOr | LongAnd | LongXor
-       | LongShl | LongShr | LongUShr
-       | LongUDiv | LongURem => PyLongType
+       | LongShl | LongShr | LongUShr => PyLongType
 
     // Float / Double results
     case FloatAdd | FloatSub | FloatMul | FloatDiv | FloatMod => PyFloatType
@@ -174,17 +136,18 @@ object PyBinaryCode:
 
     // String
     case StringConcat => PyStringType
-    case StringCharAt => PyCharType
-
-    // Class
-    case ClassCast => PyAnyType
-    case ClassNewArray => PyArrayType
 
 // ===================================================================
 //  Bit-packed flag classes
 // ===================================================================
 
-/** Call-site flags for `PyApply*` nodes. */
+/** Call-site flags for `PyApply*` nodes.
+ *
+ *  TODO: currently always `empty`. `GenPython` never sets the bits and
+ *  the linker / emitter / reachability never read them. Either wire the
+ *  private/constructor metadata or drop the field from `PyApply*` and
+ *  delete this class. Kept for now to avoid churning the on-disk format
+ *  while a proper use case is decided. */
 final class PyApplyFlags(val bits: Int) extends AnyVal:
   def isPrivate: Boolean     = (bits & PyApplyFlags.PrivateBit) != 0
   def isConstructor: Boolean = (bits & PyApplyFlags.ConstructorBit) != 0

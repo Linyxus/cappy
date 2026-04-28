@@ -324,7 +324,6 @@ object PyIRSerializer:
       case _: PyAssign          => TagPyAssign
       case _: PyReturn          => TagPyReturn
       case _: PyWhile           => TagPyWhile
-      case _: PyForEach         => TagPyForEach
       case _: PySkip            => TagPySkip
       case _: PyIf              => TagPyIf
       case _: PyTryCatch        => TagPyTryCatch
@@ -385,11 +384,6 @@ object PyIRSerializer:
 
       case n: PyWhile =>
         writeTree(n.cond)
-        writeTree(n.body)
-
-      case n: PyForEach =>
-        writeString(n.varName.name)
-        writeTree(n.iterable)
         writeTree(n.body)
 
       case _: PySkip => ()
@@ -555,14 +549,10 @@ object PyIRSerializer:
 
       // ----- Closures / misc -----
       case n: PyClosure =>
-        writeNat(n.captureParams.size)
-        n.captureParams.foreach(writeParamDef)
         writeNat(n.params.size)
         n.params.foreach(writeParamDef)
         writeType(n.resultType)
         writeTree(n.body)
-        writeNat(n.captureValues.size)
-        n.captureValues.foreach(writeTree)
 
       case n: PyClassOf =>
         writeTypeRefRef(n.typeRef)

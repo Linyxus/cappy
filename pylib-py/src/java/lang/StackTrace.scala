@@ -62,7 +62,8 @@ private[lang] object StackTrace:
 
   private def isCompilerInventedName(methodName: String): scala.Boolean =
     methodName.startsWith("_scpy_ctor_") ||
-      methodName.startsWith("_init$arity")
+      methodName.startsWith("_init$arity") ||
+      methodName == "_scpy_new"
 
   /** Is `(owner, methodName)` one of the fixed capture-scaffold frames?
    *

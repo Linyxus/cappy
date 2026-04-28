@@ -20,7 +20,33 @@ object PyIRDeserializer:
 
   def deserialize(bytes: Array[Byte]): CompilationUnit =
     val d = new Deserializer(bytes)
-    d.run()
+    try d.run()
+    catch
+      case e: PyIRException => throw e
+      case e: ArrayIndexOutOfBoundsException =>
+        throw new CorruptIRException(
+          s"PyIR truncated or out-of-range read at offset ${d.currentOffset} of ${bytes.length}: ${e.getMessage}",
+          e)
+      case e: IndexOutOfBoundsException =>
+        throw new CorruptIRException(
+          s"PyIR out-of-range read at offset ${d.currentOffset} of ${bytes.length}: ${e.getMessage}",
+          e)
+      case e: java.nio.BufferUnderflowException =>
+        throw new CorruptIRException(
+          s"PyIR buffer underflow at offset ${d.currentOffset} of ${bytes.length}",
+          e)
+      case e: NegativeArraySizeException =>
+        throw new CorruptIRException(
+          s"PyIR negative array size at offset ${d.currentOffset} of ${bytes.length}: ${e.getMessage}",
+          e)
+      case e: IllegalArgumentException =>
+        throw new CorruptIRException(
+          s"PyIR malformed structure at offset ${d.currentOffset} of ${bytes.length}: ${e.getMessage}",
+          e)
+      case e: NoSuchElementException =>
+        throw new CorruptIRException(
+          s"PyIR malformed structure at offset ${d.currentOffset} of ${bytes.length}: ${e.getMessage}",
+          e)
 
   def deserialize(buf: ByteBuffer): CompilationUnit =
     if buf.hasArray && buf.arrayOffset() == 0 && buf.position() == 0
@@ -46,6 +72,60 @@ object PyIRDeserializer:
     private var typeRefPool:    Array[PyTypeRef]    = uninitialized
     private var methodNamePool: Array[PyMethodName] = uninitialized
     private var positionPool:   Array[PyPosition]   = uninitialized
+
+    /** Best-effort read-cursor position, used to enrich error messages
+     *  in the top-level catch-all. */
+    def currentOffset: Int = reader.currentAddr.index
+
+    // -------------------------------------------------------------
+    //  Bounds-checked helpers
+    // -------------------------------------------------------------
+
+    private def requireRemaining(n: Int, what: String): Unit =
+      if n < 0 then
+        throw new CorruptIRException(
+          s"PyIR negative length $n while reading $what at offset $currentOffset")
+      val remaining = bytes.length - currentOffset
+      if n > remaining then
+        throw new CorruptIRException(
+          s"PyIR truncated while reading $what: need $n bytes, have $remaining at offset $currentOffset")
+
+    private def checkedPoolIndex(idx: Int, poolName: String, size: Int): Int =
+      if idx < 0 || idx >= size then
+        throw new CorruptIRException(
+          s"PyIR $poolName index $idx out of range [0, $size) at offset $currentOffset")
+      idx
+
+    private def readPoolNat(poolName: String, size: Int): Int =
+      checkedPoolIndex(reader.readNat(), poolName, size)
+
+    private def lookupString(idx: Int): String =
+      stringPool(checkedPoolIndex(idx, "string pool", stringPool.length))
+
+    private def lookupClassName(idx: Int): PyClassName =
+      classNamePool(checkedPoolIndex(idx, "class-name pool", classNamePool.length))
+
+    private def lookupTypeRef(idx: Int): PyTypeRef =
+      typeRefPool(checkedPoolIndex(idx, "type-ref pool", typeRefPool.length))
+
+    private def lookupMethodName(idx: Int): PyMethodName =
+      methodNamePool(checkedPoolIndex(idx, "method-name pool", methodNamePool.length))
+
+    private def lookupPosition(idx: Int): PyPosition =
+      positionPool(checkedPoolIndex(idx, "position pool", positionPool.length))
+
+    private def boundedListSize(n: Int, what: String): Int =
+      // Reject negative or absurd counts before allocating a List of that
+      // length. The fast-path bound is "must fit in the remaining bytes",
+      // assuming each element costs at least one byte.
+      if n < 0 then
+        throw new CorruptIRException(
+          s"PyIR negative count $n for $what at offset $currentOffset")
+      val remaining = bytes.length - currentOffset
+      if n > remaining then
+        throw new CorruptIRException(
+          s"PyIR implausible count $n for $what at offset $currentOffset (only $remaining bytes left)")
+      n
 
     // -------------------------------------------------------------
     //  Top-level entry
@@ -78,12 +158,15 @@ object PyIRDeserializer:
           val kind = classKindFromTag(reader.readByte().toByte)
           Some((cn, kind))
 
-      val classCount = reader.readNat()
+      val classCount = boundedListSize(reader.readNat(), "class list")
       val classes    = List.fill(classCount)(readClassDef())
 
       CompilationUnit(classes, mainEntry)
 
     private def readBE64At(idx: Int): Long =
+      if idx < 0 || idx + 8 > bytes.length then
+        throw new CorruptIRException(
+          s"PyIR cannot read 8 bytes at offset $idx (file length ${bytes.length})")
       var x = 0L
       var i = 0
       while i < 8 do
@@ -111,8 +194,16 @@ object PyIRDeserializer:
         throw new IncompatibleIRVersionException(
           s"PyIR minor version $major.$minor is newer than this reader (${PyIRFormat.MajorVersion}.${PyIRFormat.MinorVersion})")
 
-      // Compiler hash - currently not validated; downstream callers may
-      // log a warning if they wish.
+      // Compiler hash - read but currently not validated.
+      //
+      // TODO: verify against `TastyHash.pjwHash64(versionString)` once we
+      // can be sure all on-disk `.pyir` artifacts (support libs, user
+      // builds, harness fixtures) are produced by the same compiler
+      // build that reads them. Strict verification today would reject
+      // any cross-build cache hit even when the format is fully
+      // compatible. The trailer hash already detects byte-level
+      // corruption; this field is reserved for cross-version skew.
+      requireRemaining(8, "compiler hash")
       reader.readUncompressedLong()
       readBE16() // Flags - reserved
 
@@ -133,24 +224,33 @@ object PyIRDeserializer:
     // -------------------------------------------------------------
 
     private def readStringPool(): Unit =
-      val n = reader.readNat()
+      val n = boundedListSize(reader.readNat(), "string pool")
       stringPool = new Array[String](n)
       var i = 0
       while i < n do
-        stringPool(i) = reader.readUtf8()
+        // Read the UTF-8 length first, validate it against remaining
+        // bytes, then read the payload. We cannot use `reader.readUtf8`
+        // directly because it would call `readBytes` with an
+        // unvalidated length and trigger `ArrayIndexOutOfBoundsException`
+        // / `NegativeArraySizeException` on truncated input.
+        val len = reader.readNat()
+        requireRemaining(len, s"string pool entry $i ($len bytes)")
+        stringPool(i) =
+          if len == 0 then ""
+          else new String(reader.readBytes(len), java.nio.charset.StandardCharsets.UTF_8)
         i += 1
 
     private def readClassNamePool(): Unit =
-      val n = reader.readNat()
+      val n = boundedListSize(reader.readNat(), "class-name pool")
       classNamePool = new Array[PyClassName](n)
       var i = 0
       while i < n do
         val sIdx = reader.readNat()
-        classNamePool(i) = PyClassName(stringPool(sIdx))
+        classNamePool(i) = PyClassName(lookupString(sIdx))
         i += 1
 
     private def readTypeRefPool(): Unit =
-      val n = reader.readNat()
+      val n = boundedListSize(reader.readNat(), "type-ref pool")
       typeRefPool = new Array[PyTypeRef](n)
       var i = 0
       while i < n do
@@ -160,9 +260,9 @@ object PyIRDeserializer:
             val pt = primFromTag(reader.readByte().toByte)
             PyPrimRef(pt)
           case TagPyClassRef =>
-            PyClassRef(classNamePool(reader.readNat()))
+            PyClassRef(lookupClassName(reader.readNat()))
           case TagPyArrayRef =>
-            val baseIdx = reader.readNat()
+            val baseIdx = checkedPoolIndex(reader.readNat(), "type-ref pool", i)
             val dims    = reader.readNat()
             PyArrayRef(typeRefPool(baseIdx), dims)
           case _ =>
@@ -171,24 +271,27 @@ object PyIRDeserializer:
         i += 1
 
     private def readMethodNamePool(): Unit =
-      val n = reader.readNat()
+      val n = boundedListSize(reader.readNat(), "method-name pool")
       methodNamePool = new Array[PyMethodName](n)
       var i = 0
       while i < n do
-        val simpleStr = stringPool(reader.readNat())
-        val paramN    = reader.readNat()
-        val params    = List.fill(paramN)(typeRefPool(reader.readNat()))
-        val result    = typeRefPool(reader.readNat())
+        val simpleStr = lookupString(reader.readNat())
+        val paramN    = boundedListSize(reader.readNat(), "method-name params")
+        val params    = List.fill(paramN)(lookupTypeRef(reader.readNat()))
+        val result    = lookupTypeRef(reader.readNat())
         methodNamePool(i) = PyMethodName(PySimpleMethodName(simpleStr), params, result)
         i += 1
 
     private def readPositionPool(): Unit =
-      val n = reader.readNat()
+      val n = boundedListSize(reader.readNat(), "position pool")
+      if n < 1 then
+        throw new CorruptIRException(
+          s"PyIR position pool must have at least 1 entry (NoPosition), got $n")
       positionPool = new Array[PyPosition](n)
       positionPool(0) = PyPosition.NoPosition
       var i = 1
       while i < n do
-        val src  = stringPool(reader.readNat())
+        val src  = lookupString(reader.readNat())
         val line = reader.readNat()
         val col  = reader.readNat()
         positionPool(i) = PyPosition(src, line, col)
@@ -198,11 +301,11 @@ object PyIRDeserializer:
     //  Index-resolving helpers used by body readers
     // -------------------------------------------------------------
 
-    private def readString(): String       = stringPool(reader.readNat())
-    private def readClassNameRef(): PyClassName  = classNamePool(reader.readNat())
-    private def readTypeRefRef(): PyTypeRef = typeRefPool(reader.readNat())
-    private def readMethodNameRef(): PyMethodName = methodNamePool(reader.readNat())
-    private def readPosition(): PyPosition = positionPool(reader.readNat())
+    private def readString(): String              = lookupString(reader.readNat())
+    private def readClassNameRef(): PyClassName   = lookupClassName(reader.readNat())
+    private def readTypeRefRef(): PyTypeRef       = lookupTypeRef(reader.readNat())
+    private def readMethodNameRef(): PyMethodName = lookupMethodName(reader.readNat())
+    private def readPosition(): PyPosition        = lookupPosition(reader.readNat())
 
     private def readOptionalString(): PyOriginalName =
       if reader.readByte() == 0 then PyOriginalName.NoOriginalName
@@ -305,12 +408,6 @@ object PyIRDeserializer:
         val cond = readTree()
         val body = readTree()
         PyWhile(cond, body)(pos)
-
-      case TagPyForEach =>
-        val v    = PyLocalName(readString())
-        val it   = readTree()
-        val body = readTree()
-        PyForEach(v, it, body)(pos)
 
       case TagPySkip =>
         PySkip()(pos)
@@ -511,15 +608,11 @@ object PyIRDeserializer:
 
       // ----- Closures / misc -----
       case TagPyClosure =>
-        val capN     = reader.readNat()
-        val captures = List.fill(capN)(readParamDef())
         val pN       = reader.readNat()
         val params   = List.fill(pN)(readParamDef())
         val resTpe   = readType()
         val body     = readTree()
-        val cvN      = reader.readNat()
-        val cvs      = List.fill(cvN)(readTree())
-        PyClosure(captures, params, resTpe, body, cvs)(pos)
+        PyClosure(params, resTpe, body)(pos)
 
       case TagPyClassOf =>
         PyClassOf(readTypeRefRef())(pos)

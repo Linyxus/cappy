@@ -646,14 +646,14 @@ object PyIRRuntime:
        |    return None
        |
        |class _scpy_Object:
-       |    def getClass__Ljava_lang_Class(self):
+       |    def getClass__Ljava_dlang_dClass(self):
        |        return _scpy_class_of_instance(self)
        |
-       |    def toString__Ljava_lang_String(self):
-       |        return self.getClass__Ljava_lang_Class().getName__Ljava_lang_String() + "@" + _builtins.format(_scpy_identity_hash_code(self), "x")
+       |    def toString__Ljava_dlang_dString(self):
+       |        return self.getClass__Ljava_dlang_dClass().getName__Ljava_dlang_dString() + "@" + _builtins.format(_scpy_identity_hash_code(self), "x")
        |
        |    def __str__(self):
-       |        return self.toString__Ljava_lang_String()
+       |        return self.toString__Ljava_dlang_dString()
        |
        |    def wait__V(self):
        |        return _scpy_object_wait(self)
@@ -685,15 +685,15 @@ object PyIRRuntime:
        |        self._scpy_superclass_name = None
        |        self._scpy_interface_names = ()
        |
-       |    def getName__Ljava_lang_String(self):
+       |    def getName__Ljava_dlang_dString(self):
        |        return self._scpy_name
        |
-       |    def getSimpleName__Ljava_lang_String(self):
+       |    def getSimpleName__Ljava_dlang_dString(self):
        |        if self._scpy_kind == "array":
        |            comp = self._scpy_component_type
        |            if comp is None:
        |                return "[]"
-       |            return comp.getSimpleName__Ljava_lang_String() + "[]"
+       |            return comp.getSimpleName__Ljava_dlang_dString() + "[]"
        |        name = self._scpy_name
        |        # Strip the outer-class prefix (after the last `$`) for
        |        # nested types, then the package prefix (after the last `.`).
@@ -706,7 +706,7 @@ object PyIRRuntime:
        |                name = name[dot + 1:]
        |        return name
        |
-       |    def getSuperclass__Ljava_lang_Class(self):
+       |    def getSuperclass__Ljava_dlang_dClass(self):
        |        if self._scpy_kind == "primitive" or self._scpy_kind == "interface":
        |            return None
        |        if self._scpy_kind == "array":
@@ -717,7 +717,7 @@ object PyIRRuntime:
        |            return _scpy_class_of_name("java.lang.Object")
        |        return _scpy_class_of_name(self._scpy_superclass_name)
        |
-       |    def getInterfaces__ALjava_lang_Class(self):
+       |    def getInterfaces__ALjava_dlang_dClass(self):
        |        if self._scpy_kind == "array":
        |            names = ("java.lang.Cloneable", "java.io.Serializable")
        |        else:
@@ -727,7 +727,7 @@ object PyIRRuntime:
        |            [_scpy_class_of_name(name) for name in names],
        |        )
        |
-       |    def getComponentType__Ljava_lang_Class(self):
+       |    def getComponentType__Ljava_dlang_dClass(self):
        |        if self._scpy_kind == "array":
        |            return self._scpy_component_type
        |        return None
@@ -741,18 +741,18 @@ object PyIRRuntime:
        |    def isArray__Z(self):
        |        return self._scpy_kind == "array"
        |
-       |    def isInstance__Ljava_lang_Object__Z(self, value):
+       |    def isInstance__Ljava_dlang_dObject__Z(self, value):
        |        return _scpy_is_instance(value, self)
        |
-       |    def isAssignableFrom__Ljava_lang_Class__Z(self, other):
+       |    def isAssignableFrom__Ljava_dlang_dClass__Z(self, other):
        |        return _scpy_is_assignable(self, other)
        |
-       |    def getClassLoader__Ljava_lang_ClassLoader(self):
+       |    def getClassLoader__Ljava_dlang_dClassLoader(self):
        |        if self._scpy_kind == "primitive":
        |            return None
        |        return _scpy_system_class_loader
        |
-       |    def toString__Ljava_lang_String(self):
+       |    def toString__Ljava_dlang_dString(self):
        |        if self._scpy_kind == "primitive":
        |            return self._scpy_name
        |        if self._scpy_kind == "interface":
@@ -760,19 +760,19 @@ object PyIRRuntime:
        |        return "class " + self._scpy_name
        |
        |    def __str__(self):
-       |        return self.toString__Ljava_lang_String()
+       |        return self.toString__Ljava_dlang_dString()
        |
        |    def __getattr__(self, name):
        |        if name.startswith("getSimpleName"):
-       |            return self.getSimpleName__Ljava_lang_String
+       |            return self.getSimpleName__Ljava_dlang_dString
        |        if name.startswith("getName"):
-       |            return self.getName__Ljava_lang_String
+       |            return self.getName__Ljava_dlang_dString
        |        if name.startswith("getSuperclass"):
-       |            return self.getSuperclass__Ljava_lang_Class
+       |            return self.getSuperclass__Ljava_dlang_dClass
        |        if name.startswith("getInterfaces"):
-       |            return self.getInterfaces__ALjava_lang_Class
+       |            return self.getInterfaces__ALjava_dlang_dClass
        |        if name.startswith("getComponentType"):
-       |            return self.getComponentType__Ljava_lang_Class
+       |            return self.getComponentType__Ljava_dlang_dClass
        |        if name.startswith("isPrimitive"):
        |            return self.isPrimitive__Z
        |        if name.startswith("isInterface"):
@@ -780,13 +780,13 @@ object PyIRRuntime:
        |        if name.startswith("isArray"):
        |            return self.isArray__Z
        |        if name.startswith("isInstance"):
-       |            return self.isInstance__Ljava_lang_Object__Z
+       |            return self.isInstance__Ljava_dlang_dObject__Z
        |        if name.startswith("isAssignableFrom"):
-       |            return self.isAssignableFrom__Ljava_lang_Class__Z
+       |            return self.isAssignableFrom__Ljava_dlang_dClass__Z
        |        if name.startswith("getClassLoader"):
-       |            return self.getClassLoader__Ljava_lang_ClassLoader
+       |            return self.getClassLoader__Ljava_dlang_dClassLoader
        |        if name.startswith("toString"):
-       |            return self.toString__Ljava_lang_String
+       |            return self.toString__Ljava_dlang_dString
        |        raise AttributeError(name)
        |
        |Class = _scpy_Class
@@ -824,21 +824,22 @@ object PyIRRuntime:
        |        if exc_cls is None:
        |            exc_cls = globals().get("ClassNotFoundException")
        |        if exc_cls is not None:
-       |            # `_scpy_java_Throwable.__init__` (the synthesized one
-       |            # from `library-py`) only accepts the 4-arg shape
-       |            # `(message, cause, enableSuppression, writableStackTrace)`.
+       |            # 4-arg `Throwable(message, cause, enableSuppression,
+       |            # writableStackTrace)`. The Scala-emitted class's
+       |            # `__init__(self, *args)` arity-dispatches to the
+       |            # right ctor helper.
        |            raise exc_cls(name, None, True, True)
        |        # Last-resort fallback for tests where ClassNotFoundException
        |        # has been DCE'd out of the bundle.
        |        raise Exception("ClassNotFoundException: " + str(name))
        |
-       |    def forName__Ljava_lang_String__Ljava_lang_Class(self, name):
+       |    def forName__Ljava_dlang_dString__Ljava_dlang_dClass(self, name):
        |        return _scpy_ClassModule._scpy_resolve(name)
        |
-       |    def forName__Ljava_lang_String_Z_Ljava_lang_ClassLoader__Ljava_lang_Class(self, name, initialize, loader):
+       |    def forName__Ljava_dlang_dString_Z_Ljava_dlang_dClassLoader__Ljava_dlang_dClass(self, name, initialize, loader):
        |        return _scpy_ClassModule._scpy_resolve(name)
        |
-       |    def forName__Ljava_lang_String_Ljava_lang_Module__Ljava_lang_Class(self, name, module):
+       |    def forName__Ljava_dlang_dString_Ljava_dlang_dModule__Ljava_dlang_dClass(self, name, module):
        |        return _scpy_ClassModule._scpy_resolve(name)
        |
        |    def __getattr__(self, name):
@@ -875,10 +876,10 @@ object PyIRRuntime:
        |            return _scpy_Char(v)
        |        return v
        |
-       |    def getClass__Ljava_lang_Class(self):
+       |    def getClass__Ljava_dlang_dClass(self):
        |        return self._scpy_class
        |
-       |    def clone__Ljava_lang_Object(self):
+       |    def clone__Ljava_dlang_dObject(self):
        |        return _scpy_Array(self, self._scpy_class)
        |
        |def _scpy_class_of_name(name, kind="class"):
@@ -1123,7 +1124,7 @@ object PyIRRuntime:
        |#       ints / floats / bools are unboxed values, so we just route
        |#       to whichever unspecialized `apply__...` the subclass has.
        |#
-       |#   2. `apply__Ljava_lang_Object*__Ljava_lang_Object` — the boxed
+       |#   2. `apply__Ljava_dlang_dObject*__Ljava_dlang_dObject` — the boxed
        |#       erased form (`Function1[Any,Any]` post-erasure). When the
        |#       receiver is a primitive-specialized container like
        |#       `HashMap[Int, Int]` whose only `apply` shape is the
@@ -1209,7 +1210,7 @@ object PyIRRuntime:
        |class VarHandle(_scpy_Object):
        |    def __init__(self, field_name=None):
        |        self._scpy_field_name = field_name
-       |    def compareAndSet__Ljava_lang_Object_Ljava_lang_Object_Ljava_lang_Object__Z(self, target, expected, replacement):
+       |    def compareAndSet__Ljava_dlang_dObject_Ljava_dlang_dObject_Ljava_dlang_dObject__Z(self, target, expected, replacement):
        |        current = _builtins.getattr(target, self._scpy_field_name, None)
        |        if current is expected:
        |            _builtins.setattr(target, self._scpy_field_name, replacement)
@@ -1229,7 +1230,7 @@ object PyIRRuntime:
        |class Reference(_scpy_Object):
        |    def __init__(self, referent=None, *_args):
        |        self._scpy_ref_referent = referent
-       |    def get__Ljava_lang_Object(self):
+       |    def get__Ljava_dlang_dObject(self):
        |        return self._scpy_ref_referent
        |    def clear__V(self):
        |        self._scpy_ref_referent = None
@@ -1244,7 +1245,7 @@ object PyIRRuntime:
        |    pass
        |
        |class Mirror_Product(Mirror):
-       |    def fromProduct__Lscala_Product__O(self, product):
+       |    def fromProduct__Lscala_dProduct__O(self, product):
        |        return None
        |
        |class Mirror_Sum(Mirror):
@@ -1252,14 +1253,14 @@ object PyIRRuntime:
        |        return 0
        |
        |class Mirror_Singleton(Mirror_Product):
-       |    def fromProduct__Lscala_Product__Lscala_deriving_Mirror_Singleton(self, product):
+       |    def fromProduct__Lscala_dProduct__Lscala_dderiving_dMirror_uSingleton(self, product):
        |        return self
        |
        |class Mirror_SingletonProxy(Mirror_Product):
        |    def __init__(self, value):
        |        self.value = value
        |
-       |    def fromProduct__Lscala_Product__O(self, product):
+       |    def fromProduct__Lscala_dProduct__O(self, product):
        |        return self.value
        |
        |class Enum(Comparable, Serializable):
@@ -1267,22 +1268,22 @@ object PyIRRuntime:
        |        self._scpy_enum_name = name
        |        self._scpy_enum_ordinal = ordinal
        |
-       |    def name__Ljava_lang_String(self):
+       |    def name__Ljava_dlang_dString(self):
        |        return self._scpy_enum_name
        |
        |    def ordinal__I(self):
        |        return self._scpy_enum_ordinal
        |
-       |    def toString__Ljava_lang_String(self):
+       |    def toString__Ljava_dlang_dString(self):
        |        return self._scpy_enum_name
        |
-       |    def compareTo__Ljava_lang_Enum__I(self, other):
+       |    def compareTo__Ljava_dlang_dEnum__I(self, other):
        |        return self._scpy_enum_ordinal - other.ordinal__I()
        |
-       |    def compareTo__Ljava_lang_Object__I(self, other):
-       |        return self.compareTo__Ljava_lang_Enum__I(other)
+       |    def compareTo__Ljava_dlang_dObject__I(self, other):
+       |        return self.compareTo__Ljava_dlang_dEnum__I(other)
        |
-       |    def clone__Ljava_lang_Object(self):
+       |    def clone__Ljava_dlang_dObject(self):
        |        raise CloneNotSupportedException("Enums are not cloneable", None)
        |
        |    def finalize__V(self):
@@ -1295,24 +1296,24 @@ object PyIRRuntime:
        |    def __init__(self, parent=None):
        |        self._scpy_parent = parent
        |
-       |    def getParent__Ljava_lang_ClassLoader(self):
+       |    def getParent__Ljava_dlang_dClassLoader(self):
        |        return self._scpy_parent
        |
        |class ClassValue(_scpy_Object):
        |    def __init__(self):
        |        self._scpy_values = {}
        |
-       |    def computeValue__Ljava_lang_Class__Ljava_lang_Object(self, clazz):
+       |    def computeValue__Ljava_dlang_dClass__Ljava_dlang_dObject(self, clazz):
        |        return None
        |
-       |    def get__Ljava_lang_Class__Ljava_lang_Object(self, clazz):
+       |    def get__Ljava_dlang_dClass__Ljava_dlang_dObject(self, clazz):
        |        if clazz is None:
        |            raise NullPointerException()
        |        if clazz not in self._scpy_values:
-       |            self._scpy_values[clazz] = self.computeValue__Ljava_lang_Class__Ljava_lang_Object(clazz)
+       |            self._scpy_values[clazz] = self.computeValue__Ljava_dlang_dClass__Ljava_dlang_dObject(clazz)
        |        return self._scpy_values[clazz]
        |
-       |    def remove__Ljava_lang_Class__V(self, clazz):
+       |    def remove__Ljava_dlang_dClass__V(self, clazz):
        |        if clazz is None:
        |            raise NullPointerException()
        |        self._scpy_values.pop(clazz, None)
@@ -1347,7 +1348,7 @@ object PyIRRuntime:
        |    # The wrapper is what Scala emits when a `Char` is widened to
        |    # `Any`/`Object` (via `Char$.box` or `BoxesRunTime.boxToCharacter`).
        |    # Without it, `_scpy_to_str(120)` would render as `"120"` instead
-       |    # of `"x"`. The `toString__Ljava_lang_String` method below is the
+       |    # of `"x"`. The `toString__Ljava_dlang_dString` method below is the
        |    # hook that `_scpy_to_str` discovers via `getattr`.
        |    __slots__ = ()
        |
@@ -1382,7 +1383,7 @@ object PyIRRuntime:
        |        # Match `java.lang.Character.hashCode()`: the codepoint.
        |        return int(self)
        |
-       |    def toString__Ljava_lang_String(self):
+       |    def toString__Ljava_dlang_dString(self):
        |        return _builtins.chr(int(self))
        |
        |    def hashCode__I(self):
@@ -1391,13 +1392,13 @@ object PyIRRuntime:
        |    def charValue__C(self):
        |        return int(self)
        |
-       |    def equals__Ljava_lang_Object__Z(self, other):
+       |    def equals__Ljava_dlang_dObject__Z(self, other):
        |        return isinstance(other, _scpy_Char) and int(other) == int(self)
        |
-       |    def compareTo__Ljava_lang_Character__I(self, other):
+       |    def compareTo__Ljava_dlang_dCharacter__I(self, other):
        |        return int(self) - int(other)
        |
-       |    def compareTo__Ljava_lang_Object__I(self, other):
+       |    def compareTo__Ljava_dlang_dObject__I(self, other):
        |        return int(self) - int(other)
        |
        |def _scpy_box_char(value):
@@ -1515,7 +1516,20 @@ object PyIRRuntime:
        |        if not object.__getattribute__(self, "_scpy_init_started"):
        |            object.__setattr__(self, "_scpy_init_started", True)
        |            inst = object.__getattribute__(self, "_scpy_inst")
+       |            cls = object.__getattribute__(self, "_scpy_cls")
+       |            # Two-step init: first the synthesized no-arg
+       |            # `__init__` (JVM-style field zero-init), then the
+       |            # encoded no-arg ctor body that actually runs
+       |            # `<init>` for the module. Module classes always
+       |            # have a no-arg ctor; for the rare case where it has
+       |            # been DCE'd (no Scala-side reference), fall back to
+       |            # whatever ctor helper survives, alphabetically
+       |            # first.
        |            inst.__init__()
+       |            no_arg_helper = "_scpy_ctor_" + cls.__name__ + "__void__V"
+       |            ctor = getattr(cls, no_arg_helper, None)
+       |            if ctor is not None:
+       |                ctor(inst)
        |        return object.__getattribute__(self, "_scpy_inst")
        |    def __getattr__(self, name):
        |        # __getattr__ runs only when normal lookup fails — so the
@@ -1539,6 +1553,49 @@ object PyIRRuntime:
        |
        |def _scpy_lazy_module(cls):
        |    return _scpy_LazyModule(cls)
+       |
+       |# Constructor allocation + dispatch helper.
+       |#
+       |# `PyNew(Cls, ctor, args)` lowers at codegen time to
+       |#   `_scpy_new(Cls, Cls._scpy_ctor_<encoded-sig>, args...)`
+       |# so that the chosen constructor overload is fixed by symbol
+       |# identity in Scala source — no runtime arity / type-guard
+       |# dispatch. The flow is:
+       |#
+       |#   1. `cls.__new__(cls)` allocates a blank instance.
+       |#   2. The class's no-arg `__init__(self)` runs to perform JVM-
+       |#      style field zero-init (`null`/`0`/`false` defaults that
+       |#      the ctor body itself may not re-assign — e.g. `var x: T`
+       |#      with no explicit initializer would otherwise raise
+       |#      AttributeError on first read).
+       |#   3. The selected ctor helper runs the actual Scala `<init>`
+       |#      body on the now-zero-initialized instance, including any
+       |#      `super.<init>(...)` chain and `this.x = ...` assignments
+       |#      that the user wrote.
+       |#
+       |# Step 2 is required because Python attribute access raises rather
+       |# than returning a sentinel for missing attributes; Scala source
+       |# relies on JVM "every field starts as zero/null" semantics.
+       |def _scpy_new(cls, ctor, *args):
+       |    obj = cls.__new__(cls)
+       |    # Walk MRO root-first so each class's own zero-init runs. The
+       |    # generated `__init__(*args)` short-circuits on no args and
+       |    # just executes its per-class zero-init prefix (assigning
+       |    # JVM-default values to that class's own fields/lazy holders).
+       |    # We must visit every class in the chain because a subclass
+       |    # `__init__` only sets its OWN fields — Python doesn't auto-
+       |    # chain to parent `__init__`. Python built-in ancestors
+       |    # (`object`, `Exception`, …) are skipped via the
+       |    # `_scpy_full_name` marker; calling their `__init__` could
+       |    # set unwanted attributes (e.g. `Exception.args`).
+       |    for _scpy_klass in reversed(cls.__mro__):
+       |        if "_scpy_full_name" not in _scpy_klass.__dict__:
+       |            continue
+       |        _scpy_init = _scpy_klass.__dict__.get("__init__")
+       |        if _scpy_init is not None:
+       |            _scpy_init(obj)
+       |    ctor(obj, *args)
+       |    return obj
        |
        |# Closure carriers. Lambdas emitted from Scala source reach here via
        |# `_scpy_FnN(lambda ...)` for `N = 0..22`, with the arity-specific
@@ -1577,23 +1634,23 @@ object PyIRRuntime:
        |        def __init__(self, elem=default):
        |            self.elem = elem
        |        @staticmethod
-       |        def create__I__Lscala_runtime_IntRef(v): return _Ref(v)
+       |        def create__I__Lscala_druntime_dIntRef(v): return _Ref(v)
        |        @staticmethod
-       |        def create__J__Lscala_runtime_LongRef(v): return _Ref(v)
+       |        def create__J__Lscala_druntime_dLongRef(v): return _Ref(v)
        |        @staticmethod
-       |        def create__D__Lscala_runtime_DoubleRef(v): return _Ref(v)
+       |        def create__D__Lscala_druntime_dDoubleRef(v): return _Ref(v)
        |        @staticmethod
-       |        def create__F__Lscala_runtime_FloatRef(v): return _Ref(v)
+       |        def create__F__Lscala_druntime_dFloatRef(v): return _Ref(v)
        |        @staticmethod
-       |        def create__Z__Lscala_runtime_BooleanRef(v): return _Ref(v)
+       |        def create__Z__Lscala_druntime_dBooleanRef(v): return _Ref(v)
        |        @staticmethod
-       |        def create__B__Lscala_runtime_ByteRef(v): return _Ref(v)
+       |        def create__B__Lscala_druntime_dByteRef(v): return _Ref(v)
        |        @staticmethod
-       |        def create__C__Lscala_runtime_CharRef(v): return _Ref(v)
+       |        def create__C__Lscala_druntime_dCharRef(v): return _Ref(v)
        |        @staticmethod
-       |        def create__S__Lscala_runtime_ShortRef(v): return _Ref(v)
+       |        def create__S__Lscala_druntime_dShortRef(v): return _Ref(v)
        |        @staticmethod
-       |        def create__Ljava_lang_Object__Lscala_runtime_ObjectRef(v): return _Ref(v)
+       |        def create__Ljava_dlang_dObject__Lscala_druntime_dObjectRef(v): return _Ref(v)
        |    return _Ref
        |IntRef = _scpy_mk_ref(0)
        |LongRef = _scpy_mk_ref(0)
@@ -1712,7 +1769,7 @@ object PyIRRuntime:
        |        return "true"
        |    if x is False:
        |        return "false"
-       |    to_string = getattr(x, "toString__Ljava_lang_String", None)
+       |    to_string = getattr(x, "toString__Ljava_dlang_dString", None)
        |    if to_string is not None:
        |        return to_string()
        |    return _builtins.str(x)
@@ -1759,6 +1816,44 @@ object PyIRRuntime:
        |        raise ArithmeticException("/ by zero")
        |    quot = abs(a) // abs(b)
        |    return -quot if (a < 0) ^ (b < 0) else quot
+       |
+       |def _scpy_int_trunc_mod(a, b):
+       |    # Java/Scala-style integer modulo: the result has the sign of
+       |    # the dividend, matching `a - (a / b) * b` under truncation
+       |    # toward zero. Python's `%` is floor-modulo (sign of divisor),
+       |    # so we adjust manually for negative operands.
+       |    if b == 0:
+       |        raise ArithmeticException("/ by zero")
+       |    rem = abs(a) % abs(b)
+       |    return -rem if a < 0 else rem
+       |
+       |def _scpy_int_udiv32(a, b):
+       |    if b == 0:
+       |        raise ArithmeticException("/ by zero")
+       |    return ((a & 0xFFFFFFFF) // (b & 0xFFFFFFFF)) & 0xFFFFFFFF
+       |
+       |def _scpy_int_urem32(a, b):
+       |    if b == 0:
+       |        raise ArithmeticException("/ by zero")
+       |    return ((a & 0xFFFFFFFF) % (b & 0xFFFFFFFF)) & 0xFFFFFFFF
+       |
+       |def _scpy_int_udiv64(a, b):
+       |    if b == 0:
+       |        raise ArithmeticException("/ by zero")
+       |    return ((a & 0xFFFFFFFFFFFFFFFF) // (b & 0xFFFFFFFFFFFFFFFF)) & 0xFFFFFFFFFFFFFFFF
+       |
+       |def _scpy_int_urem64(a, b):
+       |    if b == 0:
+       |        raise ArithmeticException("/ by zero")
+       |    return ((a & 0xFFFFFFFFFFFFFFFF) % (b & 0xFFFFFFFFFFFFFFFF)) & 0xFFFFFFFFFFFFFFFF
+       |
+       |def _scpy_int_ushr32(value, shift):
+       |    # Java `>>>` semantics on a 32-bit operand: treat `value` as
+       |    # an unsigned 32-bit int, then logical shift right.
+       |    return ((value & 0xFFFFFFFF) >> (shift & 31)) & 0xFFFFFFFF
+       |
+       |def _scpy_int_ushr64(value, shift):
+       |    return ((value & 0xFFFFFFFFFFFFFFFF) >> (shift & 63)) & 0xFFFFFFFFFFFFFFFF
        |
        |def _scpy_int_signum(value):
        |    if value > 0:
@@ -2200,13 +2295,13 @@ object PyIRRuntime:
        |    # and no-arg overloads stay on the direct `str.encode`
        |    # fast path.
        |    if encoding and encoding[0] is not None and (
-       |            hasattr(encoding[0], 'encode__Ljava_lang_String__Ljava_nio_ByteBuffer')
+       |            hasattr(encoding[0], 'encode__Ljava_dlang_dString__Ljava_dnio_dByteBuffer')
        |    ):
-       |        bb = encoding[0].encode__Ljava_lang_String__Ljava_nio_ByteBuffer(s)
+       |        bb = encoding[0].encode__Ljava_dlang_dString__Ljava_dnio_dByteBuffer(s)
        |        remaining = bb.remaining__I()
        |        out = _scpy_new_array(_scpy_primitive_byte, remaining, 0)
        |        if remaining > 0:
-       |            bb.get__AB__Ljava_nio_ByteBuffer(out)
+       |            bb.get__AB__Ljava_dnio_dByteBuffer(out)
        |        return out
        |    errors = 'strict'
        |    if not encoding:
@@ -2217,8 +2312,8 @@ object PyIRRuntime:
        |            enc = candidate
        |        elif candidate is None:
        |            raise NullPointerException()
-       |        elif hasattr(candidate, 'name__Ljava_lang_String'):
-       |            enc = candidate.name__Ljava_lang_String()
+       |        elif hasattr(candidate, 'name__Ljava_dlang_dString'):
+       |            enc = candidate.name__Ljava_dlang_dString()
        |            errors = 'replace'
        |        elif hasattr(candidate, 'name'):
        |            enc = candidate.name()

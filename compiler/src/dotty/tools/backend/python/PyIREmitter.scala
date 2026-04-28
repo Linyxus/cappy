@@ -25,6 +25,11 @@ import scala.collection.mutable
  *      `_scpy_f32`) driven by the op code
  *    - `PyMatch` lowering to nested `if/elif` (stmt) or ternary (expr)
  */
+/** Thrown when the emitter sees a PyIR shape it does not know how to
+ *  render. Linker / reachability normalize emitter inputs, so any bug
+ *  reaching the emitter is a real backend bug, not a missing feature. */
+final class EmitterBug(message: String) extends RuntimeException(message)
+
 object PyIREmitter:
 
   /** Reserved prefix for compiler-invented Python identifiers. */
@@ -190,15 +195,25 @@ object PyIREmitter:
       // enum case implementations); eager per-class initialization would
       // see those names before they exist.
       //
-      // Two-phase init breaks reference cycles between modules. Without
-      // this, e.g. `Console.__init__` accesses `_scpy_mod_System_` —
-      // which doesn't exist yet if Console is processed first by the
-      // class-inheritance topo sort. Phase 1 creates every singleton via
-      // `__new__` so the variable name resolves; Phase 2 runs the real
-      // `__init__`s. Within Phase 2 we still keep `orderedClasses` order;
-      // any cross-module access that relies on the *initialized* state
-      // of another module remains brittle (would need a per-module-init
-      // dependency graph) — but bare-name resolution works.
+      // Lazy init via `_scpy_LazyModule` (see PyIRRuntime). Each
+      // `_scpy_mod_<name>_` binding is a `_scpy_LazyModule` proxy that
+      // wraps the underlying class instance allocated with `__new__()`
+      // (no constructor call yet). On the first attribute access through
+      // the proxy — read, call, attribute write, or `_scpy_module_value`
+      // unwrap — `_scpy_ensure()` runs the real `__init__()` exactly
+      // once. This breaks reference cycles between modules because the
+      // proxy's name resolves immediately, and any access path that
+      // routes through the LazyModule (`PyApplyStatic`, `PyLoadModule`,
+      // `PyApply` against a module receiver) implicitly fires the
+      // initializer before reading the member.
+      //
+      // INVARIANT: every public `<module>.<member>` access path in the
+      // emitter must go through `moduleAccessExpr` / `moduleValueExpr`,
+      // never through the bare class identifier when a singleton exists.
+      // `hasNoModuleVarBinding` gates the bare-class fallback to the
+      // shapes where no singleton was emitted (non-ModuleClass classes
+      // with no `_`-suffixed companion).
+      //
       // Only top-level module classes are eligible for singleton init.
       // Inner module classes (e.g. `object Enumeration.ValueSet` whose
       // companion is `scala.Enumeration.ValueSet_`) take an `_outer`
@@ -260,10 +275,14 @@ object PyIREmitter:
         for f <- cls.fields do
           line(s"${f.name.simple.name} = ${classLevelFieldInitExpr(f)}")
 
-      // Emit constructor dispatcher (if any) or synthesize a field-init __init__
+      // Emit a no-arg `__init__(self)` (used by module lazy-init, and as
+      // a Python-required entry point on `cls()` calls that the runtime
+      // never makes from generated code) plus one helper per ctor
+      // overload. `PyNew` lowering at call sites picks the right helper
+      // by encoded signature; there is no runtime overload guessing.
       if ctorMethods.nonEmpty then
         spacer()
-        emitConstructorDispatcher(cls, ctorMethods)
+        emitNoArgInitForwarder(cls, ctorMethods)
         for ctor <- ctorMethods do
           spacer()
           emitMethodDef(cls, ctor)
@@ -359,7 +378,7 @@ object PyIREmitter:
       line("_scpy_kind = \"" + classKindLiteral(cls.kind) + "\"")
       line("_scpy_superclass = " + classSuperclassLiteral(cls))
       line("_scpy_interfaces = " + classInterfacesLiteral(cls.interfaces))
-      line("def getClass__Ljava_lang_Class(self):")
+      line("def getClass__Ljava_dlang_dClass(self):")
       indent()
       line("return _scpy_class_of_instance(self)")
       dedent()
@@ -482,39 +501,61 @@ object PyIREmitter:
           line(s"self.${f.name.simple.name} = ${fieldInitExpr(f)}")
       dedent()
 
-    private def emitConstructorDispatcher(cls: PyClassDef, ctors: List[PyMethodDef]): Unit =
+    /** Emit a `def __init__(self, *args)` that JVM-style zero-initializes
+     *  every instance field (`null`/`0`/`false` defaults), and — only
+     *  when called with non-empty `args` — dispatches to the unique
+     *  ctor helper of matching arity. The arity dispatch is a
+     *  convenience fallback for runtime/prelude code that uses Python's
+     *  `cls(args)` protocol; Scala-emitted call sites bypass `__init__`
+     *  entirely by going through `_scpy_new(cls, _scpy_ctor_<sig>,
+     *  args...)`, which selects the helper at codegen time by encoded
+     *  signature.
+     *
+     *  Note: arity dispatch is a strictly weaker form than the old
+     *  type-guard dispatcher — it correctly handles the common case of
+     *  exception classes constructed from the prelude
+     *  (`NullPointerException("msg")`, `ArithmeticException("/ by
+     *  zero")`, etc.), where each exception class has at most one
+     *  ctor per arity. It does NOT attempt to disambiguate between
+     *  multiple same-arity ctors; if a Scala class has overloads like
+     *  `(Int)` and `(String)`, the Scala-side call site is expected to
+     *  go through `_scpy_new` (which it does, automatically — `PyNew`
+     *  always lowers to `_scpy_new`).
+     */
+    private def emitNoArgInitForwarder(cls: PyClassDef, ctors: List[PyMethodDef]): Unit =
       line("def __init__(self, *args) -> None:")
       indent()
-      // M3: a field that matches any ctor parameter name is always
-      // overwritten by the primary (or, for a param-only-of-secondary,
-      // by the secondary helper) before the ctor body runs. Emitting a
-      // zero-init for those fields would be a redundant double-write
-      // paired with the `this(...)` delegation rewrite in C7. Retain
-      // zero-init only for fields that no ctor parameter names — those
-      // are genuinely uninitialized until the ctor body touches them.
-      val ctorParamNames = ctors.iterator
-        .flatMap(_.args.iterator.map(_.name.name))
-        .toSet
-      for f <- cls.fields if !ctorParamNames.contains(f.name.simple.name) do
+      // Field zero-init: every instance attribute starts at the JVM
+      // default for its declared type.
+      for f <- cls.fields do
         line(s"self.${f.name.simple.name} = ${fieldInitExpr(f)}")
-
-      val orderedCtors =
-        ctors.sortBy(ctor => (-constructorSpecificity(ctor), ctor.args.length))
-
-      for (ctor, index) <- orderedCtors.zipWithIndex do
-        val keyword = if index == 0 then "if" else "elif"
-        line(s"$keyword ${constructorDispatchCondition(ctor)}:")
-        indent()
-        val forwardedArgs =
-          (0 until ctor.args.length).map(i => s"args[$i]").mkString(", ")
-        line(s"self.${constructorHelperName(cls.name, ctor.name)}($forwardedArgs)")
-        line("return None")
-        dedent()
-
-      line("else:")
-      indent()
-      line(s"""raise TypeError("No matching constructor for ${classIdentifier(cls.name)}")""")
-      dedent()
+      // Group ctors by arity. For each non-empty arity, emit a helper
+      // call only when there is exactly one ctor at that arity (so
+      // Python-protocol `cls(args)` can resolve unambiguously).
+      val byArity = ctors.groupBy(_.args.length)
+      // Order arities so stable code, but emit nothing for arity 0:
+      // the empty-args path is just the zero-init above.
+      val nonEmptyArities = byArity.keysIterator.filter(_ != 0).toList.sorted
+      if nonEmptyArities.nonEmpty then
+        line("if _scpy_len(args) == 0:")
+        indent(); line("return None"); dedent()
+        for arity <- nonEmptyArities do
+          val matching = byArity(arity)
+          if matching.size == 1 then
+            val ctor = matching.head
+            val forwarded =
+              (0 until arity).map(i => s"args[$i]").mkString(", ")
+            line(s"if _scpy_len(args) == $arity:")
+            indent()
+            line(s"self.${constructorHelperName(cls.name, ctor.name)}($forwarded)")
+            line("return None")
+            dedent()
+      // No matching arity (or multiple ctors at this arity — the
+      // codegen path through `_scpy_new` is the supported one):
+      // silently leave the instance zero-initted. This matches what
+      // happens when the linker has DCE'd the relevant helper.
+      if cls.fields.isEmpty && nonEmptyArities.isEmpty then
+        line("pass")
       dedent()
 
     private def fieldDefaultExpr(tpe: PyType): String = tpe match
@@ -568,36 +609,6 @@ object PyIREmitter:
         if name.paramTypeRefs.isEmpty then "void"
         else name.paramTypeRefs.map(_.encoded).mkString("_")
       s"_scpy_ctor_${classIdentifier(owner)}__${paramPart}__${name.resultTypeRef.encoded}"
-
-    private def constructorSpecificity(ctor: PyMethodDef): Int =
-      ctor.args.count(arg => constructorArgGuard(arg.ptpe, "arg").nonEmpty)
-
-    private def constructorDispatchCondition(ctor: PyMethodDef): String =
-      val arityGuard = s"_scpy_len(args) == ${ctor.args.length}"
-      val argGuards = ctor.args.zipWithIndex.flatMap { case (arg, index) =>
-        constructorArgGuard(arg.ptpe, s"args[$index]")
-      }
-      (arityGuard :: argGuards).mkString(" and ")
-
-    private def constructorArgGuard(tpe: PyType, argRef: String): Option[String] = tpe match
-      case PyBooleanType =>
-        Some(s"isinstance($argRef, bool)")
-      case PyByteType | PyShortType | PyCharType | PyIntType | PyLongType =>
-        Some(s"isinstance($argRef, int) and not isinstance($argRef, bool)")
-      case PyFloatType | PyDoubleType =>
-        Some(s"isinstance($argRef, float)")
-      case PyStringType =>
-        Some(s"($argRef is None or isinstance($argRef, str))")
-      case PyArrayType =>
-        Some(s"($argRef is None or isinstance($argRef, _scpy_Array))")
-      case PyClassType(className) if className == PyClassName.ObjectClass =>
-        None
-      case PyClassType(className) =>
-        Some(s"($argRef is None or _scpy_is_instance($argRef, ${typeRefToClassExpr(PyClassRef(className))}))")
-      case PyAnyType | PyUndefinedType | PyVoidType | PyNothingType | PyNullType =>
-        None
-    // `PyArrayType` forgets the element type, but arrays now have a
-    // distinct runtime carrier (`_scpy_Array`).
 
     // -- Method definition ---------------------------------------
 
@@ -670,7 +681,7 @@ object PyIREmitter:
       // Drop class-type annotations - they would be forward references
       // to identifiers the class/module is still in the middle of defining.
       case PyClassType(_) => ""
-      case PyAnyType | PyUndefinedType => ""
+      case PyAnyType => ""
 
     private def emitMethodBody(stmts: List[PyTree], returnLast: Boolean): Unit =
       if stmts.isEmpty then
@@ -798,12 +809,6 @@ object PyIREmitter:
 
       case PyWhile(cond, body) =>
         line(s"while ${exprToStr(cond)}:")
-        indent()
-        emitBlockStmts(body)
-        dedent()
-
-      case PyForEach(varName, iter, body) =>
-        line(s"for ${varName.name} in ${exprToStr(iter)}:")
         indent()
         emitBlockStmts(body)
         dedent()
@@ -991,8 +996,6 @@ object PyIREmitter:
           labelReturnTargets(body, target)
         case PyWhile(cond, body) =>
           labelReturnTargets(cond, target) || labelReturnTargets(body, target)
-        case PyForEach(_, iter, body) =>
-          labelReturnTargets(iter, target) || labelReturnTargets(body, target)
         case PyAssign(_, rhs) =>
           labelReturnTargets(rhs, target)
         case PyVarDef(_, _, _, _, rhs) =>
@@ -1064,9 +1067,6 @@ object PyIREmitter:
       case tree: PyWhile =>
         collectExternAliases(tree.cond)
         collectExternAliases(tree.body)
-      case tree: PyForEach =>
-        collectExternAliases(tree.iterable)
-        collectExternAliases(tree.body)
       case _: PySkip =>
         ()
       case tree: PyIf =>
@@ -1132,7 +1132,6 @@ object PyIREmitter:
         collectExternAliases(tree.lhs)
         collectExternAliases(tree.rhs)
       case tree: PyClosure =>
-        tree.captureValues.foreach(collectExternAliases)
         collectExternAliases(tree.body)
 
     private def emitExternImports(): Unit =
@@ -1206,13 +1205,30 @@ object PyIREmitter:
         // exactly the class the Scala compiler resolved.
         //
         // See notes/issue-arraydeque-map-class-walk-recursion.md.
+        // Constructor calls land here for `super.<init>(...)` chains.
+        // Route them to the encoded ctor helper directly so the parent's
+        // `__init__` (a no-arg field-zero-init forwarder) is bypassed —
+        // we want exactly the helper that matches the resolved
+        // signature. Runtime-provided classes (e.g. `_scpy_Object`,
+        // `_scpy_java_Throwable`, the `*Ref` boxes) don't carry the
+        // encoded helpers — fall back to `__init__` (which on
+        // `object`/`_scpy_Object` is a no-op, and on the hand-written
+        // runtime stubs is the actual ctor body). Ditto for support
+        // classes that escaped the bundle (e.g. interfaces with no
+        // ctor body), in which case the dispatcher form remains a
+        // safe fallback.
+        val targetMethod =
+          if method.simple.isConstructor then
+            if PyIRRuntime.providedClass(className).isDefined then method.encoded
+            else constructorHelperName(className, method)
+          else method.encoded
         val sep = if args.isEmpty then "" else ", "
         receiver match
           case _: PyThis =>
-            s"${classIdentifier(className)}.${method.encoded}(self$sep$argsStr)"
+            s"${classIdentifier(className)}.$targetMethod(self$sep$argsStr)"
           case _ =>
             val prefix = parenthesize(receiver)
-            s"${classIdentifier(className)}.${method.encoded}($prefix$sep$argsStr)"
+            s"${classIdentifier(className)}.$targetMethod($prefix$sep$argsStr)"
 
       case PyApplyStatic(_, className, method, args) =>
         val argsStr = args.map(exprToStr).mkString(", ")
@@ -1260,10 +1276,25 @@ object PyIREmitter:
       case PyAttrAccess(obj, name) =>
         s"${parenthesize(obj)}.$name"
 
-      // Construction
-      case PyNew(className, _, args) =>
+      // Construction. Emit `_scpy_new(Cls, Cls._scpy_ctor_<sig>, args...)`
+      // (a runtime helper defined in `PyIRRuntime.prelude`) so the right
+      // ctor overload is picked at codegen time by symbol identity. No
+      // runtime arity / type-guard dispatch.
+      //
+      // Runtime-provided classes (e.g. `_scpy_Object`, the `*Ref` boxes,
+      // `_scpy_Class`, runtime-provided `Throwable` parents) don't carry
+      // the encoded `_scpy_ctor_*` helpers — the prelude handles their
+      // ctors via Python's standard `__init__` protocol. For those, fall
+      // back to `Cls(args...)`, which calls `Cls.__new__` + `Cls.__init__`.
+      case PyNew(className, ctor, args) =>
+        val clsId   = classIdentifier(className)
         val argsStr = args.map(exprToStr).mkString(", ")
-        s"${classIdentifier(className)}($argsStr)"
+        if PyIRRuntime.providedClass(className).isDefined then
+          s"$clsId($argsStr)"
+        else
+          val helper  = constructorHelperName(className, ctor)
+          val argList = (s"$clsId" :: s"$clsId.$helper" :: args.map(exprToStr)).mkString(", ")
+          s"_scpy_new($argList)"
 
       case PyLoadModule(className) =>
         // When the target is a non-ModuleClass class in the bundle (no
@@ -1322,7 +1353,7 @@ object PyIREmitter:
       // language only defines `FunctionN` for `N <= 22`, so this is just
       // a safety net for codegen-synthesized closures of unexpected
       // shape.
-      case PyClosure(_, params, _, body, _) =>
+      case PyClosure(params, _, body) =>
         val paramsStr = params.map(_.name.name).mkString(", ")
         val arity = params.length
         val carrier = if arity >= 0 && arity <= 22 then s"_scpy_Fn$arity" else "_scpy_Fn"
@@ -1362,14 +1393,17 @@ object PyIREmitter:
         )
 
       case other =>
-        // Fall-through: emit a bare `None` so the surrounding expression
-        // remains syntactically valid Python. Previously this included a
-        // `# TODO: <node>` comment, but `#` runs to end-of-line and
-        // breaks subsequent tokens on the same line — e.g. the `else`
-        // arm of a ternary. Diagnostic is dropped here; if you need to
-        // hunt down which node hit this branch, set a breakpoint in
-        // PyIREmitter.exprToStr or wrap with a runtime trap helper.
-        "None"
+        // Hard failure: any node reaching this arm is one the emitter
+        // doesn't know how to render in expression position. The linker
+        // and reachability normalize their inputs, so a hit here is a
+        // backend bug — silently emitting `None` (the previous
+        // behaviour) hides the bug and produces Python that runs but
+        // returns the wrong value.
+        throw new EmitterBug(
+          s"unhandled PyIR node in expression position: " +
+          s"${other.getClass.getSimpleName} at ${other.pos}; " +
+          s"render=${other.toString.take(160)}"
+        )
 
     /** Wrap an expression in parentheses if its precedence requires it. */
     private def parenthesize(tree: PyTree): String = tree match
@@ -1402,22 +1436,9 @@ object PyIREmitter:
         case FloatToInt | DoubleToInt => wrapI32(s"int($l)")
         case FloatToLong | DoubleToLong => wrapI64(s"int($l)")
 
-        case StringLength   => s"_scpy_len($l)"
         case ArrayLength    => s"_scpy_len($l)"
-        case CheckNotNull   => l
-        case GetClass       => s"_scpy_class_of_instance($l)"
-        case IdentityHashCode => s"_scpy_identity_hash_code($l)"
-        case Clone          => s"_scpy_array_clone($l)"
 
-        case WrapAsThrowable | UnwrapFromThrowable => l
         case Throw          => s"(lambda: (_ for _ in ()).throw($l))()"
-
-        case FloatToBits | FloatFromBits | DoubleToBits | DoubleFromBits => l
-
-        case ClassGetName      => s"$l.getName__Ljava_lang_String()"
-        case ClassIsPrimitive  => s"$l.isPrimitive__Z()"
-        case ClassIsInterface  => s"$l.isInterface__Z()"
-        case ClassIsArray      => s"$l.isArray__Z()"
 
     private def emitBinary(op: PyBinaryCode, lhs: PyTree, rhs: PyTree): String =
       import PyBinaryCode.*
@@ -1434,8 +1455,11 @@ object PyIREmitter:
         case IntAdd  => wrapI32(s"$l + $r")
         case IntSub  => wrapI32(s"$l - $r")
         case IntMul  => wrapI32(s"$l * $r")
-        case IntDiv  => s"${Prefix}idiv($l, $r)" // TODO: trunc semantics
-        case IntMod  => s"${Prefix}imod($l, $r)" // TODO: sign semantics
+        // Truncate-toward-zero semantics matching JVM `idiv` / `irem`.
+        // Python's `//` and `%` are floor-style, so a runtime helper
+        // adjusts the sign for negative operands.
+        case IntDiv  => wrapI32(s"${Prefix}int_trunc_div($l, $r)")
+        case IntMod  => wrapI32(s"${Prefix}int_trunc_mod($l, $r)")
         case IntOr   => wrapI32(s"$l | $r")
         case IntAnd  => wrapI32(s"$l & $r")
         case IntXor  => wrapI32(s"$l ^ $r")
@@ -1444,22 +1468,21 @@ object PyIREmitter:
         // `1 << 32` yields 4294967296 instead of 1. Mask explicitly.
         case IntShl  => wrapI32(s"$l << ($r & 0x1F)")
         case IntShr  => wrapI32(s"$l >> ($r & 0x1F)")
-        case IntUShr => wrapI32(s"($l & 0xFFFFFFFF) >> ($r & 0x1F)")
+        case IntUShr => wrapI32(s"${Prefix}int_ushr32($l, $r)")
         case IntEq   => s"($l == $r)"
         case IntNe   => s"($l != $r)"
         case IntLt   => s"($l < $r)"
         case IntLe   => s"($l <= $r)"
         case IntGt   => s"($l > $r)"
         case IntGe   => s"($l >= $r)"
-        case IntUDiv | IntURem | IntULt | IntULe | IntUGt | IntUGe =>
-          s"None  # TODO IntUnsigned: $l, $r"
 
         // Long
         case LongAdd  => wrapI64(s"$l + $r")
         case LongSub  => wrapI64(s"$l - $r")
         case LongMul  => wrapI64(s"$l * $r")
-        case LongDiv  => s"${Prefix}ldiv($l, $r)"
-        case LongMod  => s"${Prefix}lmod($l, $r)"
+        // Same truncation rule as Int / wrap to 64-bit.
+        case LongDiv  => wrapI64(s"${Prefix}int_trunc_div($l, $r)")
+        case LongMod  => wrapI64(s"${Prefix}int_trunc_mod($l, $r)")
         case LongOr   => wrapI64(s"$l | $r")
         case LongAnd  => wrapI64(s"$l & $r")
         case LongXor  => wrapI64(s"$l ^ $r")
@@ -1470,15 +1493,13 @@ object PyIREmitter:
         // when `elem >= 64` lands on a higher word. Mask explicitly.
         case LongShl  => wrapI64(s"$l << ($r & 0x3F)")
         case LongShr  => wrapI64(s"$l >> ($r & 0x3F)")
-        case LongUShr => wrapI64(s"($l & 0xFFFFFFFFFFFFFFFF) >> ($r & 0x3F)")
+        case LongUShr => wrapI64(s"${Prefix}int_ushr64($l, $r)")
         case LongEq   => s"($l == $r)"
         case LongNe   => s"($l != $r)"
         case LongLt   => s"($l < $r)"
         case LongLe   => s"($l <= $r)"
         case LongGt   => s"($l > $r)"
         case LongGe   => s"($l >= $r)"
-        case LongUDiv | LongURem | LongULt | LongULe | LongUGt | LongUGe =>
-          s"None  # TODO LongUnsigned: $l, $r"
 
         // Float
         case FloatAdd => wrapF32(s"$l + $r")
@@ -1508,18 +1529,11 @@ object PyIREmitter:
 
         // String
         case StringConcat => s"($l + $r)"
-        case StringCharAt => s"ord($l[$r])"
         case StringEq => s"($l == $r)"
 
         // Identity
         case RefEq => s"($l is $r)"
         case RefNe => s"($l is not $r)"
-
-        // Class
-        case ClassIsInstance       => s"_scpy_is_instance($r, $l)"
-        case ClassIsAssignableFrom => s"_scpy_is_assignable($l, $r)"
-        case ClassCast             => r
-        case ClassNewArray         => s"_scpy_new_array($l, $r)"
 
     private def arrayDefaultValue(elemTypeRef: PyTypeRef): String = elemTypeRef match
       case PyPrimRef(tag) => tag match

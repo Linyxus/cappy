@@ -20,7 +20,7 @@ object PyIRTags:
   final val TagPyAssign:      Byte = 0x02
   final val TagPyReturn:      Byte = 0x03
   final val TagPyWhile:       Byte = 0x04
-  final val TagPyForEach:     Byte = 0x05
+  // 0x05 — reserved (formerly PyForEach; never produced by GenPython)
   final val TagPySkip:        Byte = 0x06
 
   // Control flow / blocks (0x10..0x1F)
@@ -90,7 +90,7 @@ object PyIRTags:
   final val TagPyVoidType:      Byte = 0x81.toByte
   final val TagPyNothingType:   Byte = 0x82.toByte
   final val TagPyNullType:      Byte = 0x83.toByte
-  final val TagPyUndefinedType: Byte = 0x84.toByte
+  // 0x84 — reserved (formerly TagPyUndefinedType; never produced)
   final val TagPyBooleanType:   Byte = 0x85.toByte
   final val TagPyCharType:      Byte = 0x86.toByte
   final val TagPyByteType:      Byte = 0x87.toByte
@@ -108,7 +108,6 @@ object PyIRTags:
     case PyVoidType        => TagPyVoidType
     case PyNothingType     => TagPyNothingType
     case PyNullType        => TagPyNullType
-    case PyUndefinedType   => TagPyUndefinedType
     case PyBooleanType     => TagPyBooleanType
     case PyCharType        => TagPyCharType
     case PyByteType        => TagPyByteType
@@ -126,7 +125,6 @@ object PyIRTags:
     case TagPyVoidType      => PyVoidType
     case TagPyNothingType   => PyNothingType
     case TagPyNullType      => PyNullType
-    case TagPyUndefinedType => PyUndefinedType
     case TagPyBooleanType   => PyBooleanType
     case TagPyCharType      => PyCharType
     case TagPyByteType      => PyByteType
@@ -197,19 +195,19 @@ object PyIRTags:
   final val TagKindClass:         Byte = 0x01
   final val TagKindModuleClass:   Byte = 0x02
   final val TagKindInterface:     Byte = 0x03
-  final val TagKindAbstractClass: Byte = 0x04
+  // 0x04 — reserved (formerly TagKindAbstractClass; abstractness is no
+  // longer modeled at the PyIR level — abstract classes serialize as
+  // PyClassKind.Class).
 
   def classKindTag(k: PyClassKind): Byte = k match
     case PyClassKind.Class         => TagKindClass
     case PyClassKind.ModuleClass   => TagKindModuleClass
     case PyClassKind.Interface     => TagKindInterface
-    case PyClassKind.AbstractClass => TagKindAbstractClass
 
   def classKindFromTag(tag: Byte): PyClassKind = tag match
     case TagKindClass         => PyClassKind.Class
     case TagKindModuleClass   => PyClassKind.ModuleClass
     case TagKindInterface     => PyClassKind.Interface
-    case TagKindAbstractClass => PyClassKind.AbstractClass
     case _ => throw new CorruptIRException(
       s"Unknown PyClassKind tag: 0x${(tag & 0xff).toHexString}")
 
@@ -251,6 +249,12 @@ object PyIRTags:
 
   import PyUnaryCode.*
 
+  // Tag values 0x01..0x22 are stable, append-only. Values 0x1A, 0x1C..0x21,
+  // 0x23..0x2A are reserved (formerly StringLength, CheckNotNull, GetClass,
+  // IdentityHashCode, Clone, WrapAsThrowable, UnwrapFromThrowable,
+  // FloatToBits, FloatFromBits, DoubleToBits, DoubleFromBits, ClassGetName,
+  // ClassIsPrimitive, ClassIsInterface, ClassIsArray — none produced by
+  // GenPython).
   private val unaryToTagArr: Array[Byte] = {
     val arr = new Array[Byte](PyUnaryCode.values.length)
     arr(BoolNot.ordinal)             = 0x01
@@ -278,23 +282,8 @@ object PyIRTags:
     arr(DoubleToInt.ordinal)         = 0x17
     arr(DoubleToLong.ordinal)        = 0x18
     arr(DoubleToFloat.ordinal)       = 0x19
-    arr(StringLength.ordinal)        = 0x1A
     arr(ArrayLength.ordinal)         = 0x1B
-    arr(CheckNotNull.ordinal)        = 0x1C
-    arr(GetClass.ordinal)            = 0x1D
-    arr(IdentityHashCode.ordinal)    = 0x1E
-    arr(Clone.ordinal)               = 0x1F
-    arr(WrapAsThrowable.ordinal)     = 0x20
-    arr(UnwrapFromThrowable.ordinal) = 0x21
     arr(Throw.ordinal)               = 0x22
-    arr(FloatToBits.ordinal)         = 0x23
-    arr(FloatFromBits.ordinal)       = 0x24
-    arr(DoubleToBits.ordinal)        = 0x25
-    arr(DoubleFromBits.ordinal)      = 0x26
-    arr(ClassGetName.ordinal)        = 0x27
-    arr(ClassIsPrimitive.ordinal)    = 0x28
-    arr(ClassIsInterface.ordinal)    = 0x29
-    arr(ClassIsArray.ordinal)        = 0x2A
     arr
   }
 
@@ -315,6 +304,11 @@ object PyIRTags:
 
   import PyBinaryCode.*
 
+  // Tag values are stable, append-only. Values 0x21..0x26 (Int unsigned),
+  // 0x41..0x46 (Long unsigned), 0x71 (StringCharAt), 0x75..0x78 (class
+  // reflection) are reserved (formerly IntUDiv/IntURem/IntU*, LongUDiv/
+  // LongURem/LongU*, StringCharAt, ClassIsInstance/ClassIsAssignableFrom/
+  // ClassCast/ClassNewArray — none produced by GenPython).
   private val binaryToTagArr: Array[Byte] = {
     val arr = new Array[Byte](PyBinaryCode.values.length)
     arr(BoolEq.ordinal)  = 0x01
@@ -339,12 +333,6 @@ object PyIRTags:
     arr(IntLe.ordinal)   = 0x1E
     arr(IntGt.ordinal)   = 0x1F
     arr(IntGe.ordinal)   = 0x20
-    arr(IntUDiv.ordinal) = 0x21
-    arr(IntURem.ordinal) = 0x22
-    arr(IntULt.ordinal)  = 0x23
-    arr(IntULe.ordinal)  = 0x24
-    arr(IntUGt.ordinal)  = 0x25
-    arr(IntUGe.ordinal)  = 0x26
 
     arr(LongAdd.ordinal)  = 0x30
     arr(LongSub.ordinal)  = 0x31
@@ -363,12 +351,6 @@ object PyIRTags:
     arr(LongLe.ordinal)   = 0x3E
     arr(LongGt.ordinal)   = 0x3F
     arr(LongGe.ordinal)   = 0x40
-    arr(LongUDiv.ordinal) = 0x41
-    arr(LongURem.ordinal) = 0x42
-    arr(LongULt.ordinal)  = 0x43
-    arr(LongULe.ordinal)  = 0x44
-    arr(LongUGt.ordinal)  = 0x45
-    arr(LongUGe.ordinal)  = 0x46
 
     arr(FloatAdd.ordinal) = 0x50
     arr(FloatSub.ordinal) = 0x51
@@ -395,16 +377,10 @@ object PyIRTags:
     arr(DoubleGe.ordinal)  = 0x6A
 
     arr(StringConcat.ordinal) = 0x70
-    arr(StringCharAt.ordinal) = 0x71
     arr(StringEq.ordinal)     = 0x72
 
     arr(RefEq.ordinal) = 0x73
     arr(RefNe.ordinal) = 0x74
-
-    arr(ClassIsInstance.ordinal)       = 0x75
-    arr(ClassIsAssignableFrom.ordinal) = 0x76
-    arr(ClassCast.ordinal)             = 0x77
-    arr(ClassNewArray.ordinal)         = 0x78
 
     arr
   }

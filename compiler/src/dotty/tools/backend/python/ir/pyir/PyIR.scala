@@ -56,10 +56,10 @@ final case class PyClassDef(
 )
 
 enum PyClassKind:
-  case Class            // ordinary Scala class
+  case Class            // ordinary Scala class (also abstract classes — we
+                        // don't track abstractness at the PyIR level)
   case ModuleClass      // Scala `object` - emitter creates singleton instance
   case Interface        // Scala trait (no direct instantiation)
-  case AbstractClass    // abstract class
 
 final case class PyFieldDef(
     flags:        PyMemberFlags,
@@ -109,13 +109,6 @@ final case class PyReturn(value: PyTree)(val pos: PyPosition) extends PyTree:
 
 final case class PyWhile(cond: PyTree, body: PyTree)
     (val pos: PyPosition) extends PyTree:
-  val tpe: PyType = PyVoidType
-
-final case class PyForEach(
-    varName:  PyLocalName,
-    iterable: PyTree,
-    body:     PyTree
-)(val pos: PyPosition) extends PyTree:
   val tpe: PyType = PyVoidType
 
 final case class PySkip()(val pos: PyPosition) extends PyTree:
@@ -174,6 +167,13 @@ final case class PySelectStatic(field: PyFieldName)
 // ===================================================================
 //  Calls
 // ===================================================================
+
+// NOTE: Every `PyApply*` node carries a `flags: PyApplyFlags`. Today
+// `GenPython` always passes `PyApplyFlags.empty`; the linker, emitter,
+// and reachability passes never inspect the bits. The field is kept
+// because the on-disk format already reserves space for it, but should
+// either be wired (private/constructor metadata) or removed wholesale.
+// See `PyApplyFlags` in `PyOps.scala` for the reserved bit layout.
 
 /** Instance dispatch via virtual lookup.
  *
@@ -299,15 +299,19 @@ final case class PyBinaryOp(op: PyBinaryCode, lhs: PyTree, rhs: PyTree)
 
 /** Scala lambda.
  *
- *  Captures are separate from params so the emitter can materialize a
- *  synthetic class with `__call__` and receive captures at construction
- *  time. Mirrors sjsir's `Closure` shape. */
+ *  Captures are NOT modeled here: Scala-erasure-phase lambdas already
+ *  encode their captured values as the leading parameters of the
+ *  target method. The PyIR-level closure node is a plain Python lambda
+ *  whose body forwards to that method, and Python's lexical scope
+ *  captures any free identifiers (e.g. `self` for instance-method
+ *  targets) automatically. Earlier revisions carried `captureParams` /
+ *  `captureValues` mirroring sjsir, but `GenPython.genClosure` always
+ *  emitted them empty. Dropping the fields removes the foot-gun where
+ *  the emitter ignored them. */
 final case class PyClosure(
-    captureParams: List[PyParamDef],
-    params:        List[PyParamDef],
-    resultType:    PyType,
-    body:          PyTree,
-    captureValues: List[PyTree]
+    params:     List[PyParamDef],
+    resultType: PyType,
+    body:       PyTree
 )(val pos: PyPosition) extends PyTree:
   val tpe: PyType = PyAnyType
 

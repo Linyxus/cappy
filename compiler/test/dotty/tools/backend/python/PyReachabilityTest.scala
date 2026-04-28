@@ -358,7 +358,7 @@ class PyReachabilityTest:
     val speak = methodName("speak")
     val animal = classDef(
       name    = animalName,
-      kind    = PyClassKind.AbstractClass,
+      kind    = PyClassKind.Class,
       methods = List(abstractMethod(speak))
     )
     val dog = classDef(
@@ -417,6 +417,252 @@ class PyReachabilityTest:
     )
     assertFalse(result.isReachable(stringClass))
     assertTrue(result.isReachable(user.name))
+
+  // -- Dunder allow-list ------------------------------------------------
+
+  @Test def dropsUnusedCtorOverloadOnInstantiatedSupportClass(): Unit =
+    // After audit finding #12, `instantiate` no longer auto-roots every
+    // constructor on an instantiated class — only the no-arg ctor (used
+    // by Python's `cls()` / `__init__()` protocol) is kept by default.
+    // Other ctor overloads must be reached by an explicit `PyNew` (or
+    // `super.<init>` / `this(...)`). A support class with both no-arg
+    // and (Int) ctors, instantiated only via the (Int) ctor, should
+    // keep BOTH (the (Int) one is reached, the no-arg one is auto-
+    // rooted) — but a third unused (String) ctor must be DCE'd.
+    val targetName = className("example.Target")
+    val intCtor    = ctorName(List(PyPrimRef.IntRef))
+    val stringCtor = ctorName(List(PyClassRef(PyClassName.StringClass)))
+    val noArgCtor  = ctorName()
+    val intParam =
+      PyParamDef(PyLocalName("x"), PyOriginalName.NoOriginalName, PyIntType, mutable = false, NoPos)
+    val strParam =
+      PyParamDef(PyLocalName("s"), PyOriginalName.NoOriginalName, PyStringType, mutable = false, NoPos)
+    val target = classDef(
+      name    = targetName,
+      methods = List(
+        ctor(args = List(intParam)),
+        ctor(args = List(strParam)),
+        ctor()
+      )
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyNew(targetName, intCtor, Nil)(NoPos)
+      ))
+    )
+    val result = PyReachability.analyze(
+      userClasses    = List(user),
+      supportClasses = List(target),
+      mainEntry      = None
+    )
+    assertTrue(result.isInstantiated(targetName))
+    assertTrue(
+      "ctor reached via PyNew must survive",
+      result.isMethodReachable(targetName, intCtor)
+    )
+    assertTrue(
+      "no-arg ctor is auto-rooted on instantiated class",
+      result.isMethodReachable(targetName, noArgCtor)
+    )
+    assertFalse(
+      "ctor not reached by any call site must be DCE'd",
+      result.isMethodReachable(targetName, stringCtor)
+    )
+
+  @Test def keepsAllowedDunderOnInstantiatedClass(): Unit =
+    // `__call__` is in the keep-set: any instantiated class that
+    // declares one must keep it reachable even though no PyIR call
+    // edge exists (Python invokes it implicitly via `obj(args)`).
+    val callableName = className("example.Callable")
+    val callDunder = methodName("__call__")
+    val callable = classDef(
+      name    = callableName,
+      methods = List(ctor(), method(callDunder))
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyNew(callableName, ctorName(), Nil)(NoPos)
+      ))
+    )
+    val result = PyReachability.analyze(
+      userClasses    = List(user),
+      supportClasses = List(callable),
+      mainEntry      = None
+    )
+    assertTrue(result.isInstantiated(callableName))
+    assertTrue(
+      "allowed dunder __call__ must survive on instantiated class",
+      result.isMethodReachable(callableName, callDunder)
+    )
+
+  @Test def dropsDisallowedDunderOnInstantiatedClass(): Unit =
+    // `__class__` is a Python-internal dunder that the backend never
+    // emits for user code. It's NOT in `KeptDunders`, so even if a
+    // class declares one and has no static call edges, the analyzer
+    // must let DCE prune it.
+    val pyName = className("example.Bag")
+    val internalDunder = methodName("__class__")
+    val cls = classDef(
+      name    = pyName,
+      methods = List(ctor(), method(internalDunder))
+    )
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyNew(pyName, ctorName(), Nil)(NoPos)
+      ))
+    )
+    val result = PyReachability.analyze(
+      userClasses    = List(user),
+      supportClasses = List(cls),
+      mainEntry      = None
+    )
+    assertTrue(result.isInstantiated(pyName))
+    assertFalse(
+      "non-allow-listed dunder __class__ must NOT survive on instantiated support class",
+      result.isMethodReachable(pyName, internalDunder)
+    )
+
+  @Test def keptDundersIncludesEveryDunderTheEmitterEmitsLocally(): Unit =
+    // The emitter only treats `__eq__` and `__hash__` specially
+    // (`methodEmitsAsDunder` in PyIREmitter). `__init__` is the
+    // constructor namespace. All three must be in the allow-list so
+    // they survive on instantiated classes regardless of PyIR call
+    // edges.
+    for d <- List("__init__", "__eq__", "__hash__", "__str__", "__call__") do
+      assertTrue(
+        s"`$d` must be in PyReachability.KeptDunders",
+        PyReachability.KeptDunders.contains(d)
+      )
+
+  @Test def keptDundersExcludesPythonInternalDunders(): Unit =
+    // These dunders are never emitted from Scala source — they're
+    // Python's class-protocol hooks. Keeping them would defeat DCE
+    // for any Scala class that happens to override them.
+    for d <- List("__class__", "__mro__", "__dict__", "__name__",
+                  "__getattribute__", "__getattr__", "__setattr__",
+                  "__new__", "__slots__") do
+      assertFalse(
+        s"`$d` must NOT be in PyReachability.KeptDunders",
+        PyReachability.KeptDunders.contains(d)
+      )
+
+  // -- Transitive interface defaults ------------------------------------
+
+  @Test def resolvesInterfaceDefaultThroughInterfaceOfInterface(): Unit =
+    // base interface `IBase` declares `helper` as a default. Sub
+    // interface `IExt` extends `IBase` (no method override). Class `C`
+    // implements `IExt` only. A virtual call against `IExt.helper`
+    // must resolve through the transitive interface chain to
+    // `IBase.helper`, which is the only declaration site.
+    val baseIfaceName = className("example.IBase")
+    val extIfaceName  = className("example.IExt")
+    val concreteName  = className("example.C")
+    val helper = methodName("helper")
+    val baseIface = classDef(
+      name    = baseIfaceName,
+      kind    = PyClassKind.Interface,
+      methods = List(method(helper))
+    )
+    val extIface = classDef(
+      name       = extIfaceName,
+      kind       = PyClassKind.Interface,
+      interfaces = List(baseIfaceName)
+    )
+    val concrete = classDef(
+      name       = concreteName,
+      interfaces = List(extIfaceName),
+      methods    = List(ctor())
+    )
+    // user instantiates the concrete class and makes a virtual call
+    // against the extension interface.
+    val user = classDef(
+      name    = className("example.User"),
+      methods = List(method(
+        methodName("use"),
+        body = PyBlock(
+          List(PyNew(concreteName, ctorName(), Nil)(NoPos)),
+          PyApply(
+            PyApplyFlags.empty,
+            PyThis()(PyClassType(extIfaceName), NoPos),
+            extIfaceName,
+            helper,
+            Nil
+          )(PyVoidType, NoPos)
+        )(NoPos)
+      ))
+    )
+    val result = PyReachability.analyze(
+      userClasses    = List(user),
+      supportClasses = List(baseIface, extIface, concrete),
+      mainEntry      = None
+    )
+    assertTrue(
+      "transitive interface-default lookup must resolve helper to IBase",
+      result.isMethodReachable(baseIfaceName, helper)
+    )
+
+  // -- Drift checks against PyIRRuntime ---------------------------------
+
+  @Test def preludeCallsAreActuallyReferencedFromPreludeText(): Unit =
+    // Every entry in `PyIRRuntime.preludeCalls` should correspond to a
+    // call site visible in the prelude text. We approximate by
+    // checking the encoded method identifier appears as a substring of
+    // `PyIRRuntime.content`. If a future refactor removes the call
+    // from the prelude, the entry becomes dead weight (still seeds
+    // unused work into reachability) and this test catches the drift.
+    val content = PyIRRuntime.content
+    for (cls, method) <- PyIRRuntime.preludeCalls do
+      val encoded = method.encoded
+      assertTrue(
+        s"preludeCalls entry ($cls.${method.simple.name}) -> encoded `$encoded` is not referenced anywhere in the prelude string",
+        content.contains(encoded)
+      )
+
+  @Test def providedClassesAndPreludeRegistrationsAreInSync(): Unit =
+    // Every `_scpy_register_class(... "<class.name>" ...)` literal in
+    // the prelude must correspond to either:
+    //   (a) a `PyIRRuntime.providedClasses` entry, OR
+    //   (b) a primitive type registration (kept inside the prelude
+    //       so the linker doesn't see them — those have kind="primitive").
+    // And every non-primitive `providedClasses` entry must have a
+    // matching registration call in the prelude. Catches drift in
+    // either direction.
+    val content = PyIRRuntime.content
+    val registerPattern = """_scpy_register_class\([^,]+,\s*"([^"]+)"""".r
+    val registeredNames: Set[String] =
+      registerPattern.findAllMatchIn(content).flatMap(m => Option(m.group(1))).toSet
+    val providedNames: Set[String] =
+      PyIRRuntime.providedClasses.keys.map(_.nameString).toSet
+
+    // Primitive class names show up in registrations only.
+    val primitives = Set(
+      "void", "boolean", "char", "byte", "short",
+      "int", "long", "float", "double",
+      // Box / utility names registered in the prelude but kept off the
+      // providedClasses list because the bundle defines them.
+      "java.lang.Cloneable", "java.lang.Number", "java.lang.Boolean",
+      "java.lang.Character", "java.lang.Byte", "java.lang.Short",
+      "java.lang.Integer", "java.lang.Long",
+      "java.lang.Float", "java.lang.Double",
+    )
+
+    val unregistered = providedNames -- registeredNames
+    assertTrue(
+      s"providedClasses entries with no `_scpy_register_class` in prelude: $unregistered",
+      unregistered.isEmpty
+    )
+
+    val unprovided = registeredNames -- providedNames -- primitives
+    assertTrue(
+      s"`_scpy_register_class` calls with no providedClasses entry (and not a known primitive): $unprovided",
+      unprovided.isEmpty
+    )
 
   // -- Helpers (cloned from PyLinkerTest) ------------------------------
 

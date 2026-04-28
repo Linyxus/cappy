@@ -381,8 +381,53 @@ class PyEncoding(using Context):
       case Block(Nil, expr)       => unwrapVarargs(expr)
       case _                      => None
 
+  // `pyDefn.ExternAnnotClass` and `pyDefn.NameAnnotClass` are validated to be
+  // real (non-stub) classpath entries by `PyDefinitions.force()` at the start
+  // of `GenPython`, so identity comparison is sufficient here — a `showFullName`
+  // string fallback would be dead code under `-scalapy`.
+
   private def isExternAnnotation(annot: Annotation)(using Context): Boolean =
-    annot.symbol == pyDefn.ExternAnnotClass || annot.symbol.showFullName == "scala.python.extern"
+    annot.symbol eq pyDefn.ExternAnnotClass
 
   private def isNameAnnotation(annot: Annotation)(using Context): Boolean =
-    annot.symbol == pyDefn.NameAnnotClass || annot.symbol.showFullName == "scala.python.name"
+    annot.symbol eq pyDefn.NameAnnotClass
+
+object PyEncoding:
+  // --- Companion-class name convention -------------------------------
+  //
+  // Scala module classes encode with a trailing `_` (post-`sanitizeName`
+  // mapping of the JVM `$` suffix). The companion class on the other side
+  // of the relation has the same qualified name without that suffix.
+  //
+  // The two helpers below are the SINGLE source of truth for this
+  // convention. Anywhere in the backend that needs to bridge the
+  // `Foo` ⇄ `Foo_` relation (linker DCE, reachability, GenPython
+  // forwarder synthesis) MUST go through them, never re-implement the
+  // suffix flip inline.
+
+  private val ModuleSuffix: String = "_"
+
+  /** True iff `name` is a Scala module class encoded with the trailing
+   *  `_` convention (e.g. `scala.Predef_`). */
+  def isModuleClassName(name: PyClassName): Boolean =
+    name.nameString.endsWith(ModuleSuffix)
+
+  /** The companion class on the other side of the underscore convention.
+   *  Returns the suffix-flipped name regardless of direction:
+   *  - `Foo`  -> `Foo_`
+   *  - `Foo_` -> `Foo`
+   *
+   *  Note this is purely a name-level operation; the caller is
+   *  responsible for verifying that the returned name is actually
+   *  bundled as a `PyClassDef`. */
+  def companionClassNameOf(name: PyClassName): PyClassName =
+    val s = name.nameString
+    if s.endsWith(ModuleSuffix) then PyClassName(s.dropRight(ModuleSuffix.length))
+    else PyClassName(s + ModuleSuffix)
+
+  /** Field on the companion class with the same simple name, produced via
+   *  `companionClassNameOf`. Convenience for DCE passes that need to know
+   *  whether a read of `Foo.x` should also keep `Foo_.x` alive (or vice
+   *  versa). */
+  def companionFieldOf(field: PyFieldName): PyFieldName =
+    PyFieldName(companionClassNameOf(field.owner), field.simple)

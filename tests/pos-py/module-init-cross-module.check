@@ -1,0 +1,4 @@
+A.derived=hello-from-B-thru-A
+A.doubled=84
+B.value=hello-from-B
+B.number=42
