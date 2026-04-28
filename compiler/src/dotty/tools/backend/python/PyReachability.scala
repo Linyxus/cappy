@@ -202,25 +202,35 @@ object PyReachability:
         c.interfaces.foreach { i => acc.getOrElseUpdate(i, mutable.HashSet.empty) += c.name }
       acc.view.mapValues(_.toSet).toMap
 
+    /** Memo for [[ancestorsOf]]. Scoped to this `Analyzer` instance,
+     *  so it is dropped when the analyzer is GC'd after `analyze()`
+     *  returns. */
+    private val ancestorsCache = mutable.HashMap.empty[PyClassName, Set[PyClassName]]
+
     /** Transitively reachable ancestors of `cls`, not including `cls`
      *  itself. Runtime-provided ancestors are included (they are class
      *  names we *might* want to log virtual calls against, even if we
      *  never emit them). */
     private def ancestorsOf(cls: PyClassName): Set[PyClassName] =
-      val seen = mutable.HashSet.empty[PyClassName]
-      val stack = mutable.ArrayDeque.empty[PyClassName]
-      classByName.get(cls).foreach { cd =>
-        cd.superClass.foreach(stack += _)
-        cd.interfaces.foreach(stack += _)
-      }
-      while stack.nonEmpty do
-        val a = stack.removeHead()
-        if seen.add(a) then
-          classByName.get(a).foreach { cd =>
+      ancestorsCache.get(cls) match
+        case Some(cached) => cached
+        case None =>
+          val seen = mutable.HashSet.empty[PyClassName]
+          val stack = mutable.ArrayDeque.empty[PyClassName]
+          classByName.get(cls).foreach { cd =>
             cd.superClass.foreach(stack += _)
             cd.interfaces.foreach(stack += _)
           }
-      seen.toSet
+          while stack.nonEmpty do
+            val a = stack.removeHead()
+            if seen.add(a) then
+              classByName.get(a).foreach { cd =>
+                cd.superClass.foreach(stack += _)
+                cd.interfaces.foreach(stack += _)
+              }
+          val result = seen.toSet
+          ancestorsCache(cls) = result
+          result
 
     // --- Entry point ------------------------------------------------
 

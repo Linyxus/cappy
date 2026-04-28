@@ -48,7 +48,11 @@ private[dotc] trait ScalaPyTestSuite extends ParallelTesting:
 
   override def runMain(classPath: String, toolArgs: ToolArgs)(using SummaryReporting): Status =
     try
-      PyRun.runPyCode(classPath)
+      // Pass the suite's per-fixture maxDuration through to PyRun so it can
+      // self-enforce a deadline. ScalaPyTestSuite.runMain bypasses the JVM
+      // runner-pool Future/Await pattern that RunnerOrchestration uses, so
+      // PyRun is the only place left to honor maxDuration.
+      PyRun.runPyCode(classPath, maxDuration)
     catch
       case t: Exception =>
         val writer = new java.io.StringWriter()

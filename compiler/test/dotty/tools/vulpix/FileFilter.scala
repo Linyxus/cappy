@@ -20,6 +20,14 @@ object FileFilter {
     def accept(file: String): Boolean = included.contains(file)
   }
 
+  def predicate(pred: String => Boolean): FileFilter = new FileFilter {
+    def accept(file: String): Boolean = pred(file)
+  }
+
+  def and(a: FileFilter, b: FileFilter): FileFilter = new FileFilter {
+    def accept(file: String): Boolean = a.accept(file) && b.accept(file)
+  }
+
   object NoFilter extends FileFilter {
     def accept(file: String) = true
   }

@@ -4,14 +4,16 @@ import java.io.File
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 
+import scala.concurrent.duration.Duration
+
 import dotty.tools.vulpix.Status
 
 /** Executes a bundled Python file and captures its output. */
 object PyRun:
 
-  private final case class ProcessResult(exitCode: Int, output: String)
+  private final case class ProcessResult(exitCode: Int, output: String, timedOut: Boolean = false)
 
-  def runPyCode(classPath: String): Status =
+  def runPyCode(classPath: String, maxDuration: Duration = Duration.Inf): Status =
     // The classPath is a colon-separated list; the first entry is the output directory
     val outDir = new File(classPath.split(File.pathSeparator).nn.head.nn)
     val rawListing: Array[File] = outDir.listFiles() match
@@ -50,10 +52,13 @@ object PyRun:
             "python", "-W", "ignore", pyFile.getAbsolutePath
           ),
           outDir,
-          projectRoot
+          projectRoot,
+          maxDuration
         ) match
           case Left(failure) =>
             Status.Failure(failure)
+          case Right(result) if result.timedOut =>
+            Status.Failure(s"Python subprocess exceeded maxDuration=$maxDuration and was killed.\nPartial output:\n${result.output}")
           case Right(result) =>
             if result.exitCode == 0 then Status.Success(result.output)
             else Status.Failure(result.output)
@@ -86,7 +91,8 @@ object PyRun:
     runProcess(
       List("uv", "sync", "--project", projectRoot.getAbsolutePath, "--frozen", "--check"),
       projectRoot,
-      projectRoot
+      projectRoot,
+      Duration.Inf
     ) match
       case Left(failure) =>
         Some(failure)
@@ -95,18 +101,40 @@ object PyRun:
       case Right(result) =>
         Some(formatSyncFailure(projectRoot, result.output))
 
-  private def runProcess(command: List[String], workingDirectory: File, projectRoot: File): Either[String, ProcessResult] =
+  private def runProcess(command: List[String], workingDirectory: File, projectRoot: File, maxDuration: Duration): Either[String, ProcessResult] =
     try
       val process = new ProcessBuilder(command*)
         .directory(workingDirectory)
         .redirectErrorStream(true)
         .start()
 
+      // Self-enforce a deadline because Vulpix's per-fixture maxDuration
+      // is not propagated through ScalaPyTestSuite.runMain (which calls us
+      // synchronously, bypassing the runner-pool Future + Await pattern
+      // in RunnerOrchestration). A watchdog thread destroys the child on
+      // deadline; the main thread keeps draining stdout (which prevents
+      // the subprocess from blocking on a full pipe buffer) and observes
+      // EOF naturally when the process exits or is killed.
+      val killedByWatchdog = new java.util.concurrent.atomic.AtomicBoolean(false)
+      val watchdog: Option[Thread] =
+        if maxDuration.isFinite then
+          val t = new Thread(() => {
+            try
+              java.lang.Thread.sleep(maxDuration.toMillis)
+              if process.isAlive then
+                killedByWatchdog.set(true)
+                process.destroy()
+                if !process.waitFor(2L, java.util.concurrent.TimeUnit.SECONDS) then
+                  process.destroyForcibly()
+            catch
+              case _: InterruptedException => () // process exited cleanly first
+          }, "PyRun-watchdog")
+          t.setDaemon(true)
+          t.start()
+          Some(t)
+        else None
+
       val output = new String(process.getInputStream.readAllBytes(), StandardCharsets.UTF_8)
-      // ForkJoinPool can interrupt workers in blocking I/O while reshuffling
-      // near pool shutdown (see `notes/issue-pyrun-waitfor-interrupt.md`).
-      // Loop until the subprocess exits; preserve the interrupt flag for any
-      // legitimate cancellation path upstream.
       var interrupted = false
       var exitCode    = 0
       var done        = false
@@ -115,9 +143,18 @@ object PyRun:
           exitCode = process.waitFor()
           done = true
         catch
-          case _: InterruptedException => interrupted = true
+          case _: InterruptedException =>
+            interrupted = true
+            process.destroy()
+            if !process.waitFor(2L, java.util.concurrent.TimeUnit.SECONDS) then
+              process.destroyForcibly()
+              exitCode = process.waitFor()
+            else
+              exitCode = process.exitValue()
+            done = true
+      watchdog.foreach(_.interrupt())
       if interrupted then Thread.currentThread.nn.interrupt()
-      Right(ProcessResult(exitCode, output))
+      Right(ProcessResult(exitCode, output, timedOut = killedByWatchdog.get()))
     catch
       case e: IOException =>
         Left(

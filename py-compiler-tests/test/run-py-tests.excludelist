@@ -1,0 +1,13 @@
+# Excludelist for `tests/run/` fixtures that the Python backend cannot run.
+#
+# Intentionally empty: failures from a fresh run should be triaged as backend
+# bugs first, not silently exempted. Add an entry only after a fixture has
+# been confirmed unsupportable (e.g. requires reflection, JVM-only formatting
+# that won't byte-match, threading semantics not modeled in the runtime).
+#
+# Format: one entry per line, matching the file or directory name as listed
+# under `tests/run/`. `#` starts a comment. Always include a `# reason` tag
+# so future readers know why the entry was added.
+#
+# Example:
+#   reflect-foo.scala  # uses scala.reflect; not supported by the Python backend
