@@ -38,7 +38,9 @@ class ListBufferBench:
     buf.map(_ + 1)
 
   // Prepend + remove restores state. Measures prepend + head-remove cost.
+  // Returns the removed value so JMH consumes it via the auto-Blackhole on
+  // @Benchmark return, preventing DCE on the prepend/remove pair.
   @Benchmark
-  def mutate(): Unit =
+  def mutate(): Int =
     0 +=: buf
     buf.remove(0)

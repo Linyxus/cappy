@@ -38,7 +38,11 @@ class HashMapBench:
   def transform(): HashMap[Int, Int] =
     map.map((k, v) => (k, v + 1))
 
-  // Idempotent: overwrite existing key with the same value.
+  // Idempotent: overwrite existing key with the same value. Returns the
+  // read value so JMH consumes it via the auto-Blackhole on @Benchmark
+  // return, preventing redundant-store elimination from deleting the body.
   @Benchmark
-  def mutate(): Unit =
-    map(half) = map(half)
+  def mutate(): Int =
+    val v = map(half)
+    map(half) = v
+    v

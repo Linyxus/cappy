@@ -38,7 +38,11 @@ class ArrayBufferBench:
   def transform(): ArrayBuffer[Int] =
     buf.map(_ + 1)
 
-  // Idempotent: overwrite slot with its current value.
+  // Idempotent: overwrite slot with its current value. Returns the read
+  // value so JMH consumes it via the auto-Blackhole on @Benchmark return,
+  // preventing redundant-store elimination from deleting the body.
   @Benchmark
-  def mutate(): Unit =
-    buf(half) = buf(half)
+  def mutate(): Int =
+    val v = buf(half)
+    buf(half) = v
+    v

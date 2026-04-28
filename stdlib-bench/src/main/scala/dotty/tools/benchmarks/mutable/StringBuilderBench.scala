@@ -38,7 +38,11 @@ class StringBuilderBench:
   def transform(): String =
     sb.toString
 
-  // Idempotent: overwrite char with its current value.
+  // Idempotent: overwrite char with its current value. Returns the read
+  // value so JMH consumes it via the auto-Blackhole on @Benchmark return,
+  // preventing redundant-store elimination from deleting the body.
   @Benchmark
-  def mutate(): Unit =
-    sb.setCharAt(half, sb.charAt(half))
+  def mutate(): Char =
+    val v = sb.charAt(half)
+    sb.setCharAt(half, v)
+    v

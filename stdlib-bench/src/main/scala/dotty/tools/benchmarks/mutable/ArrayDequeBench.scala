@@ -38,7 +38,11 @@ class ArrayDequeBench:
   def transform(): ArrayDeque[Int] =
     deque.map(_ + 1)
 
-  // Idempotent: overwrite slot with its current value.
+  // Idempotent: overwrite slot with its current value. Returns the read
+  // value so JMH consumes it via the auto-Blackhole on @Benchmark return,
+  // preventing redundant-store elimination from deleting the body.
   @Benchmark
-  def mutate(): Unit =
-    deque(half) = deque(half)
+  def mutate(): Int =
+    val v = deque(half)
+    deque(half) = v
+    v
