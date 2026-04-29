@@ -46,4 +46,32 @@ that uses Python iteration semantics directly, sidestepping the JVM-style
 field-initialization issue (likely overlaps with the lazy-implicit cache
 field issue tracked in `issue-lazy-implicit-cache-field.md`).
 
+## Failed first attempt — Layer 3 (deferred)
+
+Tried a `library-py/src/scala/Enumeration.scala` override that used
+`@extern("builtins", "dir")` / `getattr` / `len` / `type` and
+`@extern("operator", "getitem")` to walk the Python instance dict and
+derive symbolic names. The override compiled but at link time produced
+`Unresolved instance method 'scala.EnumerationPy_.pyDir(...)'` etc. — i.e.
+`@extern` on a `def ... = native` body inside library-py is not being
+resolved as a facade, even though the same pattern works inside pylib-py
+(see `pylib-py/src/scala/python/runtime/PyStruct.scala`). The linker
+treats those declarations as ordinary instance methods of the encoded
+module class.
+
+Putting them inside the companion of `class Enumeration` failed for the
+same reason (renamed to a sibling `EnumerationPy` object — same error).
+The discrepancy between library-py and pylib-py @extern handling is a
+deeper question; until that's resolved, this override can't ship.
+
+Three plausible follow-ups:
+1. Investigate why pylib-py's `@extern` def-on-method emits a facade ref
+   while library-py's emits an instance method, and align them.
+2. Move the override to pylib-py (unconventional, but pylib does have the
+   plumbing already). Probably forces awkward circular-import shapes.
+3. Use `scala.python.Dynamic` instead of `@extern` for the introspection.
+   That bypasses the @extern path entirely.
+
+Defer to Layer 5 (research). The Enumeration fixtures stay failing.
+
 Specialist report: `/tmp/pyrun-analysis/cat-d-attr-errors.md` (D5).

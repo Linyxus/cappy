@@ -100,7 +100,12 @@ class Throwable (
   def this(message: String, cause: Throwable, enableSuppression: scala.Boolean, writableStackTrace: scala.Boolean) =
     this(message: Any, cause, enableSuppression, writableStackTrace)
 
-  private val message: String | Null =
+  // Stored under a field name distinct from any auxiliary-ctor parameter
+  // name. The aux ctors above accept a parameter spelled `message`; if the
+  // field were also `message`, codegen for those aux ctors could shadow or
+  // skip the field initializer, leaving `getMessage()` with no `self.message`
+  // to read (see notes/issue-throwable-message-missing.md).
+  private val msg: String | Null =
     ThrowablesSupport.throwableMessage(primary, e)
 
   private var capturedStackTrace: Any = _
@@ -116,7 +121,7 @@ class Throwable (
     e = cause
     this
 
-  def getMessage(): String | Null = message
+  def getMessage(): String | Null = msg
   def getCause(): Throwable | Null = e
   def getLocalizedMessage(): String | Null = getMessage()
 

@@ -108,11 +108,11 @@ well-formed fixtures. These touch `compiler/src/dotty/tools/backend/python/`.
 Goal: close the remaining pylib/library-py holes that cause concrete
 runtime errors on otherwise compile-clean fixtures.
 
-| # | Issue | Note | Impact |
-|---|-------|------|--------|
-| 3.1 | `Throwable.getMessage` missing `message` field | `issue-throwable-message-missing.md` | 2 fixtures |
-| 3.2 | `ObjectOutputStream(out)` constructor missing | `issue-objectoutputstream-no-args.md` | 5 fixtures |
-| 3.3 | `scala.Enumeration.nextName` missing | `issue-enumeration-nextname-missing.md` | 3 fixtures |
+| # | Issue | Note | Impact | Status |
+|---|-------|------|--------|--------|
+| 3.1 | `Throwable.getMessage` missing `message` field | `issue-throwable-message-missing.md` | 2 fixtures | Landed |
+| 3.2 | `ObjectOutputStream(out)` constructor missing | `issue-objectoutputstream-no-args.md` | 5 fixtures (write side); needs sibling `ObjectInputStream` for round-trip | Landed (write only) |
+| 3.3 | `scala.Enumeration.nextName` missing | `issue-enumeration-nextname-missing.md` | 3 fixtures | **Deferred to Layer 5** — `@extern` doesn't resolve as facade in library-py; needs investigation |
 
 **Verification (after Layer 3)**:
 
