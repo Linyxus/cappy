@@ -26,18 +26,25 @@ class PyStockRunTests:
   import PyStockRunTests.*
 
   // The full tests/run/ sweep is too large to finish under Vulpix's
-  // hard-coded 20-minute executeTestSuite cap. Partition by the first
-  // character of the fixture name so each chunk gets its own budget.
-  // See notes/issue-vulpix-test-suite-timeout.md.
+  // hard-coded 20-minute executeTestSuite cap. Earlier first-letter
+  // partitioning was too coarse: heavy fixtures cluster on a few letters
+  // (e.g. `t`, `p`), so those chunks blew the budget while `i` finished in
+  // ~4 min. Instead, hash-bucket fixture names into NumBuckets chunks via
+  // Java's deterministic String#hashCode + floorMod, which mixes heavy and
+  // light fixtures across all buckets so no single one is dominated by the
+  // slow tail. See notes/issue-vulpix-test-suite-timeout.md.
+  //
+  // NumBuckets = 8 yields ~213 fixtures/chunk for ~1708 fixtures, which
+  // comfortably fits the 20-min cap at numberOfWorkers = 2.
 
-  @Test def runPyTests_t: Unit =
-    runPyTestsChunk("runPyTests/t", FileFilter.predicate(startsWithLetter(_, 't')))
-
-  @Test def runPyTests_i: Unit =
-    runPyTestsChunk("runPyTests/i", FileFilter.predicate(startsWithLetter(_, 'i')))
-
-  @Test def runPyTests_other: Unit =
-    runPyTestsChunk("runPyTests/other", FileFilter.predicate(name => !startsWithLetter(name, 't') && !startsWithLetter(name, 'i')))
+  @Test def runPyTests_0: Unit = runPyTestsChunk("runPyTests/0", bucketFilter(0))
+  @Test def runPyTests_1: Unit = runPyTestsChunk("runPyTests/1", bucketFilter(1))
+  @Test def runPyTests_2: Unit = runPyTestsChunk("runPyTests/2", bucketFilter(2))
+  @Test def runPyTests_3: Unit = runPyTestsChunk("runPyTests/3", bucketFilter(3))
+  @Test def runPyTests_4: Unit = runPyTestsChunk("runPyTests/4", bucketFilter(4))
+  @Test def runPyTests_5: Unit = runPyTestsChunk("runPyTests/5", bucketFilter(5))
+  @Test def runPyTests_6: Unit = runPyTestsChunk("runPyTests/6", bucketFilter(6))
+  @Test def runPyTests_7: Unit = runPyTestsChunk("runPyTests/7", bucketFilter(7))
 
   private def runPyTestsChunk(group: String, chunkFilter: FileFilter): Unit =
     implicit val testGroup: TestGroup = TestGroup(group)
@@ -46,8 +53,8 @@ class PyStockRunTests:
     if hasScalaPySources("tests/run", filter) then
       compileFilesInDir("tests/run", scalaPyOptions, filter).checkRuns()
 
-  private def startsWithLetter(name: String, letter: Char): Boolean =
-    name.nonEmpty && Character.toLowerCase(name.charAt(0)) == letter
+  private def bucketFilter(bucket: Int): FileFilter =
+    FileFilter.predicate(name => Math.floorMod(name.hashCode, NumBuckets) == bucket)
 
 object PyStockRunTests extends ScalaPyTestSuite:
   // Lower parallelism for the run-py sweep. The PyReachability memoization
@@ -56,6 +63,12 @@ object PyStockRunTests extends ScalaPyTestSuite:
   // -Xmx16g. Treat any further heap work as a deeper investigation
   // separate from Layer 0; for now keep workers at 2.
   override def numberOfWorkers: Int = 2
+
+  /** Number of hash buckets the tests/run/ sweep is partitioned into. Each
+   *  bucket runs as its own @Test method so it gets its own 20-min Vulpix
+   *  executeTestSuite budget. Tune upward if any bucket regresses past ~18 min.
+   */
+  private[dotc] val NumBuckets: Int = 8
 
   private val excludelistFile: String = "py-compiler-tests/test/run-py-tests.excludelist"
 
