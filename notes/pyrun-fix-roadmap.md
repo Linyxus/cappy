@@ -1,4 +1,4 @@
-# PyRunTests fix roadmap
+# PyStockRunTests fix roadmap
 
 This roadmap orders the issues found in `/tmp/pyrun-analysis/SUMMARY.md` into
 **six layers**, lowest first. Each layer is independently shippable and has
@@ -24,10 +24,10 @@ unreliable.
 
 **Verification (after Layer 0)**:
 
-1. Run the full PyRunTests sweep once with no exclusions and no manual
+1. Run the full PyStockRunTests sweep once with no exclusions and no manual
    process kills:
    ```bash
-   sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PyRunTests"
+   sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PyStockRunTests"
    ```
 2. Expect: all 1708 fixtures complete (or are individually timed out and
    marked failed); no hung Python subprocesses left after sbt exits;
@@ -65,7 +65,7 @@ runtime failures hiding behind it.
    ```
 2. Re-run the sweep and diff against the baseline:
    ```bash
-   sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PyRunTests"
+   sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PyStockRunTests"
    diff /tmp/pyrun-analysis/baseline-failed.log testlogs/last-failed.log
    ```
 3. Expect: the diff shows ~80 fixtures going from failing to passing (the
@@ -184,7 +184,7 @@ remaining ~17 are Layer 5 work.
 
 But run4 only completed 334 of 1708 fixtures. The other ~1370 will surface
 their own patterns once the harness can finish. Schedule a fresh
-end-to-end PyRunTests sweep after Layer 4 and rebuild the manifest from
+end-to-end PyStockRunTests sweep after Layer 4 and rebuild the manifest from
 the new failure list. Likely outcomes:
 
 - High overlap with already-known categories (Attributes_Name was a

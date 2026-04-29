@@ -38,7 +38,7 @@ import java.util.jar.Attributes.{Name => AttributeName}
 and a downstream call site instantiates `new AttributeName(...)` for the
 `scalaCompilerVersion` constant. Because `scala.util.Properties` is part of the
 core stdlib and is pulled in transitively by Predef, every reachable set
-includes the dangling `Attributes_Name` reference. PyRunTests run4 logged 83
+includes the dangling `Attributes_Name` reference. PyStockRunTests run4 logged 83
 distinct `Unresolved class` events for this single class, blocking ~80 fixtures.
 
 `pylib-py/src/java/util/jar/` is empty — there is no Python-side `Attributes`
@@ -53,6 +53,6 @@ exact contract; for our use the simple case-sensitive form is enough), and
 `hashCode` (standard string-derived). ~15 lines.
 
 Verification: rebuild `scala-pylib-py`, recompile `scala-library-py`, re-run
-PyRunTests — expect ~80 fewer compile failures.
+PyStockRunTests — expect ~80 fewer compile failures.
 
 Specialist report: `/tmp/pyrun-analysis/cat-a-attributes-name.md`.

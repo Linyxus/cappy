@@ -19,11 +19,11 @@ import dotty.tools.vulpix.*
  *  Exempt only fixtures that are confirmed unsupportable, with a `# reason`
  *  tag so the exclusion is auditable.
  */
-@Category(Array(classOf[PyRunTests]))
-class PyRunTests:
+@Category(Array(classOf[PyStockRunTests]))
+class PyStockRunTests:
   import ParallelTesting.*
   import TestConfiguration.*
-  import PyRunTests.*
+  import PyStockRunTests.*
 
   // The full tests/run/ sweep is too large to finish under Vulpix's
   // hard-coded 20-minute executeTestSuite cap. Partition by the first
@@ -49,7 +49,7 @@ class PyRunTests:
   private def startsWithLetter(name: String, letter: Char): Boolean =
     name.nonEmpty && Character.toLowerCase(name.charAt(0)) == letter
 
-object PyRunTests extends ScalaPyTestSuite:
+object PyStockRunTests extends ScalaPyTestSuite:
   // Lower parallelism for the run-py sweep. The PyReachability memoization
   // (Layer 0.3) helps, but 5 parallel Ycheck/genPython phases on heavy
   // fixtures (e.g. poly-kinded-derives, partialFunctions) still exhaust

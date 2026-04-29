@@ -3,7 +3,7 @@
 ## Minimal example for reproducing
 
 ```bash
-sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PyRunTests"
+sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PyStockRunTests"
 ```
 
 With ~1705 fixtures, 2 workers, and ~5–8s per fixture (compile → link →
@@ -37,7 +37,7 @@ than any existing single test method, and we're using a single
 **Fix shape — pick one**:
 
 1. **Chunked `@Test def`s (recommended)**. Split `tests/run/` into multiple
-   test methods in `PyRunTests`, each covering a lexicographic slice
+   test methods in `PyStockRunTests`, each covering a lexicographic slice
    (`runPyTests_a_d`, `runPyTests_e_h`, ..., `runPyTests_u_z`). Each gets
    its own 20-min budget. The slicing primitive is `compileFilesInDir`
    with a custom `FileFilter` that accepts only fixtures matching the
@@ -55,7 +55,7 @@ than any existing single test method, and we're using a single
    constant.
 
 Recommend option 1 because it preserves the timeout guard against actual
-hangs while letting large suites finish. The PyRunTests file would gain
+hangs while letting large suites finish. The PyStockRunTests file would gain
 ~6 short test methods that all share the existing infrastructure.
 
 Specialist report: `/tmp/pyrun-analysis/harness-issues.md` (Issue #3).

@@ -2596,7 +2596,7 @@ object Build {
       Test / baseDirectory := baseDirectory.value.getParentFile,
       sourcesInBase := false,
 
-      // Sweeps over `tests/run/` (PyRunTests) keep ~1700 fixtures' worth of
+      // Sweeps over `tests/run/` (PyStockRunTests) keep ~1700 fixtures' worth of
       // compile/link state alive in the test fork; the JVM default heap
       // exhausts well before completion.
       javaOptions ++= Seq("-Xmx16g", "-Xms4g"),

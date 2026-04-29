@@ -12,7 +12,7 @@ import java.io.{PushbackReader, StringReader}
   println(r.read().toChar)  // expect: a
 ```
 
-Surfaced in PyRunTests run3 logs.
+Surfaced in PyStockRunTests run3 logs.
 
 ## Output vs Expected Behaviour
 

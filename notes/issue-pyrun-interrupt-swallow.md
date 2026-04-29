@@ -10,7 +10,7 @@ Any fixture whose generated Python hangs (e.g. infinite loop, uncaught
 - `tests/run/i20145.scala` — tailrec to 10_000_000.
 
 ```bash
-sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PyRunTests"
+sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PyStockRunTests"
 # Watch a worker get stuck on one of the above; Vulpix never reclaims it.
 ```
 

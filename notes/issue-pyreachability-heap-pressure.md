@@ -4,16 +4,16 @@
 
 ```bash
 # With the default ScalaPyTestSuite numberOfWorkers = 5 and JVM default heap:
-sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PyRunTests"
+sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PyStockRunTests"
 ```
 
 Reliably OOMs around fixture ~340/1700.
 
-The current PyRunTests workaround:
+The current PyStockRunTests workaround:
 - `Test / javaOptions += "-Xmx16g"` in `project/Build.scala` for
   `pyCompilerTests`;
 - `numberOfWorkers = 2` override in
-  `py-compiler-tests/test/scala/dotty/tools/dotc/PyRunTests.scala`.
+  `py-compiler-tests/test/scala/dotty/tools/dotc/PyStockRunTests.scala`.
 
 Even with that, run4 hit the OOM during a particular fixture's link phase
 (`tests/run/i6219.scala` and `runtime-richChar.scala`).
@@ -65,6 +65,6 @@ peak (especially the uncached `ancestorsOf()` work-set) is large enough that
    the analyzer is actually released.
 
 If those reduce per-fixture peak sufficiently, the `numberOfWorkers = 2`
-and `-Xmx16g` workarounds in PyRunTests can be reverted.
+and `-Xmx16g` workarounds in PyStockRunTests can be reverted.
 
 Specialist report: `/tmp/pyrun-analysis/harness-issues.md` (Issue #2).

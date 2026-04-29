@@ -11,7 +11,7 @@ import java.util.WeakHashMap
   println(m.get("k"))
 ```
 
-Surfaced in PyRunTests run3 logs (specific fixture not isolated; appears in
+Surfaced in PyStockRunTests run3 logs (specific fixture not isolated; appears in
 several stdlib-driven fixtures).
 
 ## Output vs Expected Behaviour
