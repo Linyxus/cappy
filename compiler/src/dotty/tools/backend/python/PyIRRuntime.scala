@@ -650,7 +650,12 @@ object PyIRRuntime:
        |        return _scpy_class_of_instance(self)
        |
        |    def toString__Ljava_dlang_dString(self):
-       |        return self.getClass__Ljava_dlang_dClass().getName__Ljava_dlang_dString() + "@" + _builtins.format(_scpy_identity_hash_code(self), "x")
+       |        # Mirror `Object.toString` JVM semantics: virtual dispatch
+       |        # through `hashCode()` (encoded as `__hash__` here), not the
+       |        # identity hash. Value classes and case classes override
+       |        # `__hash__`, so this picks up their wrapped-value hash and
+       |        # produces e.g. `L@0` instead of `L@<python id>`.
+       |        return self.getClass__Ljava_dlang_dClass().getName__Ljava_dlang_dString() + "@" + _builtins.format(self.__hash__() & 0xFFFFFFFF, "x")
        |
        |    def __str__(self):
        |        return self.toString__Ljava_dlang_dString()

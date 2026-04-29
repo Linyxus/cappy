@@ -160,7 +160,11 @@ deeper and don't have clear quick-win shapes.
 
 | # | Issue | Note | Status |
 |---|-------|------|--------|
-| 5.1 | NoneType value-class accessor pattern (4 fixtures) | `issue-nonetype-value-class-accessor.md` | needs per-fixture inspection |
+| 5.1 | "NoneType value-class accessor" cohort — split per fixture after investigation | `issue-nonetype-value-class-accessor.md` | t7396 **landed** (toString used identity hash); 5.1.a–d filed as separate sub-issues |
+| 5.1.a | `AttributeError` from None-receiver dispatch not caught as `NullPointerException` (`exceptions-2`) | `issue-nonetype-value-class-accessor.md` (5.1.a) | open |
+| 5.1.b | Function specialization bridge does not unbox `null` (`lambda-null`) | `issue-nonetype-value-class-accessor.md` (5.1.b) | open |
+| 5.1.c | Overloaded `equals` collapses to `__eq__`, untyped overload dropped (`numbereq`) | `issue-nonetype-value-class-accessor.md` (5.1.c) | open |
+| 5.1.d | `Seq[Char].##` disagreement across backings (`t4122`) | `issue-nonetype-value-class-accessor.md` (5.1.d) | open |
 | 5.2 | `transparent-object` missing inherited member (1 fixture) | `issue-transparent-object-missing-method.md` | needs DCE inspection |
 | 5.3 | `Mirror.SingletonProxy.fromProduct` (1 fixture) | `issue-mirror-singletonproxy-fromproduct.md` | likely library-py overlay gap |
 | 5.4 | Lazy-implicit cache field (1 fixture) | `issue-lazy-implicit-cache-field.md` | **blocked by `notes/dce-improvement-plan.md`** |
