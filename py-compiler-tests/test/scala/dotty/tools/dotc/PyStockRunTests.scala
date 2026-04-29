@@ -34,17 +34,28 @@ class PyStockRunTests:
   // light fixtures across all buckets so no single one is dominated by the
   // slow tail. See notes/issue-vulpix-test-suite-timeout.md.
   //
-  // NumBuckets = 8 yields ~213 fixtures/chunk for ~1708 fixtures, which
-  // comfortably fits the 20-min cap at numberOfWorkers = 2.
+  // NumBuckets = 16 yields ~107 fixtures/chunk for ~1708 fixtures. An
+  // earlier 8-bucket attempt still hit Vulpix's 20-min cap on one chunk
+  // (heavy fixtures clustered by hash) and OOM'd another at -Xmx16g; halving
+  // the bucket size keeps each chunk's worst-case heap and time well below
+  // the budget.
 
-  @Test def runPyTests_0: Unit = runPyTestsChunk("runPyTests/0", bucketFilter(0))
-  @Test def runPyTests_1: Unit = runPyTestsChunk("runPyTests/1", bucketFilter(1))
-  @Test def runPyTests_2: Unit = runPyTestsChunk("runPyTests/2", bucketFilter(2))
-  @Test def runPyTests_3: Unit = runPyTestsChunk("runPyTests/3", bucketFilter(3))
-  @Test def runPyTests_4: Unit = runPyTestsChunk("runPyTests/4", bucketFilter(4))
-  @Test def runPyTests_5: Unit = runPyTestsChunk("runPyTests/5", bucketFilter(5))
-  @Test def runPyTests_6: Unit = runPyTestsChunk("runPyTests/6", bucketFilter(6))
-  @Test def runPyTests_7: Unit = runPyTestsChunk("runPyTests/7", bucketFilter(7))
+  @Test def runPyTests_00: Unit = runPyTestsChunk("runPyTests/00", bucketFilter(0))
+  @Test def runPyTests_01: Unit = runPyTestsChunk("runPyTests/01", bucketFilter(1))
+  @Test def runPyTests_02: Unit = runPyTestsChunk("runPyTests/02", bucketFilter(2))
+  @Test def runPyTests_03: Unit = runPyTestsChunk("runPyTests/03", bucketFilter(3))
+  @Test def runPyTests_04: Unit = runPyTestsChunk("runPyTests/04", bucketFilter(4))
+  @Test def runPyTests_05: Unit = runPyTestsChunk("runPyTests/05", bucketFilter(5))
+  @Test def runPyTests_06: Unit = runPyTestsChunk("runPyTests/06", bucketFilter(6))
+  @Test def runPyTests_07: Unit = runPyTestsChunk("runPyTests/07", bucketFilter(7))
+  @Test def runPyTests_08: Unit = runPyTestsChunk("runPyTests/08", bucketFilter(8))
+  @Test def runPyTests_09: Unit = runPyTestsChunk("runPyTests/09", bucketFilter(9))
+  @Test def runPyTests_10: Unit = runPyTestsChunk("runPyTests/10", bucketFilter(10))
+  @Test def runPyTests_11: Unit = runPyTestsChunk("runPyTests/11", bucketFilter(11))
+  @Test def runPyTests_12: Unit = runPyTestsChunk("runPyTests/12", bucketFilter(12))
+  @Test def runPyTests_13: Unit = runPyTestsChunk("runPyTests/13", bucketFilter(13))
+  @Test def runPyTests_14: Unit = runPyTestsChunk("runPyTests/14", bucketFilter(14))
+  @Test def runPyTests_15: Unit = runPyTestsChunk("runPyTests/15", bucketFilter(15))
 
   private def runPyTestsChunk(group: String, chunkFilter: FileFilter): Unit =
     implicit val testGroup: TestGroup = TestGroup(group)
@@ -68,7 +79,7 @@ object PyStockRunTests extends ScalaPyTestSuite:
    *  bucket runs as its own @Test method so it gets its own 20-min Vulpix
    *  executeTestSuite budget. Tune upward if any bucket regresses past ~18 min.
    */
-  private[dotc] val NumBuckets: Int = 8
+  private[dotc] val NumBuckets: Int = 16
 
   private val excludelistFile: String = "py-compiler-tests/test/run-py-tests.excludelist"
 

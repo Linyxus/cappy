@@ -2598,8 +2598,10 @@ object Build {
 
       // Sweeps over `tests/run/` (PyStockRunTests) keep ~1700 fixtures' worth of
       // compile/link state alive in the test fork; the JVM default heap
-      // exhausts well before completion.
-      javaOptions ++= Seq("-Xmx16g", "-Xms4g"),
+      // exhausts well before completion. -Xmx24g is a safety margin over a
+      // bucket that observed OOM at 16g on the 8-bucket configuration before
+      // we halved bucket size to 16.
+      javaOptions ++= Seq("-Xmx24g", "-Xms4g"),
 
       javaOptions ++= (`scala3-compiler-bootstrapped` / javaOptions).value,
       javaOptions ++= {
