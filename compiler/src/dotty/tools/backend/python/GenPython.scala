@@ -1217,6 +1217,10 @@ private class PyCodeGen()(using genCtx: Context):
           case Some(tree) => break(tree)
           case None       => ()
 
+        genGetClassSpecial(app, pos) match
+          case Some(tree) => break(tree)
+          case None       => ()
+
         if !isStaticTarget && sym.name == nme.clone_ then
           app.fun match
             case Select(receiver, _) =>
@@ -1978,6 +1982,40 @@ private class PyCodeGen()(using genCtx: Context):
     sym == defn.BoxedIntClass ||
     sym == defn.BoxedLongClass ||
     sym == defn.BoxedFloatClass ||
+    sym == defn.BoxedDoubleClass
+
+  /** `Object.getClass()` is normally lowered to a direct method call
+   *  `obj.getClass__Ljava_dlang_dClass()`. That works for user-defined
+   *  classes, but fails for raw Python primitives (`int`, `str`, etc.)
+   *  which have no Scala method namespace. When the receiver's static
+   *  type is one of `Any` / `AnyVal` / `Object` / `Matchable` /
+   *  the boxed value classes / `String`, route to `_scpy_get_class`. */
+  private def genGetClassSpecial(app: Apply, pos: PyPosition): Option[PyTree] =
+    val sym = app.fun.symbol
+    if !isNullaryGetClass(sym) || sym.is(JavaStatic) then None
+    else
+      val receiver = qualifierOf(app.fun)
+      if receiver.isEmpty then None
+      else
+        val receiverType = receiver.tpe.widenDealias
+        if isRawPythonGetClassType(receiverType) then
+          Some(PyApplyExternal(
+            PyExternalName("_scpy_get_class"),
+            List(genExpr(receiver))
+          )(PyAnyType, pos))
+        else None
+
+  private def isNullaryGetClass(sym: Symbol): Boolean =
+    sym.exists && sym.name.mangledString == "getClass" && sym.info.paramInfoss.flatten.isEmpty
+
+  private def isRawPythonGetClassType(tp: Type): Boolean =
+    val sym = tp.widenDealias.typeSymbol
+    sym == defn.AnyClass || sym == defn.AnyValClass ||
+    sym == defn.MatchableClass || sym == defn.ObjectClass ||
+    sym == defn.StringClass || sym == charSequenceClass ||
+    sym == defn.BoxedBooleanClass || sym == defn.BoxedByteClass ||
+    sym == defn.BoxedShortClass || sym == defn.BoxedIntClass ||
+    sym == defn.BoxedLongClass || sym == defn.BoxedFloatClass ||
     sym == defn.BoxedDoubleClass
 
   /** String concatenation. The receiver is always String (post-erasure);

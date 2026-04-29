@@ -81,18 +81,19 @@ have a *different* root cause that was masked by the linker error.
 Goal: fix the codegen patterns that cause runtime errors in otherwise
 well-formed fixtures. These touch `compiler/src/dotty/tools/backend/python/`.
 
-| # | Issue | Note | Impact |
-|---|-------|------|--------|
-| 2.1 | Anonfun static synthesis loses captured `self` | `issue-anonfun-static-self-unbound.md` | 6+ fixtures incl. Parser.scala |
-| 2.2 | `Object.getClass()` on Python primitives | `issue-getclass-on-primitives.md` | 2 fixtures |
-| 2.3 | `_scpy_fn_specialized_forward` cyclic forward (Function0) | `issue-specialization-forward-recursion.md` | 1 fixture (potentially generic) |
+| # | Issue | Note | Impact | Status |
+|---|-------|------|--------|--------|
+| 2.1 | Anonfun static synthesis loses captured `self` | `issue-anonfun-static-self-unbound.md` | 6+ fixtures incl. Parser.scala | **Deferred to Layer 5** — broad heuristic regressed 215 pos-py fixtures; needs body-walking discriminator |
+| 2.2 | `Object.getClass()` on Python primitives | `issue-getclass-on-primitives.md` | 2 fixtures | Landed |
+| 2.3 | `_scpy_fn_specialized_forward` cyclic forward (Function0) | `issue-specialization-forward-recursion.md` | 1 fixture (potentially generic) | Landed |
 
 **Verification (after Layer 2)**:
 
 1. Re-run the sweep, diff against the post-Layer-1 baseline.
-2. Expect: the 6+ NameError fixtures (`given-eta`, `i9507`, `i24201a`,
-   `quoted-sematics-1`, `t7396`, `t7763`, `Parser`) flip to passing;
-   `matchable` and `string-switch` flip to passing; `t603` flips to passing.
+2. Expect: `matchable` and `string-switch` flip to passing; `t603` flips to
+   passing. The 6+ NameError fixtures (`given-eta`, `i9507`, `i24201a`,
+   `quoted-sematics-1`, `t7396`, `t7763`, `Parser`) remain failing — see
+   the deferred 2.1 item.
 3. As a sanity check, recompile and run the existing
    `tests/pos-py/` and raw-pylib suites to confirm no regression:
    ```bash

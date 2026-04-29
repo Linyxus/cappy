@@ -999,6 +999,12 @@ object PyIRRuntime:
        |        return _scpy_class_of_name("java.lang.String")
        |    return _scpy_class_of_name("java.lang.Object")
        |
+       |def _scpy_get_class(obj):
+       |    # Codegen intercept for `Object.getClass()` on Any/Object/Matchable/
+       |    # boxed/String receivers - avoids AttributeError on raw Python ints,
+       |    # strs, floats, bools by dispatching via _scpy_class_of_instance.
+       |    return _scpy_class_of_instance(obj)
+       |
        |def _scpy_is_assignable(target, source):
        |    if target is None or source is None:
        |        return False
@@ -1140,13 +1146,20 @@ object PyIRRuntime:
        |# walk finds a target in practice; the runtime fallback is a
        |# safety net for classes where only one shape survived (e.g.
        |# hand-rolled `JFunction*` classes).
+       |def _scpy_is_sp_method_name(name):
+       |    head = name.find("__")
+       |    prefix = name if head < 0 else name[:head]
+       |    return prefix.startswith("apply_mc") and prefix.endswith("_sp")
+       |
        |def _scpy_fn_specialized_forward(self, name):
        |    if not name.startswith("apply"):
        |        raise AttributeError(name)
        |    arity = _scpy_arity_of_method_name(name)
        |    if arity < 0:
        |        raise AttributeError(name)
+       |    name_is_sp = _scpy_is_sp_method_name(name)
        |    target = None
+       |    sp_fallback = None
        |    for cls in type(self).__mro__:
        |        for attr_name, attr_val in vars(cls).items():
        |            if attr_name == name:
@@ -1157,10 +1170,22 @@ object PyIRRuntime:
        |                continue
        |            if _scpy_arity_of_method_name(attr_name) != arity:
        |                continue
+       |            if _scpy_is_sp_method_name(attr_name):
+       |                # Sibling specialized stub. When the request itself
+       |                # is `_sp`, every same-arity sibling stub routes back
+       |                # through this dispatcher and would form a cycle, so
+       |                # reject. When the request is the boxed unspecialized
+       |                # form (case #2 above), accept as fallback only after
+       |                # we've confirmed no non-`_sp` shape exists in the MRO.
+       |                if not name_is_sp and sp_fallback is None:
+       |                    sp_fallback = attr_val
+       |                continue
        |            target = attr_val
        |            break
        |        if target is not None:
        |            break
+       |    if target is None:
+       |        target = sp_fallback
        |    if target is None:
        |        raise AttributeError(name)
        |    return target.__get__(self, type(self))

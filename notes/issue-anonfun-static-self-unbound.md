@@ -82,4 +82,36 @@ method, but the body still has `self` lexically.
 `this`, override the static flag — emit as instance method and add the
 captured receiver as a parameter (or rewrite body refs).
 
+## Failed first attempt — Layer 2 (deferred)
+
+Tried the simple heuristic
+`sym.is(JavaStatic) && sym.isAnonymousFunction && sym.owner.is(ModuleClass)`
+in three sites (`genMethod`, `genNormalApply`, `genClosure`) — flipping the
+namespace from `Public[/Private]Static` to `Public[/Private]`. The minimal
+i9507 reproducer was not verified end-to-end before rollout (multi-agent FS
+contention prevented a clean test), and a clean rebuild on top of Layer 2.2
++ 2.3 produced **215 failures in `runScalaPy` (pos-py) and 32 in
+`runScalaPyPylib`** with linker errors of the shape
+`Unresolved module class 'java.lang'` and `Unresolved module class
+'<empty>'`.
+
+The heuristic is too broad. It catches genuine lifted lambdas
+(`new Thread(() => …)`, etc.) whose bodies do *not* reference the
+enclosing receiver — flipping their namespace makes the call site try to
+load a module class that does not exist (the empty-package or `java.lang`
+$package module). Reverting Layer 2.1 alone restores the suite to clean.
+
+A correct fix needs a tighter discriminator. Two leads:
+
+1. Only flip when the body actually contains a `This(...)` (or `Ident(self)`)
+   that is *not* a `dd` parameter. That distinguishes "body uses `self`" from
+   "body is genuinely standalone."
+2. Look at the closure environment at the LambdaLift site: eta-expanded
+   extension methods have a non-empty env that captures `this`, while
+   `new Thread(() => …)` lifted lambdas do not.
+
+Both are heavier than the trivial flag flip. Treat as a **Layer 5 research
+item** (single-fixture or per-pattern fix) rather than re-attempting the
+broad heuristic. Affected fixtures are listed above.
+
 Specialist report: `/tmp/pyrun-analysis/cat-c-name-error.md`.
