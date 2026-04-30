@@ -20,8 +20,14 @@ object PyIRFormat:
    *  class-reflection unary/binary ops, `IntU*` / `LongU*` unsigned ops,
    *  `StringCharAt`). Old `.pyir` files containing these tags cannot be
    *  read by this version. The freed tag values are reserved.
+   *
+   *  Bumped to 4 when `PyFieldName` gained an `isPrivate` flag for
+   *  owner-aware mangling at the encoding layer. Private fields now
+   *  encode as `_scpy_f_<owner>__<simple>` to avoid colliding with
+   *  same-named subclass fields; public fields keep their simple name.
+   *  Old `.pyir` files lack the trailing flag byte and cannot be read.
    */
-  final val MajorVersion: Int = 3
+  final val MajorVersion: Int = 4
 
   /** Minor version. Reader accepts older minors and rejects newer. */
   final val MinorVersion: Int = 0

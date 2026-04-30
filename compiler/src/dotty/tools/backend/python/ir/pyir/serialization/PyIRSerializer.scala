@@ -155,6 +155,7 @@ object PyIRSerializer:
     private def writeFieldName(f: PyFieldName): Unit =
       writeClassNameRef(f.owner)
       writeString(f.simple.name)
+      writeBool(f.isPrivate)
 
     // -------------------------------------------------------------
     //  Top-level entry

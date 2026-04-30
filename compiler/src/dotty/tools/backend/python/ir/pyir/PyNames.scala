@@ -88,9 +88,32 @@ final case class PySimpleFieldName(name: String) extends PyName:
  *  declared in parent and subclass are distinct - matches JVM field
  *  shadowing semantics and frees the emitter from manual mangling of
  *  shadowed fields.
+ *
+ *  `encoded` mirrors JVM `resolveField`-by-declaring-class semantics:
+ *  PRIVATE fields are stored under a per-owner mangled attribute so
+ *  parent and subclass keep separate slots even when both ctors run on
+ *  the same instance (otherwise the parent's initializer overwrites the
+ *  subclass-set value). PUBLIC / PROTECTED fields keep their simple
+ *  name so hand-written runtime classes (e.g. `BoxedUnit.UNIT`,
+ *  `IntRef.elem`) interoperate with codegen by spelling.
+ *
+ *  The mangled form uses `PyClassRef.encodeFqn` for owner injectivity
+ *  (`_` → `_u`, `.` → `_d`). The leading `_scpy_f_` prefix keeps the
+ *  encoded name in the project-reserved namespace and ensures the
+ *  second character is `s`, NOT `_` — even when the owner FQN starts
+ *  with `_` (encoded as `_u…`), so Python's compile-time
+ *  `__name`-mangling rule never rewrites the field at the call site.
  */
-final case class PyFieldName(owner: PyClassName, simple: PySimpleFieldName) extends PyName:
-  def encoded: String = simple.name
+final case class PyFieldName(
+    owner: PyClassName,
+    simple: PySimpleFieldName,
+    isPrivate: Boolean = false
+) extends PyName:
+  def encoded: String =
+    if isPrivate then
+      s"_scpy_f_${PyClassRef.encodeFqn(owner.nameString)}__${simple.name}"
+    else
+      simple.name
 
 // --- Method names --------------------------------------------------
 
@@ -149,11 +172,21 @@ final case class PyMethodName(
     if simple.isConstructor then "__init__"
     else if simple.isStaticInit then "_scpy_clinit"
     else if PyMethodName.isDunder(simple.name) then simple.name
-    else if paramTypeRefs.isEmpty then
-      s"${simple.name}__${resultTypeRef.encoded}"
     else
-      val paramPart = paramTypeRefs.map(_.encoded).mkString("_")
-      s"${simple.name}__${paramPart}__${resultTypeRef.encoded}"
+      val raw =
+        if paramTypeRefs.isEmpty then
+          s"${simple.name}__${resultTypeRef.encoded}"
+        else
+          val paramPart = paramTypeRefs.map(_.encoded).mkString("_")
+          s"${simple.name}__${paramPart}__${resultTypeRef.encoded}"
+      // Python rewrites identifiers of the form `__name` (>=2 leading
+      // underscores, <=1 trailing) inside class bodies to
+      // `_<ClassName>__name`. Our raw form starts with `__` whenever the
+      // simple name itself starts with `_` (e.g. a Scala member named
+      // `$` sanitizes to `_`, then prefixes `__<sig>`). Prepend a stable
+      // non-underscore guard so the emitted call site is never rewritten
+      // by Python's compile-time mangling.
+      if raw.startsWith("__") then s"_scpy_m$raw" else raw
 
 object PyMethodName:
   /** Convenience for a nullary signature (void result, no params). */

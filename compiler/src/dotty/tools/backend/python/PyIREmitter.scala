@@ -273,7 +273,7 @@ object PyIREmitter:
       // level `None` default matches and breaks the cascade.
       if cls.kind == PyClassKind.ModuleClass && cls.fields.nonEmpty then
         for f <- cls.fields do
-          line(s"${f.name.simple.name} = ${classLevelFieldInitExpr(f)}")
+          line(s"${f.name.encoded} = ${classLevelFieldInitExpr(f)}")
 
       // Emit a no-arg `__init__(self)` (used by module lazy-init, and as
       // a Python-required entry point on `cls()` calls that the runtime
@@ -498,7 +498,7 @@ object PyIREmitter:
         line("pass")
       else
         for f <- cls.fields do
-          line(s"self.${f.name.simple.name} = ${fieldInitExpr(f)}")
+          line(s"self.${f.name.encoded} = ${fieldInitExpr(f)}")
       dedent()
 
     /** Emit a `def __init__(self, *args)` that JVM-style zero-initializes
@@ -528,7 +528,7 @@ object PyIREmitter:
       // Field zero-init: every instance attribute starts at the JVM
       // default for its declared type.
       for f <- cls.fields do
-        line(s"self.${f.name.simple.name} = ${fieldInitExpr(f)}")
+        line(s"self.${f.name.encoded} = ${fieldInitExpr(f)}")
       // Group ctors by arity. For each non-empty arity, emit a helper
       // call only when there is exactly one ctor at that arity (so
       // Python-protocol `cls(args)` can resolve unambiguously).
@@ -584,9 +584,14 @@ object PyIREmitter:
      *  `<container>`) so the per-instance `compareAndSet` calls have a
      *  real receiver. */
     private def fieldInitExpr(f: PyFieldDef): String =
-      val name = f.name.simple.name
-      if name.endsWith(LazyHandleSuffix) then
-        val container = name.stripSuffix(LazyHandleSuffix)
+      // The simple-name suffix detects the lazy-val handle field; the
+      // *container* attribute it operates on is the encoded name of
+      // the matching lazy-val storage field (so post-mangling the
+      // VarHandle's `compareAndSet` reaches the same Python attribute
+      // the lazy-init reads from / writes to).
+      val simple = f.name.simple.name
+      if simple.endsWith(LazyHandleSuffix) then
+        val container = f.name.encoded.stripSuffix(LazyHandleSuffix)
         s"_scpy_make_lazy_handle(\"${container}\")"
       else
         fieldDefaultExpr(f.ftpe)
@@ -597,9 +602,9 @@ object PyIREmitter:
      *  cascade (see the call site) keeps the JVM-style "uninitialized
      *  static field reads as null" semantics. */
     private def classLevelFieldInitExpr(f: PyFieldDef): String =
-      val name = f.name.simple.name
-      if name.endsWith(LazyHandleSuffix) then
-        val container = name.stripSuffix(LazyHandleSuffix)
+      val simple = f.name.simple.name
+      if simple.endsWith(LazyHandleSuffix) then
+        val container = f.name.encoded.stripSuffix(LazyHandleSuffix)
         s"_scpy_make_lazy_handle(\"${container}\")"
       else
         "None"
@@ -1163,9 +1168,9 @@ object PyIREmitter:
       case PyVarRef(name)      => name.name
       case PyThis()            => "self"
       case PySelect(qual, field) =>
-        s"${parenthesize(qual)}.${field.simple.name}"
+        s"${parenthesize(qual)}.${field.encoded}"
       case PySelectStatic(field) =>
-        s"${classIdentifier(field.owner)}.${field.simple.name}"
+        s"${classIdentifier(field.owner)}.${field.encoded}"
 
       // Calls
       case PyApply(_, receiver, className, method, args) =>

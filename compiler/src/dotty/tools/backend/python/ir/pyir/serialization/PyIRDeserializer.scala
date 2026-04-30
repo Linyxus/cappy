@@ -317,9 +317,10 @@ object PyIRDeserializer:
       else pyTypeFromTag(tag)
 
     private def readFieldName(): PyFieldName =
-      val owner  = readClassNameRef()
-      val simple = readString()
-      PyFieldName(owner, PySimpleFieldName(simple))
+      val owner     = readClassNameRef()
+      val simple    = readString()
+      val isPrivate = readBool()
+      PyFieldName(owner, PySimpleFieldName(simple), isPrivate)
 
     private def readBool(): Boolean = reader.readByte() != 0
 

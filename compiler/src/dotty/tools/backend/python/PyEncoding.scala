@@ -114,12 +114,32 @@ class PyEncoding(using Context):
   // --- Field names ---------------------------------------------------
 
   def encodeFieldName(sym: Symbol): PyFieldName =
-    // The owner is baked in so a subclass field shadowing a parent field
-    // produces a distinct PyFieldName. Python's attribute access uses only
-    // the simple name, so shadowing works via normal Python semantics.
+    // Owner-mangle fields whose user-facing access is genuinely
+    // private — i.e. no public/protected accessor exposes them. This
+    // matches JVM `resolveField`-by-declaring-class semantics for the
+    // private case (so a subclass `val msg` and a parent's private
+    // `val msg` don't alias to a single Python attribute), while
+    // keeping simple names for fields that participate in the public
+    // API (so JDK-typed code can reach pylib `final val`s by spelling,
+    // and hand-written runtime classes like `BoxedUnit.UNIT` /
+    // `IntRef.elem` interoperate by simple name).
+    //
+    // A `final val x` in a Scala object generates a private backing
+    // field PLUS a public accessor `def x`. dotc reports the field
+    // sym as `is(Private)`, but the user-source-level name `x` is
+    // public — readers go through the accessor or, for JDK-typed
+    // cross-language references, name `x` directly. We therefore
+    // consult the accessor's privacy when one exists, falling back
+    // to the symbol's own privacy when there's no accessor (true
+    // private storage like `Throwable.msg`).
+    val getter = sym.getter
+    val isUserPrivate =
+      if getter.exists then getter.is(Private)
+      else sym.is(Private)
     PyFieldName(
       encodeClassName(sym.owner),
-      PySimpleFieldName(sanitizeName(sym.name.mangledString))
+      PySimpleFieldName(sanitizeName(sym.name.mangledString)),
+      isPrivate = isUserPrivate
     )
 
   // --- Locals / labels -----------------------------------------------
@@ -445,4 +465,4 @@ object PyEncoding:
    *  whether a read of `Foo.x` should also keep `Foo_.x` alive (or vice
    *  versa). */
   def companionFieldOf(field: PyFieldName): PyFieldName =
-    PyFieldName(companionClassNameOf(field.owner), field.simple)
+    PyFieldName(companionClassNameOf(field.owner), field.simple, field.isPrivate)
