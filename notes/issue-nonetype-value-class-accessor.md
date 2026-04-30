@@ -14,7 +14,7 @@ the table.
 | 5.1.c | `numbereq.scala` | **Landed** (Layer 5 Wave 1) — `isEqualsAnyOverload` in `PyEncoding.specialMethodNameOf` |
 | 5.1.a | `exceptions-2.scala` | **Landed** (Layer 5 Wave 3) — `AttributeError` translates to `NullPointerException` |
 | 5.1.d | `t4122.scala` | **Open** — DCE drops inherited dunder; needs PyReachability fix |
-| 5.1.e | `lambda-null.scala` (residual) | **Open** — `null.asInstanceOf[Primitive]` does not unbox |
+| 5.1.e | `lambda-null.scala` (residual) | **Landed** — `genUnboxIfChar` extended to all primitives via `_scpy_unbox_or_default`; pos-py guard `null-asinstanceof-primitive` |
 
 ## 5.1.d — `Seq[Char]` hashCode disagreement across collection backings
 
@@ -51,20 +51,11 @@ previously-DCE'd ancestor methods unrelated to the dunder slot.
 A library-py workaround (type-dispatch in `Statics.anyHash`) would mask the
 real bug and contradicts the layered architecture.
 
-## 5.1.e — `null.asInstanceOf[Primitive]` does not unbox to default
+## 5.1.e — `null.asInstanceOf[Primitive]` did not unbox to default (landed)
 
-Reproducer (minimal):
-```scala
-def gen[A]: A = null.asInstanceOf[A]
-val r: Int = gen[Int]   // prints "null", r == 0 is false
-```
-
-JVM `BoxesRunTime.unboxToInt(null)` returns `0`; our `PyAsInstanceOf` lowering
-in `PyIREmitter.scala` is a no-op for everything except `PyCharType`. After
-5.1.b landed, the `lambda-null.scala` fixture advances past the specialized
-assertion and fails on `assert(genericCall1(if1_generic) == 0)` because of
-this cast.
-
-Fix shape: `PyAsInstanceOf` to a primitive type should emit
-`_scpy_unbox_or_default(tag, value)` (the helper introduced for 5.1.b), not
-just pass the value through.
+Was: `def gen[A]: A = null.asInstanceOf[A]; val r: Int = gen[Int]` left `r =
+None`. Fix in `genUnboxIfChar` (renamed-in-comment but kept-named for
+diff-friendliness): extended to all primitive boxers via
+`_scpy_unbox_or_default(tag, value)`. Char keeps its NPE-on-null behavior.
+Mirrored at `PyAsInstanceOf` lowering as defense-in-depth. Regression
+guard: `tests/pos-py/null-asinstanceof-primitive.scala`.

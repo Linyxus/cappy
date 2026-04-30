@@ -81,7 +81,7 @@ Apply all excludelist additions in one PR to
 | 5.1.b | Function specialization bridge does not unbox `null` (`lambda-null`) | **Landed** (Wave 2) |
 | 5.1.c | Overloaded `equals` collapses to `__eq__` (`numbereq`) | **Landed** (Wave 1) |
 | 5.1.d | `Seq[Char].##` disagreement across backings (`t4122`) — DCE drops inherited dunder | Open |
-| 5.1.e | `null.asInstanceOf[Primitive]` does not unbox (`lambda-null` residual) | Open |
+| 5.1.e | `null.asInstanceOf[Primitive]` does not unbox (`lambda-null` residual) | **Landed** |
 | 5.2 | `transparent-object` missing inherited member | **Landed** (cross-class This handler in `genNormalApply`) |
 | 5.3 | `Mirror.SingletonProxy.fromProduct` | Open — `issue-mirror-singletonproxy-fromproduct.md` (likely library-py overlay gap) |
 | 5.4 | Lazy-implicit cache field | Open — `issue-lazy-implicit-cache-field.md` (blocked by `dce-improvement-plan.md`) |
@@ -91,7 +91,7 @@ Apply all excludelist additions in one PR to
 
 | # | Issue | Status |
 |---|-------|--------|
-| 5.6 | `Class.getResourceAsStream` missing on `_scpy_Class` runtime | Open — `issue-class-getresourceasstream-missing.md` (exposed by Properties.scalaProps lazy-init now actually running) |
+| 5.6 | `Class.getResourceAsStream` missing on `_scpy_Class` runtime | **Landed** — null-returning stubs for `getResourceAsStream`/`getResource` (matches JVM "absent resource" path; Properties.scalaProps falls through to defaults) |
 | 5.7 | `override val` ctor-order collision under JVM-style chaining | Open — `issue-override-val-ctor-order.md` |
 
 ---

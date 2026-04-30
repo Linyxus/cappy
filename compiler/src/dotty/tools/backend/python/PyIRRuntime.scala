@@ -757,6 +757,17 @@ object PyIRRuntime:
        |            return None
        |        return _scpy_system_class_loader
        |
+       |    # Resource lookup is not wired up to a real classpath. Returning
+       |    # `None` matches what the JVM does for absent resources, which is
+       |    # the path most callers (e.g. `scala.util.Properties.scalaProps`
+       |    # via `getResourceAsStream("/library.properties")`) already
+       |    # handle by falling through to defaults.
+       |    def getResourceAsStream__Ljava_dlang_dString__Ljava_dio_dInputStream(self, name):
+       |        return None
+       |
+       |    def getResource__Ljava_dlang_dString__Ljava_dnet_dURL(self, name):
+       |        return None
+       |
        |    def toString__Ljava_dlang_dString(self):
        |        if self._scpy_kind == "primitive":
        |            return self._scpy_name
@@ -790,6 +801,10 @@ object PyIRRuntime:
        |            return self.isAssignableFrom__Ljava_dlang_dClass__Z
        |        if name.startswith("getClassLoader"):
        |            return self.getClassLoader__Ljava_dlang_dClassLoader
+       |        if name.startswith("getResourceAsStream"):
+       |            return self.getResourceAsStream__Ljava_dlang_dString__Ljava_dio_dInputStream
+       |        if name.startswith("getResource"):
+       |            return self.getResource__Ljava_dlang_dString__Ljava_dnet_dURL
        |        if name.startswith("toString"):
        |            return self.toString__Ljava_dlang_dString
        |        raise AttributeError(name)
