@@ -84,7 +84,7 @@ Apply all excludelist additions in one PR to
 | 5.1.e | `null.asInstanceOf[Primitive]` does not unbox (`lambda-null` residual) | **Landed** |
 | 5.2 | `transparent-object` missing inherited member | **Landed** (cross-class This handler in `genNormalApply`) |
 | 5.3 | `Mirror.SingletonProxy.fromProduct` | **Landed** — handwritten `Mirror_*` runtime methods used a placeholder `__O` suffix instead of the erased `__Ljava_dlang_dObject` shape; renamed to match call sites |
-| 5.4 | Lazy-implicit cache field | Open — `issue-lazy-implicit-cache-field.md` (blocked by `dce-improvement-plan.md`) |
+| 5.4 | Lazy-implicit cache field | **Landed transitively** — passes after the encoding fix + 5.1.d inherited-dunder walk; verified `tests/run/lazy-implicit-lists.scala` exits 0 with matching output |
 | 5.5 (encoding) | Owner-aware private-field mangling + `__`-prefix method guard | **Landed** — fixed CommandLineParser regression and t6888 inner-class accessor mangle in one shot |
 
 **New surfacings (post-encoding-fix):**
@@ -113,5 +113,5 @@ makes this trivial to repeat.
 | 2 | Codegen correctness | 2.2, 2.3 landed; 2.1 deferred |
 | 3 | Stdlib / pylib runtime | 3.1, 3.2 (write) landed; 3.2 (read) and 3.3 open |
 | 4 | Excludelist housekeeping | Pending PR |
-| 5 | Research / blocked | Most landed; 5.4 (lazy-implicit cache, blocked) remains |
+| 5 | Research / blocked | All Layer 5 sub-items landed |
 | 6 | Wave 2 sweep | Re-run after Layer 4 lands |
