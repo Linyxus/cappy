@@ -1311,6 +1311,24 @@ private class PyCodeGen()(using genCtx: Context):
                     methodName,
                     args
                   )(resultTpe, pos)
+                case Select(qual: This, _) if qual.symbol != currentClassSym =>
+                  // Inlined call: the bare `Ident(bar)` lives in
+                  // `currentClassSym` (the inline call site, e.g. `Test_`)
+                  // but its TermRef prefix points at a *different* enclosing
+                  // class (e.g. `This(Foo)`). Routing through the local
+                  // `self` would dispatch on the call site's receiver, which
+                  // does not extend the inlined method's owner — at runtime
+                  // Python raises `AttributeError`. Reuse `genExpr(qual)`
+                  // so cross-class This is lowered correctly: a module class
+                  // becomes `PyLoadModule(<ModuleClass>)`, recovering the
+                  // intended singleton receiver.
+                  PyApply(
+                    PyApplyFlags.empty,
+                    genExpr(qual),
+                    ownerName,
+                    methodName,
+                    args
+                  )(resultTpe, pos)
                 case _ =>
                   val classTpe = PyClassType(encoding.encodeClassName(currentClassSym))
                   PyApply(

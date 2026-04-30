@@ -88,10 +88,25 @@ class PyEncoding(using Context):
     rawName match
       case "hashCode" if sym.info.paramInfoss.flatten.isEmpty =>
         Some("__hash__")
-      case "equals" if sym.info.paramInfoss.flatten.length == 1 =>
+      case "equals" if isEqualsAnyOverload(sym) =>
+        // Only the canonical `equals(Any)` (post-erasure: `equals(Object)`)
+        // is rerouted to Python's `__eq__`. Typed overloads such as
+        // `BigDecimal.equals(that: BigDecimal)` keep their mangled name so
+        // they do not clobber the `__eq__` slot — Python invokes `__eq__`
+        // for ANY comparand, and a typed overload's body can assume the
+        // narrow type and crash when called with something else (e.g.
+        // `BigDecimal == None`). See `notes/issue-nonetype-value-class-accessor.md`.
         Some("__eq__")
       case _ =>
         None
+
+  private def isEqualsAnyOverload(sym: Symbol): Boolean =
+    sym.info.paramInfoss.flatten match
+      case paramInfo :: Nil =>
+        val ps = paramInfo.typeSymbol
+        ps == defn.AnyClass || ps == defn.ObjectClass
+      case _ =>
+        false
 
   private def paramTypeRefsOf(sym: Symbol): List[PyTypeRef] =
     sym.info.paramInfoss.flatten.map(encodeTypeRef)

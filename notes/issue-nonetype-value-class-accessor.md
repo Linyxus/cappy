@@ -92,6 +92,17 @@ Fix: only map `equals(Any)` to `__eq__`. The typed overload should keep
 its mangled name (`equals_extension__Lscala_dmath_dBigDecimal__Z` or
 similar). Same logic applies to any value-class `equals(SpecificType)`.
 
+**Status (Layer 5 Wave 1):** **Landed** in `PyEncoding.scala`
+(`isEqualsAnyOverload` predicate; only `equals(Any)`/`equals(Object)`
+maps to `__eq__`, typed overloads keep mangled names).
+
+The original `AttributeError: 'NoneType' has no attribute 'bigDecimal_…'`
+is resolved. The numbereq fixture itself still fails, but with a
+different and unrelated error: `TypeError: must be real number, not
+java_lang_Double` from `_scpy_float_to_str` — boxed `java.lang.Double`
+isn't being unboxed before `math.isnan(x)`. Filed as a separate
+follow-up.
+
 ### 5.1.d `Seq[Char]` hashCode disagreement across collection backings
 
 Reproducer: `tests/run/t4122.scala`. `"ab".##`, `Array('a','b').toIndexedSeq.##`,
