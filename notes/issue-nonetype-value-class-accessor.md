@@ -1,177 +1,70 @@
-# Layer 5.1 — fixture cohort split into separate sub-issues
+# Layer 5.1 — remaining sub-issues
 
-The original umbrella issue ("value-class accessor on `None` raises
-`AttributeError`") turned out to be a misdiagnosis. The five fixtures listed
-in `notes/pyrun-fix-roadmap.md` Layer 5.1 hit five DIFFERENT bugs once
-investigated. Notes by fixture below.
+The original umbrella ("value-class accessor on `None` raises `AttributeError`")
+was a misdiagnosis. The five fixtures hit five different bugs. This note
+tracks only the still-open sub-issues; the landed ones are summarized below
+the table.
 
-## Status table
+## Status
 
-| Fixture | Real symptom | Root cause | Fix |
-|---|---|---|---|
-| `tests/run/t7396.scala` | `AssertionError` (was thought to be NoneType.x__I) | `_scpy_Object.toString` used identity hash instead of dispatching `hashCode()`; value classes override `__hash__`, so toString printed `L@a063c50` instead of `L@0` | **Landed**: `PyIRRuntime.scala` toString now calls `self.__hash__()` |
-| `tests/run/exceptions-2.scala` | `AttributeError: 'NoneType' object has no attribute 'x__I'` | Source does `val a: Leaf = null; println(a.x)` and expects `NullPointerException` to be caught. `Leaf` is a regular case class, not a value class. Python `AttributeError` is not translated to `NullPointerException`. | Deferred to **5.1.a** below |
-| `tests/run/lambda-null.scala` | `AssertionError` | `genericCall1(if1_specialized)` calls `apply(null)` → specialized lambda gets Python `None`, prints `null`, returns `None` instead of unboxing to `0`. Function specialization bridge does not unbox null arguments. | Deferred to **5.1.b** below |
-| `tests/run/numbereq.scala` | `AttributeError: 'NoneType' object has no attribute 'bigDecimal__Ljava_dmath_dBigDecimal'` | `BigDecimal.__eq__` was emitted from `equals(BigDecimal)` overload (which calls `compare(that)`) rather than `equals(Any)` overload (which pattern-matches first). Both encode to `__eq__` and the second emission wins. | Deferred to **5.1.c** below |
-| `tests/run/t4122.scala` | `AssertionError` | `Seq[Char].##` differs across `String`, `IndexedSeq` from Array, `Seq.apply`, and `String.toList`. Seq hashCode bug, unrelated to value classes. | Deferred to **5.1.d** below |
+| Sub | Fixture | Status |
+|---|---|---|
+| 5.1 (root) | `t7396.scala` | **Landed** — `_scpy_Object.toString` now dispatches `self.__hash__()` |
+| 5.1.b | `lambda-null.scala` | **Landed** (Layer 5 Wave 2) — `_scpy_unbox_or_default` in `genClosure` |
+| 5.1.c | `numbereq.scala` | **Landed** (Layer 5 Wave 1) — `isEqualsAnyOverload` in `PyEncoding.specialMethodNameOf` |
+| 5.1.a | `exceptions-2.scala` | **Landed** (Layer 5 Wave 3) — `AttributeError` translates to `NullPointerException` |
+| 5.1.d | `t4122.scala` | **Open** — DCE drops inherited dunder; needs PyReachability fix |
+| 5.1.e | `lambda-null.scala` (residual) | **Open** — `null.asInstanceOf[Primitive]` does not unbox |
 
-## What landed
+## 5.1.d — `Seq[Char]` hashCode disagreement across collection backings
 
-**Fix to `_scpy_Object.toString__Ljava_dlang_dString`** in
-`compiler/src/dotty/tools/backend/python/PyIRRuntime.scala`. Replaced
-`_scpy_identity_hash_code(self)` with `self.__hash__() & 0xFFFFFFFF`.
+Reproducer: `tests/run/t4122.scala`. `"ab".##`, `Array('a','b').toIndexedSeq.##`,
+`Seq('a','b').##`, `"ab".toList.##` should all be equal per the Scala
+`Seq.hashCode` contract. On Python they differ.
 
-Rationale: JVM `Object.toString` is `getClass().getName() + "@" +
-Integer.toHexString(hashCode())`, where `hashCode()` is virtual dispatch.
-Value classes override `__hash__` (mapped from Scala `hashCode`), so calling
-`self.__hash__()` picks up the wrapped-value hash. The `& 0xFFFFFFFF` mimics
-`Integer.toHexString` on a negative int: Python `format(-1, 'x') == '-1'`
-but Java prints `'ffffffff'`.
+Root cause is in `compiler/src/dotty/tools/backend/python/PyReachability.scala`,
+not in `library-py`. Inspecting the bundled `out/runPyTests/run/t4122/t4122.py`:
 
-`_scpy_identity_hash_code` is still used by `System.identityHashCode` and
-by emitter fallback `__hash__` bodies (no override → identity-like default).
+- `scala_collection_Seq` emits `__eq__` but not `__hash__`; line ~9340 has
+  `__hash__ = _scpy_Object.__hash__` from
+  `PyIREmitter.maybeRebindInheritedHash` — i.e. `Seq.hashCode` → `__hash__`
+  was DCE-pruned from `cls.methods` before emission.
+- `WrappedString` and `List` (`::`) have no `__hash__` either — they
+  inherit `_scpy_Object.__hash__` (identity hash).
+- `ArraySeq.ofChar` works because it defines `hashCode` LOCALLY, so the
+  dunder-keep at `PyReachability.scala:337-345` covers it.
 
-Verification:
-- `tests/run/t7396.scala` now exits 0 (assertions pass).
-- 73/73 unit tests + 215/215 pos-py + 3/3 negScalaPy regression suites: green.
+The dunder-keep rule only loops `cd.methods` of the instantiated class; it
+misses dunders inherited from trait/abstract parents. The virtual-call-log
+replay path (`replayVirtualLog` → `resolveInstanceMethod`) is supposed to
+compensate by walking ancestors, but isn't reaching `Seq.hashCode` here.
+Suspect a `PyMethodName` mismatch between the `(Object, __hash__, [],
+IntRef)` logged at the `x.hashCode` call site in `Statics.anyHash` and the
+deserialized `Seq.__hash__` member in `Seq.pyir` (different result-type
+encoding `PyClassRef(IntClass)` vs `PyPrimRef.IntRef`).
 
-## Sub-issues to file
+Fix path: in `PyReachability`, the dunder-keep rule should walk ancestors
+when an instantiated class doesn't define its own dunder. Focused fix
+probably ~10 lines but needs careful verification that it doesn't reactivate
+previously-DCE'd ancestor methods unrelated to the dunder slot.
 
-### 5.1.a `AttributeError` from None-receiver method dispatch is not catchable as `NullPointerException`
+A library-py workaround (type-dispatch in `Statics.anyHash`) would mask the
+real bug and contradicts the layered architecture.
 
-Reproducer: `tests/run/exceptions-2.scala` `Test.method2`:
-```scala
-val a: Leaf = null
-println(a.x)
-// catches `case _: NullPointerException`
-```
-`Leaf` is a case class (NOT a value class). Generated code is
-`a_2.x__I()` with `a_2 = None`, raising `AttributeError`. The catch arm
-tests `_scpy_is_value_of_type(ex, _scpy_class_of_name("java.lang.NullPointerException"))`,
-which is `False` for `AttributeError`.
-
-Possible fixes (each has tradeoffs):
-- (i) In `_scpy_is_value_of_type`, treat `AttributeError` as
-  `NullPointerException`. Risk: real Python AttributeErrors (from
-  facades/dynamic) would also be rewritten. Could narrow with
-  message-pattern check ("'NoneType' object").
-- (ii) In codegen, wrap every instance-method dispatch in a try/except that
-  converts `AttributeError` on `None` receiver to `NullPointerException`.
-  Heavy.
-- (iii) Lower null-receiver checks at compile time when the receiver type
-  is statically nullable. Best long-term but bigger.
-
-Probably (i) with a narrow `NoneType` filter is cheapest.
-
-### 5.1.b Function specialization bridge does not unbox `null` arguments
-
-Reproducer: `tests/run/lambda-null.scala` `genericCall1[A,B](foo: A=>B) =
-foo(null.asInstanceOf[A])`. When `foo` is `Int=>Int` (specialized), the
-generic `apply(Object): Object` bridge passes `null` straight through to
-the specialized `apply$mcII$sp(int): int` body, which then prints
-`specialized Function1: null` and returns `None`. Scala JVM unboxes
-`null → 0` in the bridge.
-
-Fix probably belongs in `_scpy_Fn1` / `Function1` runtime in
-`PyIRRuntime.scala` or wherever `apply_mcII_sp` forwards from
-`apply__Ljava_dlang_dObject__Ljava_dlang_dObject`. Need to unbox `None`
-to the primitive default per the result type tag.
-
-**Status (Layer 5 Wave 2):** **Landed**. The fix went into `genClosure`
-in `GenPython.scala`, not the runtime — at lambda creation time the
-codegen knows the target's SAM-position param types. Each primitive-
-typed samarg is wrapped in `_scpy_unbox_or_default(tag, samarg)`, a new
-helper in `PyIRRuntime.scala` that returns the primitive default when
-the value is `None`. Non-primitive params bypass the wrapper. The
-generated lambda for `Int => Int` becomes
-`lambda _scpy_samarg_0: ..._anonfun_1__I__I(_scpy_unbox_or_default("I", _scpy_samarg_0))`.
-
-Specialized-call line of the fixture's `.check` (`specialized Function1: 0`)
-now matches; the fixture as a whole still fails on a separate orthogonal
-bug — see 5.1.e below.
-
-### 5.1.e `null.asInstanceOf[Primitive]` does not unbox to default
+## 5.1.e — `null.asInstanceOf[Primitive]` does not unbox to default
 
 Reproducer (minimal):
 ```scala
 def gen[A]: A = null.asInstanceOf[A]
 val r: Int = gen[Int]   // prints "null", r == 0 is false
 ```
-Discovered while verifying 5.1.b. JVM `BoxesRunTime.unboxToInt(null)`
-returns `0`; our `PyAsInstanceOf` lowering in `PyIREmitter.scala` is a
-no-op for everything except `PyCharType`. After 5.1.b, the
-`lambda-null.scala` fixture advances past the specialized assertion and
-fails on `assert(genericCall1(if1_generic) == 0)` because of this cast.
 
-### 5.1.c Overloaded `equals` collapses both onto `__eq__` (last writer wins)
+JVM `BoxesRunTime.unboxToInt(null)` returns `0`; our `PyAsInstanceOf` lowering
+in `PyIREmitter.scala` is a no-op for everything except `PyCharType`. After
+5.1.b landed, the `lambda-null.scala` fixture advances past the specialized
+assertion and fails on `assert(genericCall1(if1_generic) == 0)` because of
+this cast.
 
-Reproducer: `tests/run/numbereq.scala` exercises
-`scala.math.BigDecimal.equals`. Source has both
-`equals(that: Any): Boolean` and `equals(that: BigDecimal): Boolean` (two
-distinct methods). `PyEncoding.specialMethodNameOf` maps every 1-arg
-`equals` to `__eq__`. Generated Python keeps only the typed-overload
-version (`return compare(that) == 0`), which then dereferences `that`
-without a type guard and explodes when `that = None` (e.g. comparing
-BigDecimal to a non-Number).
-
-Fix: only map `equals(Any)` to `__eq__`. The typed overload should keep
-its mangled name (`equals_extension__Lscala_dmath_dBigDecimal__Z` or
-similar). Same logic applies to any value-class `equals(SpecificType)`.
-
-**Status (Layer 5 Wave 1):** **Landed** in `PyEncoding.scala`
-(`isEqualsAnyOverload` predicate; only `equals(Any)`/`equals(Object)`
-maps to `__eq__`, typed overloads keep mangled names).
-
-The original `AttributeError: 'NoneType' has no attribute 'bigDecimal_…'`
-is resolved. The numbereq fixture itself still fails, but with a
-different and unrelated error: `TypeError: must be real number, not
-java_lang_Double` from `_scpy_float_to_str` — boxed `java.lang.Double`
-isn't being unboxed before `math.isnan(x)`. Filed as a separate
-follow-up.
-
-### 5.1.d `Seq[Char]` hashCode disagreement across collection backings
-
-Reproducer: `tests/run/t4122.scala`. `"ab".##`, `Array('a','b').toIndexedSeq.##`,
-`Seq('a','b').##`, `"ab".toList.##` should all be equal (Scala `Seq.hashCode`
-contract). On Python they differ. Probably caused by `WrappedString`,
-`ArraySeq`, `List.hashCode` walking different paths. Investigate
-`MurmurHash3` / `Statics.unorderedHash`/`orderedHash` ports.
-
-**Status (Layer 5 Wave 3):** Investigation only. Root cause is a DCE
-issue in `compiler/src/dotty/tools/backend/python/PyReachability.scala`,
-not in library-py. Inspecting the bundled `out/runPyTests/run/t4122/t4122.py`:
-
-- `scala_collection_Seq` emits `__eq__` but not `__hash__`; line ~9340
-  has `__hash__ = _scpy_Object.__hash__` from
-  `PyIREmitter.maybeRebindInheritedHash` — i.e. `Seq.hashCode` →
-  `__hash__` was DCE-pruned from `cls.methods` before emission.
-- `WrappedString` and `List` (`::`) have no `__hash__` either — they
-  inherit `_scpy_Object.__hash__` (identity hash).
-- `ArraySeq.ofChar` works because it defines `hashCode` LOCALLY, so the
-  dunder-keep at `PyReachability.scala:337-345` covers it.
-
-The dunder-keep rule there only loops `cd.methods` of the instantiated
-class; it misses dunders inherited from trait/abstract parents. The
-virtual-call-log replay path (`replayVirtualLog` →
-`resolveInstanceMethod`) is supposed to compensate by walking
-ancestors, but isn't reaching `Seq.hashCode` here. Suspect a
-`PyMethodName` mismatch between the `(Object, __hash__, [], IntRef)`
-logged at the `x.hashCode` call site in `Statics.anyHash` and the
-deserialized `Seq.__hash__` member in `Seq.pyir` (different
-result-type encoding `PyClassRef(IntClass)` vs `PyPrimRef.IntRef`).
-
-Fix path: in `PyReachability`, the dunder-keep rule should walk
-ancestors when an instantiated class doesn't define its own dunder.
-A focused fix probably lives within ~10 lines but needs careful
-verification that it doesn't reactivate previously-DCE'd ancestor
-methods unrelated to the dunder slot.
-
-Defer for a focused PyReachability work item. A library-py workaround
-(type-dispatch in `Statics.anyHash`) would mask the real bug AND
-contradicts the layered architecture.
-
-## Original umbrella note (preserved for context)
-
-[See git history of this file before the Layer 5.1 split for the
-"value-class accessor on None" hypothesis. Discarded — none of the five
-fixtures actually share that root cause.]
+Fix shape: `PyAsInstanceOf` to a primitive type should emit
+`_scpy_unbox_or_default(tag, value)` (the helper introduced for 5.1.b), not
+just pass the value through.
