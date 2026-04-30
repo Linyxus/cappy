@@ -77,6 +77,32 @@ Fix probably belongs in `_scpy_Fn1` / `Function1` runtime in
 `apply__Ljava_dlang_dObject__Ljava_dlang_dObject`. Need to unbox `None`
 to the primitive default per the result type tag.
 
+**Status (Layer 5 Wave 2):** **Landed**. The fix went into `genClosure`
+in `GenPython.scala`, not the runtime — at lambda creation time the
+codegen knows the target's SAM-position param types. Each primitive-
+typed samarg is wrapped in `_scpy_unbox_or_default(tag, samarg)`, a new
+helper in `PyIRRuntime.scala` that returns the primitive default when
+the value is `None`. Non-primitive params bypass the wrapper. The
+generated lambda for `Int => Int` becomes
+`lambda _scpy_samarg_0: ..._anonfun_1__I__I(_scpy_unbox_or_default("I", _scpy_samarg_0))`.
+
+Specialized-call line of the fixture's `.check` (`specialized Function1: 0`)
+now matches; the fixture as a whole still fails on a separate orthogonal
+bug — see 5.1.e below.
+
+### 5.1.e `null.asInstanceOf[Primitive]` does not unbox to default
+
+Reproducer (minimal):
+```scala
+def gen[A]: A = null.asInstanceOf[A]
+val r: Int = gen[Int]   // prints "null", r == 0 is false
+```
+Discovered while verifying 5.1.b. JVM `BoxesRunTime.unboxToInt(null)`
+returns `0`; our `PyAsInstanceOf` lowering in `PyIREmitter.scala` is a
+no-op for everything except `PyCharType`. After 5.1.b, the
+`lambda-null.scala` fixture advances past the specialized assertion and
+fails on `assert(genericCall1(if1_generic) == 0)` because of this cast.
+
 ### 5.1.c Overloaded `equals` collapses both onto `__eq__` (last writer wins)
 
 Reproducer: `tests/run/numbereq.scala` exercises

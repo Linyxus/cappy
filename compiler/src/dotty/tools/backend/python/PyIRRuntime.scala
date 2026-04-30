@@ -1809,6 +1809,28 @@ object PyIRRuntime:
        |        raise NullPointerException()
        |    return _scpy_to_str(x)
        |
+       |# Lambda parameter unboxing for primitive-typed SAM call sites.
+       |# A specialized closure like `Int => Int` may still be invoked through
+       |# the boxed `Function1.apply(Object): Object` SAM bridge with a
+       |# `null`/`None` argument (e.g. `genericCall1` calls
+       |# `foo(null.asInstanceOf[A])`). On the JVM the specialization bridge
+       |# unboxes `null -> 0`/`0L`/`false` before forwarding to the primitive
+       |# body. `GenPython.genClosure` injects this helper around each SAM
+       |# argument whose target parameter is primitive; non-primitive SAM
+       |# parameters bypass the wrapper entirely.
+       |def _scpy_unbox_or_default(tag, value):
+       |    if value is not None:
+       |        return value
+       |    if tag == "I" or tag == "S" or tag == "B" or tag == "C":
+       |        return 0
+       |    if tag == "J":
+       |        return 0
+       |    if tag == "F" or tag == "D":
+       |        return 0.0
+       |    if tag == "Z":
+       |        return False
+       |    return None
+       |
        |def _scpy_int_to_string_radix(value, radix):
        |    if radix < 2 or radix > 36:
        |        radix = 10

@@ -2551,8 +2551,28 @@ private class PyCodeGen()(using genCtx: Context):
       )
     }
 
+    // For primitive-typed SAM parameters, the target body expects an
+    // unboxed value (`int`, `float`, `bool`, ...) but the SAM dispatch
+    // path can still pass `None` when the call site goes through the
+    // boxed `apply(Object): Object` bridge with a `null` argument
+    // (e.g. `genericCall1(if1_specialized)` where the source is
+    // `foo(null.asInstanceOf[A])`). On the JVM the specialization
+    // bridge unboxes `null -> 0` before forwarding. We replicate that
+    // by wrapping each primitive samarg ref in `_scpy_unbox_or_default`,
+    // which is a no-op when the actual value is already a primitive
+    // and substitutes the primitive default when the value is `None`.
+    // Non-primitive (Object/class-typed) target params bypass the
+    // wrapper entirely so reference nulls still propagate.
     val samArgRefs: List[PyTree] = samParams.map { p =>
-      PyVarRef(p.name)(p.ptpe, pos)
+      val ref = PyVarRef(p.name)(p.ptpe, pos)
+      primitiveTagOf(p.ptpe) match
+        case Some(tag) =>
+          PyApplyExternal(
+            PyExternalName("_scpy_unbox_or_default"),
+            List(PyStringLit(tag)(pos), ref)
+          )(p.ptpe, pos)
+        case None =>
+          ref
     }
     val callArgs: List[PyTree] = envValues ++ samArgRefs
 
@@ -2595,6 +2615,22 @@ private class PyCodeGen()(using genCtx: Context):
       resultType = resultTpe,
       body       = body
     )(pos)
+
+  /** If `tpe` is one of the eight JVM primitive value types, return its
+   *  one-letter tag (matching `PyPrimRef.Tag.encoded`). Used by
+   *  `genClosure` to decide whether to wrap a SAM parameter in
+   *  `_scpy_unbox_or_default` so that a `null`/`None` arriving via the
+   *  boxed `apply(Object)` bridge becomes the primitive default. */
+  private def primitiveTagOf(tpe: PyType): Option[String] = tpe match
+    case PyIntType     => Some("I")
+    case PyLongType    => Some("J")
+    case PyShortType   => Some("S")
+    case PyByteType    => Some("B")
+    case PyCharType    => Some("C")
+    case PyFloatType   => Some("F")
+    case PyDoubleType  => Some("D")
+    case PyBooleanType => Some("Z")
+    case _             => None
 
   private def moduleReceiver(moduleClass: Symbol, pos: PyPosition): PyTree =
     if moduleClass == currentClassSym then
