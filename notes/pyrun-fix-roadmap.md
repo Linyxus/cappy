@@ -92,7 +92,7 @@ Apply all excludelist additions in one PR to
 | # | Issue | Status |
 |---|-------|--------|
 | 5.6 | `Class.getResourceAsStream` missing on `_scpy_Class` runtime | **Landed** — null-returning stubs for `getResourceAsStream`/`getResource` (matches JVM "absent resource" path; Properties.scalaProps falls through to defaults) |
-| 5.7 | `override val` ctor-order collision under JVM-style chaining | Open — `issue-override-val-ctor-order.md` |
+| 5.7 | `override val` ctor-order collision under JVM-style chaining | **Landed** — `genConstructor` reorders super/this-ctor call to first; pos-py guard `override-val-ctor-order` |
 
 ---
 

@@ -547,7 +547,7 @@ private class PyCodeGen()(using genCtx: Context):
       val params = dd.termParamss.flatten.map(genParamDef)
       val body =
         if dd.rhs.isEmpty then Some(PySkip()(ctorPos))
-        else Some(stmtsToBody(flattenToStmts(genStat(dd.rhs)), ctorPos))
+        else Some(stmtsToBody(flattenToStmts(genStat(reorderCtorBody(dd.rhs))), ctorPos))
 
       Some(PyMethodDef(
         flags        = PyMemberFlags.empty.withNamespace(PyMemberNamespace.Constructor),
@@ -559,6 +559,37 @@ private class PyCodeGen()(using genCtx: Context):
         pos          = ctorPos
       ))
     }
+
+  /** dotc's `Constructors` phase emits the constructor body in
+   *  `copyParams ::: super ::: lazyAssignments ::: stats` order. JVM
+   *  bytecode requires `super` to come first; the JVM backend doesn't
+   *  enforce that explicitly because JVM verification rejects field
+   *  reads on `this` before `<init>` chains.
+   *
+   *  In Python every class shares one attribute slot per simple name
+   *  per object, so a `class Child(override val msg: String) extends
+   *  Parent(...)` whose copyParams write `self.msg = msg` *before* the
+   *  parent ctor sees its `self.msg = parentMsg` assignment lets the
+   *  parent clobber the override-set value. Reorder the super call(s)
+   *  ahead of the copyParams so the JVM-style "subclass body wins"
+   *  semantics holds.
+   *
+   *  The super call is always an `Apply` of a `Select` whose qualifier
+   *  is `Super`; mix/this-init calls (`this(...)`) also qualify
+   *  via the same shape but with a `This` qualifier and a constructor
+   *  symbol — those follow the same JVM rule. */
+  private def reorderCtorBody(rhs: Tree): Tree = rhs match
+    case Block(stats, expr) =>
+      val (preSuperCalls, rest) = stats.span(s => !isSuperOrThisCtorCall(s))
+      rest match
+        case ctorCall :: tail => Block(ctorCall :: preSuperCalls ::: tail, expr).withSpan(rhs.span)
+        case Nil              => rhs
+    case _ => rhs
+
+  private def isSuperOrThisCtorCall(stat: Tree): Boolean = stat match
+    case Apply(Select(_: Super, name), _) => name == nme.CONSTRUCTOR
+    case Apply(Select(_: This,  name), _) => name == nme.CONSTRUCTOR
+    case _ => false
 
   private def defaultValueFor(tpe: PyType, pos: PyPosition): PyTree = tpe match
     case PyBooleanType => PyBooleanLit(false)(pos)
