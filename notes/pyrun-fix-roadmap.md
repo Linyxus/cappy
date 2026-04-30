@@ -80,7 +80,7 @@ Apply all excludelist additions in one PR to
 | 5.1.a | `AttributeError` from None-receiver dispatch → `NullPointerException` (`exceptions-2`) | **Landed** (Wave 3) |
 | 5.1.b | Function specialization bridge does not unbox `null` (`lambda-null`) | **Landed** (Wave 2) |
 | 5.1.c | Overloaded `equals` collapses to `__eq__` (`numbereq`) | **Landed** (Wave 1) |
-| 5.1.d | `Seq[Char].##` disagreement across backings (`t4122`) — DCE drops inherited dunder | Open |
+| 5.1.d | `Seq[Char].##` disagreement across backings (`t4122`) — DCE drops inherited dunder | **Landed** |
 | 5.1.e | `null.asInstanceOf[Primitive]` does not unbox (`lambda-null` residual) | **Landed** |
 | 5.2 | `transparent-object` missing inherited member | **Landed** (cross-class This handler in `genNormalApply`) |
 | 5.3 | `Mirror.SingletonProxy.fromProduct` | Open — `issue-mirror-singletonproxy-fromproduct.md` (likely library-py overlay gap) |

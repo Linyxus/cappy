@@ -334,6 +334,7 @@ object PyReachability:
       //   3. Scala `toString`: `_scpy_to_str` implements String.valueOf
       //      by reflectively calling `toString__Ljava_lang_String` when
       //      present, so the method has no explicit PyIR call edge.
+      val locallyKeptSimples = mutable.HashSet.empty[String]
       classByName.get(cls).foreach { cd =>
         for m <- cd.methods do
           val ns    = m.flags.namespace
@@ -342,7 +343,29 @@ object PyReachability:
             ns == PyMemberNamespace.Constructor && m.name.paramTypeRefs.isEmpty
           if isNoArgCtor || isPythonDunder(simp) || isScalaToString(m.name) then
             enqueue(Work.AnalyzeMethod(cls, m.name))
+            if isInstanceMethod(ns) then locallyKeptSimples += simp
       }
+      // Inherited dunders / `toString`: when the instantiated class
+      // doesn't define its own dunder, the emitter will rebind to the
+      // ancestor's slot at emission time (`maybeRebindInheritedHash`,
+      // facade fallthroughs). For that rebind to find a live body, the
+      // ancestor's method must survive DCE — but the local-only loop
+      // above misses it. Walk the ancestor chain and enqueue any
+      // matching method on its declaring class. This is the t4122
+      // `Seq[Char].##` case: `WrappedString` and `List` inherit
+      // `Seq.__hash__`; without this walk it gets pruned and the
+      // emitter rebinds to the identity hash on `_scpy_Object` instead.
+      for ancestor <- ancestorsOf(cls) do
+        classByName.get(ancestor).foreach { ad =>
+          for m <- ad.methods do
+            val ns   = m.flags.namespace
+            val simp = m.name.simple.name
+            if isInstanceMethod(ns)
+               && !locallyKeptSimples.contains(simp)
+               && (isPythonDunder(simp) || isScalaToString(m.name))
+            then
+              enqueue(Work.AnalyzeMethod(ancestor, m.name))
+        }
       // Replay every accumulated virtual-call log on the new vtable.
       val chain = cls +: ancestorsOf(cls).toSeq
       for a <- chain do

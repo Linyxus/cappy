@@ -13,7 +13,7 @@ the table.
 | 5.1.b | `lambda-null.scala` | **Landed** (Layer 5 Wave 2) — `_scpy_unbox_or_default` in `genClosure` |
 | 5.1.c | `numbereq.scala` | **Landed** (Layer 5 Wave 1) — `isEqualsAnyOverload` in `PyEncoding.specialMethodNameOf` |
 | 5.1.a | `exceptions-2.scala` | **Landed** (Layer 5 Wave 3) — `AttributeError` translates to `NullPointerException` |
-| 5.1.d | `t4122.scala` | **Open** — DCE drops inherited dunder; needs PyReachability fix |
+| 5.1.d | `t4122.scala` | **Landed** — `instantiate` now walks ancestors and enqueues inherited dunders / `toString`; pos-py guard `inherited-dunder-dce` |
 | 5.1.e | `lambda-null.scala` (residual) | **Landed** — `genUnboxIfChar` extended to all primitives via `_scpy_unbox_or_default`; pos-py guard `null-asinstanceof-primitive` |
 
 ## 5.1.d — `Seq[Char]` hashCode disagreement across collection backings
