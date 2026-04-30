@@ -1303,12 +1303,23 @@ object PyIRRuntime:
        |class Mirror(_scpy_Object):
        |    pass
        |
+       |# `Mirror.Product.fromProduct(p): MirroredMonoType` and
+       |# `Mirror.Sum.ordinal(value): Int` reference the abstract type
+       |# member `MirroredMonoType` in their signatures. Erasure rewrites
+       |# that to `java.lang.Object`, so the encoded method name carries
+       |# `Ljava_dlang_dObject` for both the parameter and the result
+       |# type. User-derived case-class mirrors (e.g. `JsonNumber`) emit
+       |# both a typed override (`fromProduct__Lscala_dProduct__LJsonNumber`)
+       |# AND a bridge with the erased shape (`fromProduct__Lscala_dProduct__Ljava_dlang_dObject`)
+       |# that forwards to the typed body. SingletonProxy doesn't need a
+       |# typed override since `MirroredMonoType` is just the singleton's
+       |# type, but it MUST match the erased call-site shape.
        |class Mirror_Product(Mirror):
-       |    def fromProduct__Lscala_dProduct__O(self, product):
+       |    def fromProduct__Lscala_dProduct__Ljava_dlang_dObject(self, product):
        |        return None
        |
        |class Mirror_Sum(Mirror):
-       |    def ordinal__O__I(self, value):
+       |    def ordinal__Ljava_dlang_dObject__I(self, value):
        |        return 0
        |
        |class Mirror_Singleton(Mirror_Product):
@@ -1319,7 +1330,7 @@ object PyIRRuntime:
        |    def __init__(self, value):
        |        self.value = value
        |
-       |    def fromProduct__Lscala_dProduct__O(self, product):
+       |    def fromProduct__Lscala_dProduct__Ljava_dlang_dObject(self, product):
        |        return self.value
        |
        |class Enum(Comparable, Serializable):
