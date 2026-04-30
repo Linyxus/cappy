@@ -137,6 +137,39 @@ contract). On Python they differ. Probably caused by `WrappedString`,
 `ArraySeq`, `List.hashCode` walking different paths. Investigate
 `MurmurHash3` / `Statics.unorderedHash`/`orderedHash` ports.
 
+**Status (Layer 5 Wave 3):** Investigation only. Root cause is a DCE
+issue in `compiler/src/dotty/tools/backend/python/PyReachability.scala`,
+not in library-py. Inspecting the bundled `out/runPyTests/run/t4122/t4122.py`:
+
+- `scala_collection_Seq` emits `__eq__` but not `__hash__`; line ~9340
+  has `__hash__ = _scpy_Object.__hash__` from
+  `PyIREmitter.maybeRebindInheritedHash` — i.e. `Seq.hashCode` →
+  `__hash__` was DCE-pruned from `cls.methods` before emission.
+- `WrappedString` and `List` (`::`) have no `__hash__` either — they
+  inherit `_scpy_Object.__hash__` (identity hash).
+- `ArraySeq.ofChar` works because it defines `hashCode` LOCALLY, so the
+  dunder-keep at `PyReachability.scala:337-345` covers it.
+
+The dunder-keep rule there only loops `cd.methods` of the instantiated
+class; it misses dunders inherited from trait/abstract parents. The
+virtual-call-log replay path (`replayVirtualLog` →
+`resolveInstanceMethod`) is supposed to compensate by walking
+ancestors, but isn't reaching `Seq.hashCode` here. Suspect a
+`PyMethodName` mismatch between the `(Object, __hash__, [], IntRef)`
+logged at the `x.hashCode` call site in `Statics.anyHash` and the
+deserialized `Seq.__hash__` member in `Seq.pyir` (different
+result-type encoding `PyClassRef(IntClass)` vs `PyPrimRef.IntRef`).
+
+Fix path: in `PyReachability`, the dunder-keep rule should walk
+ancestors when an instantiated class doesn't define its own dunder.
+A focused fix probably lives within ~10 lines but needs careful
+verification that it doesn't reactivate previously-DCE'd ancestor
+methods unrelated to the dunder slot.
+
+Defer for a focused PyReachability work item. A library-py workaround
+(type-dispatch in `Statics.anyHash`) would mask the real bug AND
+contradicts the layered architecture.
+
 ## Original umbrella note (preserved for context)
 
 [See git history of this file before the Layer 5.1 split for the

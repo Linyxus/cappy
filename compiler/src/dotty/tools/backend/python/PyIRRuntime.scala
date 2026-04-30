@@ -1066,6 +1066,20 @@ object PyIRRuntime:
        |        if clazz._scpy_name in ("float", "double"):
        |            return isinstance(value, float)
        |        return False
+       |    # Python raises `AttributeError` for `None.attr` / `None.method()`,
+       |    # which is the JVM equivalent of `NullPointerException`. Scala
+       |    # programs catch the latter (`case _: NullPointerException`,
+       |    # `case _: RuntimeException`, `case _: Throwable`, ...). Narrow
+       |    # the rewrite to AttributeErrors whose message matches the
+       |    # CPython `'NoneType' object has no attribute '<name>'` shape so
+       |    # that genuine facade/dynamic AttributeErrors (typo'd attribute
+       |    # on a real Python object) are not silently swallowed.
+       |    if isinstance(value, AttributeError):
+       |        msg = _builtins.str(value)
+       |        if "'NoneType' object" in msg:
+       |            npe_cls = _scpy_class_of_name("java.lang.NullPointerException")
+       |            if _scpy_is_assignable(clazz, npe_cls):
+       |                return True
        |    return _scpy_is_instance(value, clazz)
        |
        |_scpy_primitive_void = _scpy_register_class(None, "void", "primitive")
