@@ -1077,11 +1077,40 @@ private class PyCodeGen()(using genCtx: Context):
     else
       arg
 
+  /** Lower a primitive unbox call inserted by `Erasure.Boxing` (e.g.
+   *  `BoxesRunTime.unboxToInt(x)`).
+   *
+   *  - `Char` round-trips through `_scpy_Char` (an `int` subclass with a
+   *    `toString` hook); unbox extracts the raw codepoint and raises
+   *    `NullPointerException` on `null` (matches `unboxToChar(null)`).
+   *  - Other primitives (Z/B/S/I/J/F/D): JVM `BoxesRunTime.unboxTo*(null)`
+   *    returns the primitive default rather than raising. Route through
+   *    `_scpy_unbox_or_default(tag, value)` so erased generics like
+   *    `def gen[A]: A = null.asInstanceOf[A]` followed by
+   *    `val i: Int = gen[Int]` produce `0` instead of leaving `i = None`.
+   *  - Non-primitive unbox owners: identity. */
   private def genUnboxIfChar(sym: Symbol, arg: PyTree, pos: PyPosition): PyTree =
-    if sym.owner.linkedClass == defn.CharClass then
+    val linked = sym.owner.linkedClass
+    if linked == defn.CharClass then
       PyApplyExternal(PyExternalName("_scpy_unbox_char"), List(arg))(PyCharType, pos)
     else
-      arg
+      primitiveTagFor(linked) match
+        case Some((tag, tpe)) =>
+          PyApplyExternal(
+            PyExternalName("_scpy_unbox_or_default"),
+            List(PyStringLit(tag)(pos), arg)
+          )(tpe, pos)
+        case None => arg
+
+  private def primitiveTagFor(linked: Symbol): Option[(String, PyType)] =
+    if      linked == defn.BooleanClass then Some(("Z", PyBooleanType))
+    else if linked == defn.ByteClass    then Some(("B", PyByteType))
+    else if linked == defn.ShortClass   then Some(("S", PyShortType))
+    else if linked == defn.IntClass     then Some(("I", PyIntType))
+    else if linked == defn.LongClass    then Some(("J", PyLongType))
+    else if linked == defn.FloatClass   then Some(("F", PyFloatType))
+    else if linked == defn.DoubleClass  then Some(("D", PyDoubleType))
+    else None
 
   private def isBoxesRunTimeBoxToCharacter(sym: Symbol): Boolean =
     sym.exists && sym.owner == defn.BoxesRunTimeModule.moduleClass &&

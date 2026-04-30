@@ -1319,16 +1319,30 @@ object PyIREmitter:
         s"_scpy_is_value_of_type(${exprToStr(expr)}, ${typeRefToClassExpr(testType)})"
 
       case PyAsInstanceOf(expr, target) =>
-        // Python is duck-typed, so most casts are no-ops. Char is an
-        // exception: a boxed `Character` is a `_scpy_Char` (an `int`
-        // subclass), and unboxing must extract the raw codepoint so
-        // downstream primitive Char ops see a plain `int`. Without this,
-        // `(c: Any).asInstanceOf[Char]` would still be a `_scpy_Char`,
-        // and `_scpy_to_str(c)` (e.g. `println(c.toString)` after such a
-        // cast) would still hit the toString hook even from a primitive
-        // Char position.
-        if target == PyCharType then s"_scpy_unbox_char(${exprToStr(expr)})"
-        else exprToStr(expr)
+        // Python is duck-typed, so most reference casts are no-ops. The
+        // primitive cases need explicit lowering to match JVM unboxing:
+        //
+        // - Char: a boxed `Character` is `_scpy_Char` (an `int` subclass);
+        //   unbox to the raw codepoint so downstream Char ops and the
+        //   `toString` hook see a plain `int`. NPE on null (matches
+        //   `BoxesRunTime.unboxToChar(null)`).
+        // - Other primitives (Z/B/S/I/J/F/D): JVM `BoxesRunTime.unboxTo*`
+        //   on `null` returns the primitive default, not NPE. Route
+        //   through `_scpy_unbox_or_default(tag, value)`, which is a
+        //   no-op when the value is already a primitive and substitutes
+        //   the default when it is `None` (e.g. `null.asInstanceOf[Int]`
+        //   reaching us via an erased generic call). Same helper used
+        //   by `genClosure` for the SAM-bridge null-unbox path.
+        target match
+          case PyCharType    => s"_scpy_unbox_char(${exprToStr(expr)})"
+          case PyBooleanType => s"""_scpy_unbox_or_default("Z", ${exprToStr(expr)})"""
+          case PyByteType    => s"""_scpy_unbox_or_default("B", ${exprToStr(expr)})"""
+          case PyShortType   => s"""_scpy_unbox_or_default("S", ${exprToStr(expr)})"""
+          case PyIntType     => s"""_scpy_unbox_or_default("I", ${exprToStr(expr)})"""
+          case PyLongType    => s"""_scpy_unbox_or_default("J", ${exprToStr(expr)})"""
+          case PyFloatType   => s"""_scpy_unbox_or_default("F", ${exprToStr(expr)})"""
+          case PyDoubleType  => s"""_scpy_unbox_or_default("D", ${exprToStr(expr)})"""
+          case _             => exprToStr(expr)
 
       // Arrays
       case PyNewArray(elemTypeRef, length) =>
