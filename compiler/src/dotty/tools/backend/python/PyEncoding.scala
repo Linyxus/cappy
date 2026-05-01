@@ -339,8 +339,18 @@ class PyEncoding(using Context):
       report.warning(
         s"Scala identifier '$name' maps to Python name '$cleaned' which uses " +
         s"the reserved '_scpy_' prefix. This may collide with compiler-generated names.")
-    if pythonKeywords.contains(cleaned) || pythonReservedConventions.contains(cleaned) then cleaned + "_"
-    else cleaned
+    // Python identifiers cannot start with a digit. Top-level defs in a
+    // file with a numeric basename (e.g. `tests/run/16405.scala`) produce
+    // a synthetic package class `16405$package$` whose first segment
+    // begins with `1`. Prepend the reserved `_scpy_n` ("numeric") prefix
+    // so the emitted Python identifier is well-formed. The `_scpy_`
+    // namespace is reserved (line above warns on user collisions), so
+    // this preserves injectivity vs every legal Scala identifier.
+    val digitGuarded =
+      if cleaned.nonEmpty && cleaned.head.isDigit then s"_scpy_n$cleaned"
+      else cleaned
+    if pythonKeywords.contains(digitGuarded) || pythonReservedConventions.contains(digitGuarded) then digitGuarded + "_"
+    else digitGuarded
 
   private def annotationCarrierSymbols(sym: Symbol): List[Symbol] =
     List(

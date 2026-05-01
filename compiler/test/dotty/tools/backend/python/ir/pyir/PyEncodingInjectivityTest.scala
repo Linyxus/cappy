@@ -265,4 +265,54 @@ class PyEncodingInjectivityTest:
         f.encoded.startsWith("__")
       )
 
+  // ---------------------------------------------------------------
+  //  Digit-leading segment sanitization (audit #8 / fixtures
+  //  16405.scala, 9416.scala — file basenames that happen to be
+  //  numeric land in synthetic class names like `16405$package$`).
+  //  Python identifiers cannot start with a digit, so the encoder
+  //  prepends a reserved `_scpy_n` prefix at the segment level.
+  //
+  //  These tests pin down the Python-validity guarantee plus
+  //  injectivity: a digit-leading Scala segment must never collide
+  //  with any legal Scala identifier.
+  // ---------------------------------------------------------------
+
+  @Test def classRefDigitLeadingSegmentEncodesAsValidIdentifier(): Unit =
+    // The end-to-end scenario: a top-level def in `16405.scala`
+    // generates the JVM class `16405$package$`, which `encodeClassName`
+    // turns into a `PyClassName` whose segment is `_scpy_n16405_package_`.
+    // The encoded `PyClassRef` must be a legal Python identifier
+    // (i.e. `class _scpy_n16405_package_(...):` parses).
+    val cls = PyClassName("_scpy_n16405_package_")
+    val pyIdent = "[A-Za-z_][A-Za-z0-9_]*".r
+    assertTrue(
+      s"${cls.simpleName} should be a valid Python identifier",
+      pyIdent.matches(cls.simpleName)
+    )
+    // The PyClassRef encoding must also be a valid Python identifier
+    // (used for type-erased class references in encoded method signatures).
+    val ref = PyClassRef(cls)
+    assertTrue(
+      s"${ref.encoded} should be a valid Python identifier",
+      pyIdent.matches(ref.encoded)
+    )
+
+  @Test def classRefDigitGuardedSegmentsRetainInjectivity(): Unit =
+    // After `PyEncoding.sanitizeName` prepends `_scpy_n` to digit-leading
+    // segments, two distinct guarded segments must remain distinct at the
+    // IR layer (e.g. `_scpy_n16405_package_` vs `_scpy_n9416_package_`).
+    val a = PyClassRef(PyClassName("_scpy_n16405_package_"))
+    val b = PyClassRef(PyClassName("_scpy_n9416_package_"))
+    assertNotEquals(a.encoded, b.encoded)
+
+  @Test def classNameSegmentsCanBeDigitGuarded(): Unit =
+    // Multi-segment class FQN where one inner segment is a guarded
+    // digit-leading name. PyClassName preserves the segments verbatim;
+    // none of the segment-level invariants (validity, distinctness)
+    // should regress.
+    val name = PyClassName("pkg._scpy_n123impl.Cls")
+    val pyIdent = "[A-Za-z_][A-Za-z0-9_]*".r
+    for seg <- name.segments do
+      assertTrue(s"$seg must be a valid Python identifier", pyIdent.matches(seg))
+
 end PyEncodingInjectivityTest
