@@ -112,7 +112,14 @@ object PyIRRuntime:
   private val AbstractStringBuilderClass = PyClassName("java.lang.AbstractStringBuilder")
   private val ReflectMethodClass         = PyClassName("java.lang.reflect.Method")
   private val ReflectFieldClass          = PyClassName("java.lang.reflect.Field")
+  private val ReflectConstructorClass    = PyClassName("java.lang.reflect.Constructor")
   private val ReflectAccessibleObjClass  = PyClassName("java.lang.reflect.AccessibleObject")
+  private val ReflectExecutableClass     = PyClassName("java.lang.reflect.Executable")
+  private val ReflectModifierClass       = PyClassName("java.lang.reflect.Modifier")
+  private val ReflectTypeClass           = PyClassName("java.lang.reflect.Type")
+  private val ReflectTypeVariableClass   = PyClassName("java.lang.reflect.TypeVariable")
+  private val ReflectInvocationTargetExceptionClass =
+    PyClassName("java.lang.reflect.InvocationTargetException")
   private val SpliteratorClass           = PyClassName("java.util.Spliterator")
   private val RefReferenceClass          = PyClassName("java.lang.ref.Reference")
   private val RefWeakReferenceClass      = PyClassName("java.lang.ref.WeakReference")
@@ -166,17 +173,12 @@ object PyIRRuntime:
         kind = PyClassKind.Class,
         superClass = Some(PyClassName.ObjectClass),
         javaProvided = true,
-        instanceMethods = MethodMatcher(
-          simpleNamePrefixes = Set(
-            "getName", "getSimpleName", "toString",
-            "getSuperclass", "getInterfaces", "getComponentType",
-            "isPrimitive", "isInterface", "isArray",
-            "isInstance", "isAssignableFrom",
-            "getClassLoader",
-            "getDeclaredMethods", "getDeclaredFields", "getMethods", "getFields",
-            "getDeclaredMethod", "getDeclaredField", "getMethod", "getField"
-          )
-        ),
+        // Accept any reflective-API method or stub. Callers depend on
+        // a wide surface (`getDeclaredFields`, `getEnclosingMethod`,
+        // `getEnumConstants`, `getModifiers`, `getAnnotation*`, ...);
+        // the runtime stubs in `_scpy_Class` cover them and dispatch
+        // through `__getattr__` for any missed signature.
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("")),
         staticMethods = MethodMatcher(simpleNamePrefixes = Set("forName"))
       ),
     ClassLoaderClass ->
@@ -185,7 +187,9 @@ object PyIRRuntime:
         superClass = Some(PyClassName.ObjectClass),
         javaProvided = true,
         constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
-        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("getParent"))
+        instanceMethods = MethodMatcher(
+          simpleNamePrefixes = Set("getParent", "loadClass", "findClass", "getResource", "getResourceAsStream", "getResources")
+        )
       ),
     ClassValueClass ->
       ProvidedClass(
@@ -318,6 +322,54 @@ object PyIRRuntime:
       ProvidedClass(
         kind = PyClassKind.Class,
         superClass = Some(ReflectAccessibleObjClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ReflectExecutableClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(ReflectAccessibleObjClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ReflectConstructorClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(ReflectAccessibleObjClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ReflectModifierClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("")),
+        staticMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ReflectTypeClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ReflectTypeVariableClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        interfaces = List(ReflectTypeClass),
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ReflectInvocationTargetExceptionClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
         javaProvided = true,
         constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
         instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
@@ -681,6 +733,26 @@ object PyIRRuntime:
        |_scpy_class_registry = {}
        |_scpy_unset = object()
        |
+       |def _scpy_reflective_no_such(short_name, message):
+       |    # Reflection stubs raise these JDK exceptions so callers
+       |    # using `try { ... } catch (NoSuchFieldException) { ... }`
+       |    # see the expected exception type. Class lookup is deferred
+       |    # to runtime: pylib's exception classes may not be bound at
+       |    # the time the prelude string is parsed, and DCE may pick
+       |    # different names depending on classpath shape.
+       |    exc_cls = globals().get("java_lang_" + short_name)
+       |    if exc_cls is None:
+       |        exc_cls = globals().get(short_name)
+       |    if exc_cls is not None:
+       |        try:
+       |            return exc_cls(message)
+       |        except Exception:
+       |            try:
+       |                return exc_cls(message, None, True, True)
+       |            except Exception:
+       |                pass
+       |    return Exception(short_name + ": " + str(message))
+       |
        |class _scpy_Class(_scpy_Object):
        |    def __init__(self, name, kind, component_type=None, py_type=None):
        |        self._scpy_name = name
@@ -768,6 +840,190 @@ object PyIRRuntime:
        |    def getResource__Ljava_dlang_dString__Ljava_dnet_dURL(self, name):
        |        return None
        |
+       |    # --- Reflection stubs ---
+       |    # The Python runtime does not maintain JVM-style reflective
+       |    # metadata: declared field/method/constructor lists, generic
+       |    # signatures, annotations, and enum-constants tables are not
+       |    # preserved through PyIR and code generation. Most fixtures
+       |    # that hit these methods only check for a property of the
+       |    # array (e.g. `.exists(_.getName.startsWith(...))`) and pass
+       |    # with an empty result. Tests that depend on the actual
+       |    # contents of the reflective answer are documented in
+       |    # `notes/issue-reflection-class-introspection.md`.
+       |    def getDeclaredFields__ALjava_dlang_dreflect_dField(self):
+       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.Field"), [])
+       |
+       |    def getFields__ALjava_dlang_dreflect_dField(self):
+       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.Field"), [])
+       |
+       |    def getDeclaredMethods__ALjava_dlang_dreflect_dMethod(self):
+       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.Method"), [])
+       |
+       |    def getMethods__ALjava_dlang_dreflect_dMethod(self):
+       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.Method"), [])
+       |
+       |    def getDeclaredConstructors__ALjava_dlang_dreflect_dConstructor(self):
+       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.Constructor"), [])
+       |
+       |    def getConstructors__ALjava_dlang_dreflect_dConstructor(self):
+       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.Constructor"), [])
+       |
+       |    def getDeclaredClasses__ALjava_dlang_dClass(self):
+       |        return _scpy_array_value(_scpy_class_of_name("java.lang.Class"), [])
+       |
+       |    def getClasses__ALjava_dlang_dClass(self):
+       |        return _scpy_array_value(_scpy_class_of_name("java.lang.Class"), [])
+       |
+       |    def getGenericInterfaces__ALjava_dlang_dreflect_dType(self):
+       |        # No generic-type info; mirror getInterfaces but typed as Type[].
+       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.Type"), [])
+       |
+       |    def getGenericSuperclass__Ljava_dlang_dreflect_dType(self):
+       |        return self.getSuperclass__Ljava_dlang_dClass()
+       |
+       |    def getTypeParameters__ALjava_dlang_dreflect_dTypeVariable(self):
+       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.TypeVariable"), [])
+       |
+       |    def getDeclaredField__Ljava_dlang_dString__Ljava_dlang_dreflect_dField(self, name):
+       |        raise _scpy_reflective_no_such("NoSuchFieldException", name)
+       |
+       |    def getField__Ljava_dlang_dString__Ljava_dlang_dreflect_dField(self, name):
+       |        raise _scpy_reflective_no_such("NoSuchFieldException", name)
+       |
+       |    def getDeclaredMethod__Ljava_dlang_dString_ALjava_dlang_dClass__Ljava_dlang_dreflect_dMethod(self, name, *_args):
+       |        raise _scpy_reflective_no_such("NoSuchMethodException", name)
+       |
+       |    def getMethod__Ljava_dlang_dString_ALjava_dlang_dClass__Ljava_dlang_dreflect_dMethod(self, name, *_args):
+       |        raise _scpy_reflective_no_such("NoSuchMethodException", name)
+       |
+       |    def getDeclaredConstructor__ALjava_dlang_dClass__Ljava_dlang_dreflect_dConstructor(self, *_args):
+       |        raise _scpy_reflective_no_such("NoSuchMethodException", "<init>")
+       |
+       |    def getConstructor__ALjava_dlang_dClass__Ljava_dlang_dreflect_dConstructor(self, *_args):
+       |        raise _scpy_reflective_no_such("NoSuchMethodException", "<init>")
+       |
+       |    def getEnclosingMethod__Ljava_dlang_dreflect_dMethod(self):
+       |        return None
+       |
+       |    def getEnclosingConstructor__Ljava_dlang_dreflect_dConstructor(self):
+       |        return None
+       |
+       |    def getEnclosingClass__Ljava_dlang_dClass(self):
+       |        return None
+       |
+       |    def getDeclaringClass__Ljava_dlang_dClass(self):
+       |        return None
+       |
+       |    def getEnumConstants__ALjava_dlang_dObject(self):
+       |        return None
+       |
+       |    def getModifiers__I(self):
+       |        return 0
+       |
+       |    def getCanonicalName__Ljava_dlang_dString(self):
+       |        return self._scpy_name
+       |
+       |    def getTypeName__Ljava_dlang_dString(self):
+       |        return self._scpy_name
+       |
+       |    def getPackageName__Ljava_dlang_dString(self):
+       |        name = self._scpy_name
+       |        dot = name.rfind(".")
+       |        return name[:dot] if dot >= 0 else ""
+       |
+       |    def getPackage__Ljava_dlang_dPackage(self):
+       |        return None
+       |
+       |    def getSigners__ALjava_dlang_dObject(self):
+       |        return None
+       |
+       |    def getNestHost__Ljava_dlang_dClass(self):
+       |        return self
+       |
+       |    def getNestMembers__ALjava_dlang_dClass(self):
+       |        return _scpy_array_value(_scpy_class_of_name("java.lang.Class"), [self])
+       |
+       |    def getPermittedSubclasses__ALjava_dlang_dClass(self):
+       |        return None
+       |
+       |    def getRecordComponents__ALjava_dlang_dreflect_dRecordComponent(self):
+       |        return None
+       |
+       |    def getProtectionDomain__Ljava_dsecurity_dProtectionDomain(self):
+       |        return None
+       |
+       |    def getAnnotation__Ljava_dlang_dClass__Ljava_dlang_dannotation_dAnnotation(self, ann_class):
+       |        return None
+       |
+       |    def getAnnotationsByType__Ljava_dlang_dClass__ALjava_dlang_dannotation_dAnnotation(self, ann_class):
+       |        return _scpy_array_value(_scpy_class_of_name("java.lang.annotation.Annotation"), [])
+       |
+       |    def getAnnotations__ALjava_dlang_dannotation_dAnnotation(self):
+       |        return _scpy_array_value(_scpy_class_of_name("java.lang.annotation.Annotation"), [])
+       |
+       |    def getDeclaredAnnotations__ALjava_dlang_dannotation_dAnnotation(self):
+       |        return _scpy_array_value(_scpy_class_of_name("java.lang.annotation.Annotation"), [])
+       |
+       |    def getDeclaredAnnotation__Ljava_dlang_dClass__Ljava_dlang_dannotation_dAnnotation(self, ann_class):
+       |        return None
+       |
+       |    def getDeclaredAnnotationsByType__Ljava_dlang_dClass__ALjava_dlang_dannotation_dAnnotation(self, ann_class):
+       |        return _scpy_array_value(_scpy_class_of_name("java.lang.annotation.Annotation"), [])
+       |
+       |    def isAnnotationPresent__Ljava_dlang_dClass__Z(self, ann_class):
+       |        return False
+       |
+       |    def isAnonymousClass__Z(self):
+       |        return False
+       |
+       |    def isLocalClass__Z(self):
+       |        return False
+       |
+       |    def isMemberClass__Z(self):
+       |        return False
+       |
+       |    def isSynthetic__Z(self):
+       |        return False
+       |
+       |    def isEnum__Z(self):
+       |        return False
+       |
+       |    def isAnnotation__Z(self):
+       |        return False
+       |
+       |    def isRecord__Z(self):
+       |        return False
+       |
+       |    def isHidden__Z(self):
+       |        return False
+       |
+       |    def isSealed__Z(self):
+       |        return False
+       |
+       |    def desiredAssertionStatus__Z(self):
+       |        return False
+       |
+       |    def asSubclass__Ljava_dlang_dClass__Ljava_dlang_dClass(self, other):
+       |        return self
+       |
+       |    def cast__Ljava_dlang_dObject__Ljava_dlang_dObject(self, value):
+       |        return value
+       |
+       |    def newInstance__Ljava_dlang_dObject(self):
+       |        # Equivalent to deprecated `Class.newInstance()`. Without
+       |        # access to the no-arg ctor we cannot honor this; raise an
+       |        # exception consistent with the JDK.
+       |        py_type = self._scpy_py_type
+       |        if py_type is not None:
+       |            try:
+       |                return py_type()
+       |            except Exception:
+       |                pass
+       |        raise _scpy_reflective_no_such("InstantiationException", self._scpy_name)
+       |
+       |    def toGenericString__Ljava_dlang_dString(self):
+       |        return self.toString__Ljava_dlang_dString()
+       |
        |    def toString__Ljava_dlang_dString(self):
        |        if self._scpy_kind == "primitive":
        |            return self._scpy_name
@@ -779,16 +1035,118 @@ object PyIRRuntime:
        |        return self.toString__Ljava_dlang_dString()
        |
        |    def __getattr__(self, name):
+       |        # NOTE: prefix-based dispatch — longer prefixes MUST be
+       |        # checked first. `getDeclaredFields` shares a prefix with
+       |        # `getDeclaredField`, etc. The plural/singular pairs are
+       |        # ordered so the plural matches first.
        |        if name.startswith("getSimpleName"):
        |            return self.getSimpleName__Ljava_dlang_dString
        |        if name.startswith("getName"):
        |            return self.getName__Ljava_dlang_dString
+       |        if name.startswith("getCanonicalName"):
+       |            return self.getCanonicalName__Ljava_dlang_dString
+       |        if name.startswith("getTypeName"):
+       |            return self.getTypeName__Ljava_dlang_dString
+       |        if name.startswith("getPackageName"):
+       |            return self.getPackageName__Ljava_dlang_dString
+       |        if name.startswith("getPackage"):
+       |            return self.getPackage__Ljava_dlang_dPackage
        |        if name.startswith("getSuperclass"):
        |            return self.getSuperclass__Ljava_dlang_dClass
+       |        if name.startswith("getGenericSuperclass"):
+       |            return self.getGenericSuperclass__Ljava_dlang_dreflect_dType
+       |        if name.startswith("getGenericInterfaces"):
+       |            return self.getGenericInterfaces__ALjava_dlang_dreflect_dType
        |        if name.startswith("getInterfaces"):
        |            return self.getInterfaces__ALjava_dlang_dClass
        |        if name.startswith("getComponentType"):
        |            return self.getComponentType__Ljava_dlang_dClass
+       |        if name.startswith("getTypeParameters"):
+       |            return self.getTypeParameters__ALjava_dlang_dreflect_dTypeVariable
+       |        if name.startswith("getDeclaredFields"):
+       |            return self.getDeclaredFields__ALjava_dlang_dreflect_dField
+       |        if name.startswith("getDeclaredField"):
+       |            return self.getDeclaredField__Ljava_dlang_dString__Ljava_dlang_dreflect_dField
+       |        if name.startswith("getFields"):
+       |            return self.getFields__ALjava_dlang_dreflect_dField
+       |        if name.startswith("getField"):
+       |            return self.getField__Ljava_dlang_dString__Ljava_dlang_dreflect_dField
+       |        if name.startswith("getDeclaredMethods"):
+       |            return self.getDeclaredMethods__ALjava_dlang_dreflect_dMethod
+       |        if name.startswith("getDeclaredMethod"):
+       |            return self.getDeclaredMethod__Ljava_dlang_dString_ALjava_dlang_dClass__Ljava_dlang_dreflect_dMethod
+       |        if name.startswith("getMethods"):
+       |            return self.getMethods__ALjava_dlang_dreflect_dMethod
+       |        if name.startswith("getMethod"):
+       |            return self.getMethod__Ljava_dlang_dString_ALjava_dlang_dClass__Ljava_dlang_dreflect_dMethod
+       |        if name.startswith("getDeclaredConstructors"):
+       |            return self.getDeclaredConstructors__ALjava_dlang_dreflect_dConstructor
+       |        if name.startswith("getDeclaredConstructor"):
+       |            return self.getDeclaredConstructor__ALjava_dlang_dClass__Ljava_dlang_dreflect_dConstructor
+       |        if name.startswith("getConstructors"):
+       |            return self.getConstructors__ALjava_dlang_dreflect_dConstructor
+       |        if name.startswith("getConstructor"):
+       |            return self.getConstructor__ALjava_dlang_dClass__Ljava_dlang_dreflect_dConstructor
+       |        if name.startswith("getDeclaredClasses"):
+       |            return self.getDeclaredClasses__ALjava_dlang_dClass
+       |        if name.startswith("getClasses"):
+       |            return self.getClasses__ALjava_dlang_dClass
+       |        if name.startswith("getEnclosingMethod"):
+       |            return self.getEnclosingMethod__Ljava_dlang_dreflect_dMethod
+       |        if name.startswith("getEnclosingConstructor"):
+       |            return self.getEnclosingConstructor__Ljava_dlang_dreflect_dConstructor
+       |        if name.startswith("getEnclosingClass"):
+       |            return self.getEnclosingClass__Ljava_dlang_dClass
+       |        if name.startswith("getDeclaringClass"):
+       |            return self.getDeclaringClass__Ljava_dlang_dClass
+       |        if name.startswith("getEnumConstants"):
+       |            return self.getEnumConstants__ALjava_dlang_dObject
+       |        if name.startswith("getModifiers"):
+       |            return self.getModifiers__I
+       |        if name.startswith("getNestHost"):
+       |            return self.getNestHost__Ljava_dlang_dClass
+       |        if name.startswith("getNestMembers"):
+       |            return self.getNestMembers__ALjava_dlang_dClass
+       |        if name.startswith("getPermittedSubclasses"):
+       |            return self.getPermittedSubclasses__ALjava_dlang_dClass
+       |        if name.startswith("getRecordComponents"):
+       |            return self.getRecordComponents__ALjava_dlang_dreflect_dRecordComponent
+       |        if name.startswith("getProtectionDomain"):
+       |            return self.getProtectionDomain__Ljava_dsecurity_dProtectionDomain
+       |        if name.startswith("getSigners"):
+       |            return self.getSigners__ALjava_dlang_dObject
+       |        if name.startswith("getDeclaredAnnotations"):
+       |            return self.getDeclaredAnnotations__ALjava_dlang_dannotation_dAnnotation
+       |        if name.startswith("getDeclaredAnnotationsByType"):
+       |            return self.getDeclaredAnnotationsByType__Ljava_dlang_dClass__ALjava_dlang_dannotation_dAnnotation
+       |        if name.startswith("getDeclaredAnnotation"):
+       |            return self.getDeclaredAnnotation__Ljava_dlang_dClass__Ljava_dlang_dannotation_dAnnotation
+       |        if name.startswith("getAnnotationsByType"):
+       |            return self.getAnnotationsByType__Ljava_dlang_dClass__ALjava_dlang_dannotation_dAnnotation
+       |        if name.startswith("getAnnotations"):
+       |            return self.getAnnotations__ALjava_dlang_dannotation_dAnnotation
+       |        if name.startswith("getAnnotation"):
+       |            return self.getAnnotation__Ljava_dlang_dClass__Ljava_dlang_dannotation_dAnnotation
+       |        if name.startswith("isAnnotationPresent"):
+       |            return self.isAnnotationPresent__Ljava_dlang_dClass__Z
+       |        if name.startswith("isAnnotation"):
+       |            return self.isAnnotation__Z
+       |        if name.startswith("isAnonymousClass"):
+       |            return self.isAnonymousClass__Z
+       |        if name.startswith("isLocalClass"):
+       |            return self.isLocalClass__Z
+       |        if name.startswith("isMemberClass"):
+       |            return self.isMemberClass__Z
+       |        if name.startswith("isSynthetic"):
+       |            return self.isSynthetic__Z
+       |        if name.startswith("isEnum"):
+       |            return self.isEnum__Z
+       |        if name.startswith("isRecord"):
+       |            return self.isRecord__Z
+       |        if name.startswith("isHidden"):
+       |            return self.isHidden__Z
+       |        if name.startswith("isSealed"):
+       |            return self.isSealed__Z
        |        if name.startswith("isPrimitive"):
        |            return self.isPrimitive__Z
        |        if name.startswith("isInterface"):
@@ -799,12 +1157,22 @@ object PyIRRuntime:
        |            return self.isInstance__Ljava_dlang_dObject__Z
        |        if name.startswith("isAssignableFrom"):
        |            return self.isAssignableFrom__Ljava_dlang_dClass__Z
+       |        if name.startswith("desiredAssertionStatus"):
+       |            return self.desiredAssertionStatus__Z
+       |        if name.startswith("asSubclass"):
+       |            return self.asSubclass__Ljava_dlang_dClass__Ljava_dlang_dClass
+       |        if name.startswith("cast"):
+       |            return self.cast__Ljava_dlang_dObject__Ljava_dlang_dObject
+       |        if name.startswith("newInstance"):
+       |            return self.newInstance__Ljava_dlang_dObject
        |        if name.startswith("getClassLoader"):
        |            return self.getClassLoader__Ljava_dlang_dClassLoader
        |        if name.startswith("getResourceAsStream"):
        |            return self.getResourceAsStream__Ljava_dlang_dString__Ljava_dio_dInputStream
        |        if name.startswith("getResource"):
        |            return self.getResource__Ljava_dlang_dString__Ljava_dnet_dURL
+       |        if name.startswith("toGenericString"):
+       |            return self.toGenericString__Ljava_dlang_dString
        |        if name.startswith("toString"):
        |            return self.toString__Ljava_dlang_dString
        |        raise AttributeError(name)
@@ -1282,9 +1650,128 @@ object PyIRRuntime:
        |class ObjectInputStream(_scpy_Object): pass
        |class ObjectOutputStream(_scpy_Object): pass
        |class AbstractStringBuilder(_scpy_Object): pass
-       |class AccessibleObject(_scpy_Object): pass
+       |class AccessibleObject(_scpy_Object):
+       |    # Reflection support is intentionally limited; see
+       |    # `notes/issue-reflection-class-introspection.md`. These
+       |    # classes exist so user code that mentions them at compile
+       |    # time links and so the array helpers in `_scpy_Class`
+       |    # have a registered component class to point at.
+       |    def __init__(self, *_args, **_kw):
+       |        pass
+       |    def setAccessible__Z__V(self, flag):
+       |        pass
+       |    def isAccessible__Z(self):
+       |        return False
+       |    def __getattr__(self, name):
+       |        # Permissive fallback so unforeseen reflective probes
+       |        # don't crash on AttributeError. Returns a no-op callable
+       |        # that yields None / 0 / empty depending on suffix shape.
+       |        if name.startswith("getName") or name.startswith("toGenericString") or name.startswith("toString"):
+       |            return lambda *args, **kw: ""
+       |        if name.startswith("getModifiers"):
+       |            return lambda *args, **kw: 0
+       |        if name.startswith("getDeclaringClass"):
+       |            return lambda *args, **kw: None
+       |        if name.startswith("getReturnType") or name.startswith("getType") or name.startswith("getGenericReturnType") or name.startswith("getGenericType"):
+       |            return lambda *args, **kw: _scpy_class_of_name("java.lang.Object")
+       |        if name.startswith("getParameterTypes") or name.startswith("getGenericParameterTypes"):
+       |            return lambda *args, **kw: _scpy_array_value(_scpy_class_of_name("java.lang.Class"), [])
+       |        if name.startswith("getExceptionTypes") or name.startswith("getGenericExceptionTypes"):
+       |            return lambda *args, **kw: _scpy_array_value(_scpy_class_of_name("java.lang.Class"), [])
+       |        if name.startswith("getDeclaredAnnotations") or name.startswith("getAnnotations") or name.startswith("getParameterAnnotations"):
+       |            return lambda *args, **kw: _scpy_array_value(_scpy_class_of_name("java.lang.annotation.Annotation"), [])
+       |        if name.startswith("getAnnotation") or name.startswith("getDeclaredAnnotation"):
+       |            return lambda *args, **kw: None
+       |        if name.startswith("invoke"):
+       |            return lambda *args, **kw: None
+       |        if name.startswith("get__") or name.startswith("set__"):
+       |            return lambda *args, **kw: None
+       |        if name.startswith("isVarArgs") or name.startswith("isAccessible") or name.startswith("isSynthetic") or name.startswith("isBridge") or name.startswith("isDefault"):
+       |            return lambda *args, **kw: False
+       |        raise AttributeError(name)
        |class Method(AccessibleObject): pass
        |class Field(AccessibleObject): pass
+       |class Executable(AccessibleObject): pass
+       |class Constructor(AccessibleObject): pass
+       |# `java.lang.reflect.Type` and `TypeVariable` are interfaces; we
+       |# just need a nominal placeholder so user code linking against
+       |# them resolves.
+       |class Type(_scpy_Object): pass
+       |class TypeVariable(Type): pass
+       |class Modifier(_scpy_Object):
+       |    # Modifier flag constants and predicates as per JDK
+       |    # `java.lang.reflect.Modifier`. Static-only API.
+       |    PUBLIC       = 0x00000001
+       |    PRIVATE      = 0x00000002
+       |    PROTECTED    = 0x00000004
+       |    STATIC       = 0x00000008
+       |    FINAL        = 0x00000010
+       |    SYNCHRONIZED = 0x00000020
+       |    VOLATILE     = 0x00000040
+       |    TRANSIENT    = 0x00000080
+       |    NATIVE       = 0x00000100
+       |    INTERFACE    = 0x00000200
+       |    ABSTRACT     = 0x00000400
+       |    STRICT       = 0x00000800
+       |    @staticmethod
+       |    def isPublic__I__Z(mod):       return (mod & Modifier.PUBLIC) != 0
+       |    @staticmethod
+       |    def isPrivate__I__Z(mod):      return (mod & Modifier.PRIVATE) != 0
+       |    @staticmethod
+       |    def isProtected__I__Z(mod):    return (mod & Modifier.PROTECTED) != 0
+       |    @staticmethod
+       |    def isStatic__I__Z(mod):       return (mod & Modifier.STATIC) != 0
+       |    @staticmethod
+       |    def isFinal__I__Z(mod):        return (mod & Modifier.FINAL) != 0
+       |    @staticmethod
+       |    def isSynchronized__I__Z(mod): return (mod & Modifier.SYNCHRONIZED) != 0
+       |    @staticmethod
+       |    def isVolatile__I__Z(mod):     return (mod & Modifier.VOLATILE) != 0
+       |    @staticmethod
+       |    def isTransient__I__Z(mod):    return (mod & Modifier.TRANSIENT) != 0
+       |    @staticmethod
+       |    def isNative__I__Z(mod):       return (mod & Modifier.NATIVE) != 0
+       |    @staticmethod
+       |    def isInterface__I__Z(mod):    return (mod & Modifier.INTERFACE) != 0
+       |    @staticmethod
+       |    def isAbstract__I__Z(mod):     return (mod & Modifier.ABSTRACT) != 0
+       |    @staticmethod
+       |    def isStrict__I__Z(mod):       return (mod & Modifier.STRICT) != 0
+       |    @staticmethod
+       |    def toString__I__Ljava_dlang_dString(mod):
+       |        return ""
+       |    def __getattr__(self, name):
+       |        # Static-style dispatch for module-call shape
+       |        # `_scpy_mod_java_lang_reflect_Modifier_.isPublic__I__Z`.
+       |        if name.startswith("isPublic"):       return Modifier.isPublic__I__Z
+       |        if name.startswith("isPrivate"):      return Modifier.isPrivate__I__Z
+       |        if name.startswith("isProtected"):    return Modifier.isProtected__I__Z
+       |        if name.startswith("isStatic"):       return Modifier.isStatic__I__Z
+       |        if name.startswith("isFinal"):        return Modifier.isFinal__I__Z
+       |        if name.startswith("isSynchronized"): return Modifier.isSynchronized__I__Z
+       |        if name.startswith("isVolatile"):     return Modifier.isVolatile__I__Z
+       |        if name.startswith("isTransient"):    return Modifier.isTransient__I__Z
+       |        if name.startswith("isNative"):       return Modifier.isNative__I__Z
+       |        if name.startswith("isInterface"):    return Modifier.isInterface__I__Z
+       |        if name.startswith("isAbstract"):     return Modifier.isAbstract__I__Z
+       |        if name.startswith("isStrict"):       return Modifier.isStrict__I__Z
+       |        if name.startswith("toString"):       return Modifier.toString__I__Ljava_dlang_dString
+       |        raise AttributeError(name)
+       |# Module singleton for `Modifier` so static-style emission resolves.
+       |_scpy_mod_java_lang_reflect_Modifier_  = Modifier()
+       |_scpy_mod_java_lang_reflect_Modifier__ = _scpy_mod_java_lang_reflect_Modifier_
+       |class InvocationTargetException(Exception):
+       |    # Pylib's `java.lang.reflect.InvocationTargetException` extends
+       |    # ReflectiveOperationException. The runtime never raises it
+       |    # because we don't actually invoke methods reflectively, but
+       |    # user code may catch or instantiate it.
+       |    def __init__(self, cause=None, message=None, *_args):
+       |        super().__init__(message if message is not None else (str(cause) if cause is not None else ""))
+       |        self._scpy_cause = cause
+       |    def getCause__Ljava_dlang_dThrowable(self):
+       |        return self._scpy_cause
+       |    def getTargetException__Ljava_dlang_dThrowable(self):
+       |        return self._scpy_cause
        |class Spliterator(_scpy_Object): pass
        |class Reference(_scpy_Object):
        |    def __init__(self, referent=None, *_args):
@@ -1368,6 +1855,28 @@ object PyIRRuntime:
        |
        |    def getParent__Ljava_dlang_dClassLoader(self):
        |        return self._scpy_parent
+       |
+       |    def loadClass__Ljava_dlang_dString__Ljava_dlang_dClass(self, name):
+       |        # Walk the runtime class registry. If the class isn't
+       |        # registered we mirror `Class.forName`'s behavior.
+       |        clazz = _scpy_class_registry.get(name)
+       |        if clazz is not None:
+       |            return clazz
+       |        return _scpy_ClassModule._scpy_resolve(name)
+       |
+       |    def loadClass__Ljava_dlang_dString_Z__Ljava_dlang_dClass(self, name, resolve):
+       |        return self.loadClass__Ljava_dlang_dString__Ljava_dlang_dClass(name)
+       |
+       |    def __getattr__(self, name):
+       |        if name.startswith("loadClass"):
+       |            return self.loadClass__Ljava_dlang_dString__Ljava_dlang_dClass
+       |        if name.startswith("getResourceAsStream"):
+       |            return lambda *args, **kw: None
+       |        if name.startswith("getResource"):
+       |            return lambda *args, **kw: None
+       |        if name.startswith("getParent"):
+       |            return self.getParent__Ljava_dlang_dClassLoader
+       |        raise AttributeError(name)
        |
        |class ClassValue(_scpy_Object):
        |    def __init__(self):
@@ -1531,6 +2040,12 @@ object PyIRRuntime:
        |_scpy_register_class(AccessibleObject, "java.lang.reflect.AccessibleObject", "class", "java.lang.Object")
        |_scpy_register_class(Method, "java.lang.reflect.Method", "class", "java.lang.reflect.AccessibleObject")
        |_scpy_register_class(Field, "java.lang.reflect.Field", "class", "java.lang.reflect.AccessibleObject")
+       |_scpy_register_class(Executable, "java.lang.reflect.Executable", "class", "java.lang.reflect.AccessibleObject")
+       |_scpy_register_class(Constructor, "java.lang.reflect.Constructor", "class", "java.lang.reflect.AccessibleObject")
+       |_scpy_register_class(Type, "java.lang.reflect.Type", "interface", None)
+       |_scpy_register_class(TypeVariable, "java.lang.reflect.TypeVariable", "interface", None, ("java.lang.reflect.Type",))
+       |_scpy_register_class(Modifier, "java.lang.reflect.Modifier", "class", "java.lang.Object")
+       |_scpy_register_class(InvocationTargetException, "java.lang.reflect.InvocationTargetException", "class", "java.lang.Object")
        |_scpy_register_class(Spliterator, "java.util.Spliterator", "interface", None)
        |_scpy_register_class(Reference, "java.lang.ref.Reference", "class", "java.lang.Object")
        |_scpy_register_class(WeakReference, "java.lang.ref.WeakReference", "class", "java.lang.ref.Reference")
