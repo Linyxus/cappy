@@ -96,11 +96,27 @@ Apply all excludelist additions in one PR to
 
 ---
 
-## Layer 6 — Sweep again, find the next wave
+## Layer 6 — Sweep again, find the next wave ✅
 
-Once Layers 0–5 trickle down, schedule a fresh end-to-end PyStockRunTests
-sweep and rebuild the failure manifest. Layer 0.2's bucketed harness now
-makes this trivial to repeat.
+Sweep ran 2026-05-01 against HEAD `fd4c8daedc`. Manifest dropped from
+**578 → 191 failing fixtures** (387 net green flips, 2 regressions vs
+post-Layer-2). Full writeup in `notes/layer6-sweep.md`.
+
+Top remaining clusters and proposed Wave 4 ordering:
+
+| Cluster | Count | Maps to |
+|---|---:|---|
+| Reflection (`Class.getX` family) | 76 | Layer 4.1 (`issue-reflection-class-introspection.md`) |
+| Test-internal `assert` failures | 18 | per-fixture investigation |
+| `ObjectOutputStream(out)` read side | 18 | Layer 3.2 read (`issue-objectoutputstream-no-args.md`) |
+| 60s subprocess timeout | 14 | profile + excludelist |
+| `Enumeration.nextName` missing | 12 | Layer 3.3 (`issue-enumeration-nextname-missing.md`) |
+| Anonfun missing `self` | 10 | Layer 2.1 (`issue-anonfun-static-self-unbound.md`) |
+| Function `.tupled`/`.curried`/`.andThen` | 5 | Phase 3 of `shrink-runtime.md` |
+| Parent-ctor reads child-set field | 2 | Layer 5.7 follow-up (i763, Signals2) |
+
+After Layer 4.1 + Layer 3.2 read + Layer 3.3 land, the manifest should
+drop to roughly **~85 failing fixtures** (failure rate < 5%).
 
 ---
 
@@ -114,4 +130,4 @@ makes this trivial to repeat.
 | 3 | Stdlib / pylib runtime | 3.1, 3.2 (write) landed; 3.2 (read) and 3.3 open |
 | 4 | Excludelist housekeeping | Pending PR |
 | 5 | Research / blocked | All Layer 5 sub-items landed |
-| 6 | Wave 2 sweep | Re-run after Layer 4 lands |
+| 6 | Wave 2 sweep | Done — see `notes/layer6-sweep.md` |
