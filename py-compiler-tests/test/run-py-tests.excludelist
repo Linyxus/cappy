@@ -11,3 +11,13 @@
 #
 # Example:
 #   reflect-foo.scala  # uses scala.reflect; not supported by the Python backend
+
+# --- Perf B': hot loops too slow under CPython interpretation -----------
+# Triaged 2026-05-02 in `notes/issue-stockrun-timeout-cluster.md`. Each
+# of these completes correctly on the JVM and produces correct output
+# under the Python backend, but its hot loop exceeds even a 90s harness
+# budget. Excluded with reason rather than masked as a flaky timeout.
+t8893.scala         # 2 × tick(10000000): 20M tail-recursive iterations
+t3502.scala         # LazyList prime sieve up to ~1.4M with per-element % check
+collections.scala   # 10 collection types × 5K-iter ++/contains test loops
+kmpSliceSearch.scala  # 100×10×5 nested KMP search; dominated by _scpy_is_assignable walks

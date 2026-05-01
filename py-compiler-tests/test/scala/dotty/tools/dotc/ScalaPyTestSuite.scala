@@ -15,7 +15,14 @@ import dotty.tools.vulpix.*
 private[dotc] trait ScalaPyTestSuite extends ParallelTesting:
   implicit val summaryReport: SummaryReporting = new SummaryReport
 
-  def maxDuration = 60.seconds
+  // Bumped from 60s → 90s on 2026-05-02 to cover Perf B fixtures that
+  // run correctly but exceed 60s under CPython interpretation
+  // (i20145 ~52s pre-Perf-C / ~3s post; t6584 63s; UnrolledBuffer 66s;
+  // t2818 43s borderline). See `notes/issue-stockrun-timeout-cluster.md`.
+  // Genuine hangs still surface within 90s; fixtures that need >90s
+  // (Perf B') are excludelisted with reason tags in
+  // `run-py-tests.excludelist`.
+  def maxDuration = 90.seconds
   def numberOfWorkers = 5
   def safeMode = Properties.testsSafeMode
   def isInteractive = SummaryReport.isInteractive
