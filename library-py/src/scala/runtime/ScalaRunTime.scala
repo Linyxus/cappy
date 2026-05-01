@@ -109,8 +109,17 @@ object ScalaRunTime:
   def array_length(xs: AnyRef): Int =
     xs.asInstanceOf[Array[Any]].length
 
+  // Mirrors the upstream stdlib body. Do NOT write
+  // `a.isInstanceOf[Array[?]]` here: the compiler's TypeTestsCasts
+  // erasure rewrites that into `ScalaRunTime.isArray(a, 1)`, turning
+  // this method into an infinite tail-call loop under the Python
+  // backend's tailrec lowering. `getClass.isArray` goes through
+  // `_scpy_Class._scpy_kind == "array"` instead.
   def isArray(a: Any, atLevel: Int = 1): Boolean =
-    a != null && a.isInstanceOf[Array[?]]
+    a != null && isArrayClass(a.getClass, atLevel)
+
+  private def isArrayClass(clazz: Class[?], atLevel: Int): Boolean =
+    clazz.isArray && (atLevel == 1 || isArrayClass(clazz.getComponentType, atLevel - 1))
 
   /** Inline helpers used by stdlib `Predef.locally`/`mapNull` etc. Must
    *  match the stdlib signature so call sites inline correctly. */

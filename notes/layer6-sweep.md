@@ -106,16 +106,22 @@ Fix is contained to `PyIRRuntime.scala`'s OO* class.
 `i10930`, `i14693`, `i20145`, `kmpSliceSearch`, `t2755`, `t2818`,
 `t3502`, `t493`, `t6584`, `t8893`.
 
-The subprocess is killed by the `maxDuration=60` cap in `PyRun`. Some
-of these (`UnrolledBuffer`, `kmpSliceSearch`, `t8893`) are
-inherently long-running; others (`caseClassHash`, `array-erasure`)
-finish in seconds on the JVM and might indicate a real perf regression
-in generated Python (e.g. `_scpy_call_to_string` walking long lists).
-
-Recommended split: profile two representative fixtures (`array-erasure`
-quick-fail, `caseClassHash` mid-fail) before concluding "raise the
-timeout" — the 60s cap exists because legit hangs would otherwise
-freeze CI.
+Investigated 2026-05-02 — see `notes/issue-stockrun-timeout-cluster.md`.
+Splits into:
+- **5 fixtures** (`i14693`, `t493`, `t2755`, `array-erasure`, `i10930`)
+  hang on a real bug: `library-py`'s `ScalaRunTime.isArray` override
+  uses `a.isInstanceOf[Array[?]]`, which the compiler rewrites back into
+  `ScalaRunTime.isArray(a, 1)` → infinite tail-call loop. One-liner fix.
+- **3 fixtures** (`i20145` 52s, `t6584` 63s, `UnrolledBuffer` 66s)
+  produce correct output but exceed the 60s cap. `t2818` (43s) is on
+  the edge.
+- **4 fixtures** (`t8893`, `t3502`, `collections`, `kmpSliceSearch`)
+  still time out at 75s — too slow for a reasonable harness budget;
+  excludelist with reason tags.
+- **1 fixture** (`caseClassHash`) is no longer a timeout (the
+  `Warmup.` partial output was a pre-`fd4c8daedc` `Timing.main`
+  artifact). Now fails on the Murmur3 hash mismatch in
+  `notes/layer6-assertion-failures.md`.
 
 ### `Anonfun missing self` (NameError on `self`) — **10 fixtures**
 
@@ -213,9 +219,10 @@ Sized by both blast radius and fix complexity:
    no single root cause; group as Wave 4-residual.
 8. **Class-name sanitize for digit-leading identifiers** — flips 2
    (16405, 9416).
-9. **Profile / triage the 14 timeouts** — split between perf
-   regressions (potentially a couple) and inherently slow tests
-   (excludelist with reason tag).
+9. **Profile / triage the 14 timeouts** — done 2026-05-02; see
+   `notes/issue-stockrun-timeout-cluster.md`. Bug A (5 fixtures) is a
+   one-liner in `library-py/.../ScalaRunTime.scala`; 4 are excludelist
+   candidates; 3 are Perf B (need >60s); 1 is the Murmur3 cluster.
 
 After (1)–(3) land, the manifest should drop from 191 to roughly
 **~85 failing fixtures**, putting the failure rate under 5%.
