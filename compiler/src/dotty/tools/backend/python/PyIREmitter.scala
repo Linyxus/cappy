@@ -375,6 +375,7 @@ object PyIREmitter:
 
     private def emitClassMetadata(cls: PyClassDef): Unit =
       line("_scpy_full_name = \"" + escapeString(cls.name.nameString) + "\"")
+      line("_scpy_simple_name = \"" + escapeString(classSimpleName(cls)) + "\"")
       line("_scpy_kind = \"" + classKindLiteral(cls.kind) + "\"")
       line("_scpy_superclass = " + classSuperclassLiteral(cls))
       line("_scpy_interfaces = " + classInterfacesLiteral(cls.interfaces))
@@ -385,7 +386,32 @@ object PyIREmitter:
 
     private def emitClassRegistration(cls: PyClassDef): Unit =
       val clsId = classIdentifier(cls.name)
-      line(s"_scpy_register_class($clsId, $clsId._scpy_full_name, $clsId._scpy_kind, $clsId._scpy_superclass, $clsId._scpy_interfaces)")
+      line(s"_scpy_register_class($clsId, $clsId._scpy_full_name, $clsId._scpy_kind, $clsId._scpy_superclass, $clsId._scpy_interfaces, simple_name=$clsId._scpy_simple_name)")
+
+    /** User-visible Scala simple name for `cls`. Mirrors what the JVM
+     *  Scala stdlib computes via `getClass.getName` post-processing:
+     *  drop a trailing module-class `$` (so `D1$` → `D1`), drop the
+     *  package qualifier (after the last `.`), and drop the
+     *  outer-class prefix (after the last `$` that introduces an inner
+     *  type). The source-level `originalName` is preferred when
+     *  available (it tracks the user-written identifier through
+     *  Dotty's name-expansion machinery). */
+    private def classSimpleName(cls: PyClassDef): String =
+      val raw = cls.originalName.value.getOrElse(cls.name.simpleName)
+      stripScalaSimpleName(raw)
+
+    private def stripScalaSimpleName(raw: String): String =
+      val noTrailing =
+        var s = raw
+        while s.endsWith("$") do s = s.stripSuffix("$")
+        if s.isEmpty then raw else s
+      val afterDot =
+        val dot = noTrailing.lastIndexOf('.')
+        if dot < 0 then noTrailing else noTrailing.substring(dot + 1)
+      val afterDollar =
+        val dollar = afterDot.lastIndexOf('$')
+        if dollar < 0 then afterDot else afterDot.substring(dollar + 1)
+      afterDollar
 
     private def classKindLiteral(kind: PyClassKind): String = kind match
       case PyClassKind.Interface => "interface"

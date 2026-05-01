@@ -19,7 +19,6 @@ import java.lang.reflect.{Field => JField, Method => JMethod}
 
 import scala.annotation.{implicitNotFound, tailrec}
 import scala.reflect.NameTransformer._
-import scala.util.matching.Regex
 
 import scala.python.runtime.PyBuiltins
 
@@ -98,14 +97,18 @@ abstract class Enumeration (initial: Int) extends Serializable {
      the JVM does not invoke it when deserializing subclasses. */
   protected def readResolve(): AnyRef = thisenum.getClass.getField(MODULE_INSTANCE_NAME).get(null)
 
-  /** The name of this enumeration. */
+  /** The name of this enumeration.
+   *
+   *  Upstream Scala derives this from `getClass.getName` and strips the
+   *  module-suffix `$` plus any `package.` / outer-class `$` prefixes.
+   *  The Python backend rewrites JVM-style `$` separators to `_` during
+   *  class-name encoding (see `PyEncoding.sanitizeName`), so `getName`
+   *  returns names like `Test5_D1_` and the JVM-style splitting produces
+   *  a leaked encoded form. Use the registered Scala simple name
+   *  instead, which codegen attaches to each class in the runtime's
+   *  class registry. */
   override def toString(): String =
-    getClass.getName
-      .stripSuffix(MODULE_SUFFIX_STRING)
-      .split('.')
-      .last
-      .split(Regex.quote(NAME_JOIN_STRING))
-      .last
+    PyBuiltins.class_simple_name(this)
 
   /** The mapping from the integer used to identify values to the actual
    *  values.

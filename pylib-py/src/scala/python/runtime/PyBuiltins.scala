@@ -210,6 +210,28 @@ object PyBuiltins:
       i += 1
     asBytes(bytesOf(unsigned)).decode(encoding)
 
+  // --- Class-name introspection -------------------------------------
+
+  /** Top-level prelude helper that returns the user-visible Scala
+   *  simple name registered for `obj`'s class. Defined in the bundled
+   *  Python prelude (see `PyIRRuntime._scpy_simple_name_of`); reached
+   *  from Scala source via the bundle's own `__main__` namespace. */
+  @extern("__main__", "_scpy_simple_name_of")
+  private def simpleNameOf(obj: Any): String = native
+
+  /** User-visible Scala simple name of `obj`'s registered class.
+   *
+   *  On the JVM, `getClass.getName.split('$').last` peels off package
+   *  and outer-class prefixes to yield the user-written class name
+   *  (`D1` for `object Test5 { object D1 extends Enumeration }`). On
+   *  the Python backend the `$` separators are mangled to `_` during
+   *  class encoding, so JVM-style splitting produces a leaked encoded
+   *  name (`Test5_D1_`). This bridges directly to the Scala name that
+   *  codegen registered alongside each class in the runtime's class
+   *  registry, used by `Enumeration.toString`. */
+  def class_simple_name(obj: Any): String =
+    simpleNameOf(obj)
+
   // --- Instance-attribute introspection ----------------------------
 
   /** Snapshot of `(attrName, attrValue)` pairs for a Scala instance via

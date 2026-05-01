@@ -736,13 +736,18 @@ object PyIRRuntime:
        |    return Exception(short_name + ": " + str(message))
        |
        |class _scpy_Class(_scpy_Object):
-       |    def __init__(self, name, kind, component_type=None, py_type=None):
+       |    def __init__(self, name, kind, component_type=None, py_type=None, simple_name=None):
        |        self._scpy_name = name
        |        self._scpy_kind = kind
        |        self._scpy_component_type = component_type
        |        self._scpy_py_type = py_type
        |        self._scpy_superclass_name = None
        |        self._scpy_interface_names = ()
+       |        # Original Scala simple name (without `$` module-suffix or
+       |        # outer-class prefix). Codegen supplies this from the source
+       |        # symbol; runtime-registered helper classes leave it None and
+       |        # `_scpy_simple_name_of` falls back to a heuristic on `_scpy_name`.
+       |        self._scpy_simple_name = simple_name
        |
        |    def getName__Ljava_dlang_dString(self):
        |        return self._scpy_name
@@ -1259,16 +1264,18 @@ object PyIRRuntime:
        |        _scpy_class_registry[name] = clazz
        |    return clazz
        |
-       |def _scpy_register_class(py_type, name, kind="class", superclass_name=None, interface_names=(), component_type=None):
+       |def _scpy_register_class(py_type, name, kind="class", superclass_name=None, interface_names=(), component_type=None, simple_name=None):
        |    clazz = _scpy_class_registry.get(name)
        |    if clazz is None:
-       |        clazz = _scpy_Class(name, kind, component_type, py_type)
+       |        clazz = _scpy_Class(name, kind, component_type, py_type, simple_name)
        |        _scpy_class_registry[name] = clazz
        |    else:
        |        clazz._scpy_kind = kind
        |        clazz._scpy_component_type = component_type
        |        if py_type is not None:
        |            clazz._scpy_py_type = py_type
+       |        if simple_name is not None:
+       |            clazz._scpy_simple_name = simple_name
        |    clazz._scpy_superclass_name = superclass_name
        |    clazz._scpy_interface_names = tuple(interface_names)
        |    if py_type is not None:
@@ -1278,6 +1285,37 @@ object PyIRRuntime:
        |        except (AttributeError, TypeError):
        |            pass
        |    return clazz
+       |
+       |def _scpy_simple_name_of(value):
+       |    # Returns the user-visible Scala simple name of `value`'s class
+       |    # (e.g. `D1` for `object D1 extends Enumeration` defined inside
+       |    # `object Test5`). When the registered class carries an explicit
+       |    # `_scpy_simple_name` (codegen path), use it directly; otherwise
+       |    # fall back to a heuristic on the encoded full name where
+       |    # `$` separators have already been mapped to `_`.
+       |    clazz = _scpy_class_of_instance(value)
+       |    name = clazz._scpy_simple_name
+       |    if name is not None:
+       |        return name
+       |    return _scpy_simple_name_from_encoded(clazz._scpy_name)
+       |
+       |def _scpy_simple_name_from_encoded(name):
+       |    if not name:
+       |        return name
+       |    # Drop trailing `_` that came from a Scala module-class `$`
+       |    # suffix.
+       |    while name.endswith("_"):
+       |        name = name[:-1]
+       |    # Take the segment after the last package-separator `.`.
+       |    dot = name.rfind(".")
+       |    if dot >= 0:
+       |        name = name[dot + 1:]
+       |    # Take the segment after the last inner-class boundary, which
+       |    # `PyEncoding.sanitizeName` mapped from `$` to `_`.
+       |    underscore = name.rfind("_")
+       |    if underscore >= 0:
+       |        name = name[underscore + 1:]
+       |    return name
        |
        |def _scpy_descriptor_for_class(clazz):
        |    if clazz._scpy_kind == "primitive":
