@@ -709,6 +709,100 @@ class PyLinkerTest:
     assertTrue(classNamesOf(bundle).contains(loadedName))
     assertEquals(List(field.name), fieldsOf(bundle, userModName))
 
+  @Test def dropsSupportMainWhenUserHasNoMain(): Unit =
+    // User CU has only a non-main method; a Support input ships its own
+    // `main` (analogous to scala.util.Properties.main). The linker must
+    // NOT promote the Support main to the bundle entry — doing so would
+    // root the support graph in PyReachability and bloat the output by
+    // an order of magnitude.
+    val userCls = classDef(
+      name    = className("user.Lib"),
+      methods = List(
+        ctor(),
+        method(
+          name       = methodName(
+            "adder",
+            paramRefs = List(PyPrimRef.IntRef, PyPrimRef.IntRef),
+            resultRef = PyPrimRef.IntRef
+          ),
+          resultType = PyIntType,
+          body       = PyIntLit(0)(NoPos)
+        )
+      )
+    )
+
+    val supportMain = classDef(
+      name    = className("support.Properties"),
+      kind    = PyClassKind.ModuleClass,
+      methods = List(
+        ctor(),
+        method(
+          name      = methodName("main"),
+          namespace = PyMemberNamespace.PublicStatic,
+          body      = PySkip()(NoPos)
+        )
+      )
+    )
+
+    val bundle = PyLinker.link(List(
+      PyLinker.Input(List(userCls), None),
+      PyLinker.Input(
+        List(supportMain),
+        Some((supportMain.name, supportMain.kind)),
+        PyLinker.InputSource.Support
+      )
+    ))
+
+    assertEquals(None, bundle.mainEntry)
+    assertTrue(
+      "support.Properties should be pruned when its main is not promoted",
+      !classNamesOf(bundle).contains(supportMain.name)
+    )
+    assertTrue(
+      "user.Lib should be preserved as a User root",
+      classNamesOf(bundle).contains(userCls.name)
+    )
+
+    val emitted = PyIREmitter.emitToString(bundle.classes, bundle.mainEntry)
+    assertTrue(!emitted.contains("if __name__ == \"__main__\":"))
+
+  @Test def userMainWinsOverSupportMain(): Unit =
+    val userMain = classDef(
+      name    = className("user.App"),
+      kind    = PyClassKind.ModuleClass,
+      methods = List(
+        ctor(),
+        method(
+          name      = methodName("main"),
+          namespace = PyMemberNamespace.PublicStatic,
+          body      = PySkip()(NoPos)
+        )
+      )
+    )
+    val supportMain = classDef(
+      name    = className("support.Lib"),
+      kind    = PyClassKind.ModuleClass,
+      methods = List(
+        ctor(),
+        method(
+          name      = methodName("main"),
+          namespace = PyMemberNamespace.PublicStatic,
+          body      = PySkip()(NoPos)
+        )
+      )
+    )
+
+    val bundle = PyLinker.link(List(
+      PyLinker.Input(List(userMain), Some((userMain.name, userMain.kind))),
+      PyLinker.Input(
+        List(supportMain),
+        Some((supportMain.name, supportMain.kind)),
+        PyLinker.InputSource.Support
+      )
+    ))
+
+    assertEquals(Some((userMain.name, userMain.kind)), bundle.mainEntry)
+
   private def assertLinkError(expectedMessage: String)(body: => Any): Unit =
     assertThrows[PyLinkingException](_.errors.exists(_.message.contains(expectedMessage))) {
       body

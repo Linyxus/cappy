@@ -598,15 +598,17 @@ object PyLinker:
       }
 
     private def collectMainEntry(): Option[PyIREmitter.MainEntry] =
-      // Prefer a User input's main over any Support main. Stdlib code
-      // (e.g. `scala.util.Properties` carrying a version-printer `main`)
-      // ships its own entry, but we want the user's entry point — same
-      // policy as scalac/JVM where the bootstrap picks the explicit
-      // -Dmain. Multiple User mains are still a hard error.
+      // Only User inputs can define the bundle's main entry. Support
+      // inputs (stdlib `.pyir` from the classpath) frequently ship their
+      // own `main` — `scala.util.Properties.main` is a version-printer —
+      // and silently promoting one would (a) pick a surprising entry
+      // point and (b) root the entire transitive closure of the stdlib
+      // through `PyReachability`, ballooning the bundle by orders of
+      // magnitude. When the user provides no main, emit a bundle without
+      // a `__main__` guard. Multiple User mains remain a hard error.
       val userMains = userInputs.iterator.flatMap(_.mainEntry).toList
-      val supportMains = supportInputs.iterator.flatMap(_.mainEntry).toList
       userMains match
-        case Nil => supportMains.headOption
+        case Nil => None
         case head :: Nil => Some(head)
         case head :: rest =>
           for other <- rest do
