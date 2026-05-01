@@ -567,12 +567,29 @@ private class PyCodeGen()(using genCtx: Context):
    *  reads on `this` before `<init>` chains.
    *
    *  In Python every class shares one attribute slot per simple name
-   *  per object, so a `class Child(override val msg: String) extends
-   *  Parent(...)` whose copyParams write `self.msg = msg` *before* the
-   *  parent ctor sees its `self.msg = parentMsg` assignment lets the
-   *  parent clobber the override-set value. Reorder the super call(s)
-   *  ahead of the copyParams so the JVM-style "subclass body wins"
-   *  semantics holds.
+   *  per object, so two competing requirements exist:
+   *
+   *    (1) `class Child(override val msg: String) extends Parent(...)`
+   *        — Parent's copyParams write `self.msg = parentMsg` during
+   *        the super call. If Child's copyParams (`self.msg = msg`)
+   *        ran *before* the super call, Parent would then clobber it.
+   *        Subclass-wins semantics requires Child's copyParams to run
+   *        *after* the super call.
+   *
+   *    (2) `tests/run/i763.scala` — Parent's primary ctor virtually
+   *        invokes a child accessor (`self.s__I()`) that reads a field
+   *        only set by the subclass. If Child's copyParams (`self.s = s`)
+   *        ran only *after* the super call, Parent would observe the
+   *        zero-init default and the assertion would fail. Child's
+   *        copyParams must run *before* the super call.
+   *
+   *  Both (1) and (2) are satisfied by emitting the copyParams *twice*:
+   *  once before the super-or-this-ctor call (so Parent's body sees the
+   *  child-set values via virtual dispatch) and once after (so Parent's
+   *  copyParams can't overwrite the child-set values). The duplicated
+   *  block consists only of pure `Assign(ref(target), ref(param))`
+   *  trees produced by `Constructors`, plus an optional null-test for
+   *  the OUTER param; those are idempotent, so re-running them is safe.
    *
    *  The super call is always an `Apply` of a `Select` whose qualifier
    *  is `Super`; mix/this-init calls (`this(...)`) also qualify
@@ -582,7 +599,13 @@ private class PyCodeGen()(using genCtx: Context):
     case Block(stats, expr) =>
       val (preSuperCalls, rest) = stats.span(s => !isSuperOrThisCtorCall(s))
       rest match
-        case ctorCall :: tail => Block(ctorCall :: preSuperCalls ::: tail, expr).withSpan(rhs.span)
+        case ctorCall :: tail =>
+          // Duplicate the copyParams: emit them once before the super
+          // call (so the parent's virtual dispatch sees subclass-set
+          // values) and once after (so the parent's copyParams cannot
+          // clobber the subclass's overriding values). See class doc.
+          val newStats = preSuperCalls ::: (ctorCall :: preSuperCalls) ::: tail
+          Block(newStats, expr).withSpan(rhs.span)
         case Nil              => rhs
     case _ => rhs
 
@@ -1078,6 +1101,21 @@ private class PyCodeGen()(using genCtx: Context):
       case sel @ Select(_, _) if sel.symbol.exists && encoding.isFacadeOwner(sel.symbol.owner) =>
         if sel.symbol.is(Accessor) && app.args.isEmpty then genFacadeSelect(sel, pos)
         else genFacadeCall(sel, app.args, pos)
+
+      // `Select(qual, name)` where the selected member itself carries an
+      // `@extern` binding but its owner is a regular Scala class/object
+      // (not a `@extern`-annotated facade). The bare-name `Ident` arm above
+      // covers same-scope calls like `pyPack(...)` from inside the same
+      // `object`; this arm covers cross-class calls like
+      // `ObjectOutputStream.pickleDumps(obj)` from inside the companion
+      // class. In both cases the extern annotation says "this method's
+      // body is `native` — emit a dynamic call to the bound module/path
+      // and discard the receiver." `genExternCall` honours that contract;
+      // the qualifier is intentionally not threaded into the call because
+      // it is a regular Scala module receiver, not a Python facade
+      // qualifier.
+      case sel @ Select(_, _) if sel.symbol.exists && encoding.externBindingOf(sel.symbol).isDefined =>
+        genExternCall(sel.symbol, app.args, pos)
 
       case _ =>
         val sym = app.fun.symbol
