@@ -172,6 +172,23 @@ private class PyCodeGen()(using genCtx: Context):
   private var currentClassSym: Symbol = NoSymbol
   private var currentMethodSym: Symbol = NoSymbol
 
+  /** Synthetic `@JavaStatic` helpers (anonfuns and HoistSuperArgs
+    * `$superArg$N` methods) on a module class whose lifted body still
+    * references the enclosing module's `this`. Populated by
+    * `genClassMembers` *before* any method body is generated, so that
+    * both the method definition (`genMethod`) and every call site
+    * (`genNormalApply`, `genClosure`) see the same static-vs-instance
+    * decision. See `needsSelfDespiteStatic` and
+    * `notes/issue-anonfun-static-self-unbound.md`. */
+  private val anonfunDemotedToInstance = mutable.Set.empty[Symbol]
+
+  /** True when `sym` is one of the synthetic helpers we demote from
+    * `@staticmethod` to a regular instance method.  Centralised so that
+    * the demotion check is identical at the def site and at every call
+    * site. */
+  private def isAnonfunDemotedFromStatic(sym: Symbol): Boolean =
+    sym.exists && anonfunDemotedToInstance.contains(sym)
+
   /** Side-channel for statements produced during expression generation
     * (Block-in-expression-position). Drained by `flattenToStmts` at the
     * enclosing statement.
@@ -505,7 +522,18 @@ private class PyCodeGen()(using genCtx: Context):
     val fields = mutable.ListBuffer.empty[PyFieldDef]
     val methods = mutable.ListBuffer.empty[PyMethodDef]
 
-    for tree <- collectMemberDefs(td) do
+    // Pre-pass: identify synthetic `@JavaStatic` helpers whose body still
+    // needs `self`. Must run before any method-body codegen so both the
+    // def site and the call sites observe the same demotion decision.
+    val members = collectMemberDefs(td)
+    for tree <- members do
+      tree match
+        case dd: DefDef if !dd.symbol.isClassConstructor =>
+          if needsSelfDespiteStatic(dd) then
+            anonfunDemotedToInstance += dd.symbol
+        case _ => ()
+
+    for tree <- members do
       tree match
         case vd: ValDef =>
           val sym = vd.symbol
@@ -645,7 +673,21 @@ private class PyCodeGen()(using genCtx: Context):
       // A Scala `object` is a singleton instance, not a true static namespace.
       // Keep module-class methods as instance methods in PyIR so inherited
       // trait defaults can use normal receiver semantics (`super()`, `self`, ...).
-      val isStatic = sym.is(JavaStatic)
+      //
+      // Anonfun-self override: dotc's erasure marks lifted lambdas /
+      // hoistSuperArgs helpers on a module class as `@JavaStatic`, but
+      // their lifted bodies can still reference the captured outer
+      // receiver (e.g. an eta-expanded extension method `4.add` becomes
+      // `def newFunction$$anonfun$1(y) = this.add(4, y)`). Emitting that
+      // as a Python `@staticmethod` drops `self` from the parameter list
+      // while the body still says `self.add(...)`, raising
+      // `NameError: name 'self' is not defined` at runtime. The pre-pass
+      // discriminator (`needsSelfDespiteStatic`, populated into
+      // `anonfunDemotedToInstance`) detects exactly the bodies that need
+      // the receiver and forces the namespace back to instance. The
+      // matching predicate fires at every call site, so dispatch shape
+      // stays consistent.  See `notes/issue-anonfun-static-self-unbound.md`.
+      val isStatic = sym.is(JavaStatic) && !isAnonfunDemotedFromStatic(sym)
       val namespace = (isStatic, sym.is(Private)) match
         case (true,  true)  => PyMemberNamespace.PrivateStatic
         case (true,  false) => PyMemberNamespace.PublicStatic
@@ -677,6 +719,85 @@ private class PyCodeGen()(using genCtx: Context):
       mutable      = sym.is(Mutable),
       pos          = posOf(p)
     )
+
+  /** Returns true when `dd` is a `@JavaStatic` synthetic helper on a
+    * module class whose body still references the enclosing module's
+    * receiver.
+    *
+    * dotc's erasure flags helpers inside a module class with
+    * `JavaStatic` because module-class methods are emitted as JVM
+    * `static` forwarders. But the bodies produced by `LambdaLift` /
+    * `HoistSuperArgs` can still reference the captured outer `this` —
+    * typically a bare `Ident(member)` whose owner is the same module
+    * class. `genExpr` lowers such a reference to `PyThis()` (via
+    * `moduleReceiver(currentClassSym)`), which renders as Python
+    * `self`. Emitting the method as `@staticmethod` then drops `self`
+    * from the parameter list while the body still lexically says
+    * `self.<member>(...)`, raising
+    * `NameError: name 'self' is not defined` at runtime.
+    *
+    * The discriminator walks the body, ignoring nested `DefDef` /
+    * `TypeDef` (each has its own `self` scope), and returns true on
+    * the first node that would lower to `self`:
+    *  - `This(t)` where `t.symbol == enclosing`.
+    *  - `Ident(x)` whose owner is `enclosing` and which is not a local
+    *    / parameter / module / package (i.e. would resolve to
+    *    `self.x` in `genExpr`).
+    *
+    * The walker descends into `Closure(env, meth, tpt)` because the
+    * `meth` reference is what controls whether the closure body
+    * evaluates `self`. Restricted to anonymous functions and
+    * `HoistSuperArgs` `$superArg$N` helpers on module classes — the
+    * only known synthesis paths that produce a static method whose
+    * body needs the receiver — so we never demote genuinely
+    * captureless statics. See `notes/issue-anonfun-static-self-unbound.md`. */
+  private def needsSelfDespiteStatic(dd: DefDef): Boolean =
+    val sym = dd.symbol
+    val isSynthetic =
+      sym.isAnonymousFunction
+        || sym.name.toString.contains("superArg$")
+    if !isSynthetic then return false
+    val enclosing = sym.owner
+    if !enclosing.is(ModuleClass) then return false
+    if dd.rhs.isEmpty then return false
+
+    val paramSyms: Set[Symbol] = dd.termParamss.flatten.map(_.symbol).toSet
+    var found = false
+
+    val walker = new TreeTraverser:
+      override def traverse(tree: Tree)(using Context): Unit =
+        if found then return
+        tree match
+          // Don't descend into nested method/class definitions — they
+          // have their own `self` scope; their bodies can't make the
+          // outer body need `self`.
+          case _: DefDef | _: TypeDef => ()
+          case Closure(_, _, _) =>
+            // Closure(env, meth, tpt) — the meth reference is what
+            // determines whether the runtime evaluation reaches into
+            // `self`. env values were already evaluated in this
+            // method's scope before we entered the closure, so they
+            // also count toward the outer-body's needs.
+            traverseChildren(tree)
+          case t: This if t.symbol == enclosing =>
+            found = true
+          case id: Ident =>
+            val isym = id.symbol
+            if isym.exists
+                && isym.owner == enclosing
+                && !paramSyms.contains(isym)
+                && !isym.is(Local)
+                && !isym.is(Module)
+                && !isym.is(Package)
+            then
+              found = true
+            else
+              traverseChildren(tree)
+          case _ =>
+            traverseChildren(tree)
+
+    walker.traverse(dd.rhs)
+    found
 
   private def stmtsToBody(stmts: List[PyTree], pos: PyPosition): PyTree =
     stmts match
@@ -1309,7 +1430,7 @@ private class PyCodeGen()(using genCtx: Context):
         val methodName = encoding.encodeMethodName(sym)
         val ownerName  = encoding.encodeClassName(sym.owner)
         val resultTpe  = encoding.encodeType(sym.info.finalResultType)
-        val isStaticTarget = sym.is(JavaStatic)
+        val isStaticTarget = sym.is(JavaStatic) && !isAnonfunDemotedFromStatic(sym)
 
         genToStringSpecial(app, pos) match
           case Some(tree) => break(tree)
@@ -2632,7 +2753,7 @@ private class PyCodeGen()(using genCtx: Context):
     val ownerClass = encoding.encodeClassName(targetSym.owner)
     val resultTpe = encoding.encodeType(targetSym.info.finalResultType)
 
-    val isStaticTarget = targetSym.is(JavaStatic)
+    val isStaticTarget = targetSym.is(JavaStatic) && !isAnonfunDemotedFromStatic(targetSym)
 
     val targetParamTypes = targetSym.info.paramInfoss.flatten
     val envValues = tree.env.map(genExpr)
