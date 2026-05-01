@@ -678,7 +678,25 @@ object PyIREmitter:
           val isVoidReturn = method.resultType == PyVoidType
                           || method.resultType == PyNothingType
                           || method.flags.namespace == PyMemberNamespace.Constructor
-          emitMethodBody(stmts, returnLast = !isVoidReturn)
+          val returnLast = !isVoidReturn
+          // Pre-pass: hoist `_scpy_lbl_<n>` class declarations to method
+          // scope so each label class is allocated once per call rather
+          // than once per loop iteration. Excludes labels that
+          // `wrapLastReturn` will peephole into a plain `return` (those
+          // never need a class). See `notes/issue-stockrun-timeout-
+          // cluster.md` Perf C, and the structural argument in
+          // memory `feedback_compiler_structural_reasoning.md`:
+          // `labelClassCounter` is method-monotonic, so by-construction
+          // every active label gets a fresh `_scpy_lbl_<n>`.
+          val peepholeLabels: Set[PyLabelName] =
+            if returnLast && stmts.nonEmpty then findPeepholeLabels(stmts.last)
+            else Set.empty
+          val hoisted = collectActiveLabels(body)
+            .filterNot(peepholeLabels.contains)
+          for label <- hoisted do
+            val className = allocLabelClass(label)
+            emitLabelClassDecl(className)
+          emitMethodBody(stmts, returnLast)
       dedent()
 
     private def buildParamList(method: PyMethodDef): String =
@@ -892,13 +910,15 @@ object PyIREmitter:
         if !labelReturnTargets(body, label) then
           emitBlockStmts(body)
         else
-          val className = allocLabelClass(label)
-          emitLabelClassDecl(className)
+          // The class declaration was hoisted to method scope by the
+          // pre-pass in `emitMethodDef`. Look up the pre-allocated
+          // name; the entry persists for the whole method body so
+          // multiple references to the same label resolve consistently.
+          val className = labelClasses(label)
           line("try:")
           indent(); emitBlockStmts(body); dedent()
           line(s"except $className:")
           indent(); line("pass"); dedent()
-          labelClasses.remove(label)  // name is scoped to this Labeled
 
       case PyLabelReturn(label, value) =>
         // Lookup the class allocated by the enclosing `PyLabeled`. If
@@ -1067,6 +1087,81 @@ object PyIREmitter:
           // doesn't contain one is trivially tail-targeted (no
           // offending return inside).
           !labelReturnTargets(tree, target)
+
+    /** Labels that `wrapLastReturn` will collapse into plain Python
+     *  `return` statements — i.e. the method-tail peephole fires and
+     *  no `_scpy_lbl_<n>` class is needed. Mirrors the descent shape
+     *  of `wrapLastReturn` exactly: visit only positions that
+     *  `wrapLastReturn` itself recurses into (PyTryFinally's finalizer
+     *  is normal-emitted, so we don't follow it).
+     *
+     *  Used by the `emitMethodDef` pre-pass to exclude these labels
+     *  from the hoisted set; otherwise we'd emit a dead class
+     *  declaration at method top. */
+    private def findPeepholeLabels(tree: PyTree): Set[PyLabelName] =
+      tree match
+        case PyBlock(_, expr) =>
+          findPeepholeLabels(expr)
+        case PyIf(_, thenp, elsep) =>
+          findPeepholeLabels(thenp) ++ findPeepholeLabels(elsep)
+        case PyTryCatch(block, _, _, handler) =>
+          findPeepholeLabels(block) ++ findPeepholeLabels(handler)
+        case PyTryFinally(block, _) =>
+          findPeepholeLabels(block)
+        case PyMatch(_, cases, default) =>
+          val fromCases = cases.foldLeft(Set.empty[PyLabelName]) {
+            case (acc, (_, body)) => acc ++ findPeepholeLabels(body)
+          }
+          fromCases ++ findPeepholeLabels(default)
+        case PyLabeled(label, body) if isTailTargeted(body, label) =>
+          findPeepholeLabels(body) + label
+        case _ =>
+          Set.empty
+
+    /** Every `PyLabeled` in `tree` whose body contains a matching
+     *  `PyLabelReturn` (i.e. the dead-label peephole at `emitStmt(
+     *  PyLabeled)` would NOT fire), in pre-order traversal so the
+     *  resulting counter assignment matches source order.
+     *
+     *  Stops at `PyClosure` boundaries: closure bodies render via the
+     *  expression renderer and are forbidden from containing
+     *  statement-shaped nodes like `PyLabeled` (see `exprToStr`'s
+     *  invariant comment). The explicit case keeps the boundary
+     *  documented in case the IR contract ever loosens. */
+    private def collectActiveLabels(tree: PyTree): List[PyLabelName] =
+      val acc = mutable.ListBuffer.empty[PyLabelName]
+      def walk(t: PyTree): Unit = t match
+        case PyLabeled(label, body) =>
+          if labelReturnTargets(body, label) then acc += label
+          walk(body)
+        case PyBlock(stats, expr) =>
+          stats.foreach(walk); walk(expr)
+        case PyIf(c, th, el) =>
+          walk(c); walk(th); walk(el)
+        case PyTryCatch(block, _, _, handler) =>
+          walk(block); walk(handler)
+        case PyTryFinally(block, finalizer) =>
+          walk(block); walk(finalizer)
+        case PyMatch(selector, cases, default) =>
+          walk(selector)
+          cases.foreach { case (_, body) => walk(body) }
+          walk(default)
+        case PyWhile(cond, body) =>
+          walk(cond); walk(body)
+        case PyAssign(_, rhs) =>
+          walk(rhs)
+        case PyVarDef(_, _, _, _, rhs) =>
+          walk(rhs)
+        case PyReturn(value) =>
+          walk(value)
+        case PyLabelReturn(_, value) =>
+          walk(value)
+        case _: PyClosure =>
+          ()  // expression-shaped; cannot contain PyLabeled by IR contract
+        case _ =>
+          ()
+      walk(tree)
+      acc.toList
 
     private def bindExternAlias(imp: ExternImport): String =
       externAliases.getOrElseUpdate(imp, {
