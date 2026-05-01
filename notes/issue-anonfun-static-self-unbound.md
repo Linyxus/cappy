@@ -115,3 +115,36 @@ item** (single-fixture or per-pattern fix) rather than re-attempting the
 broad heuristic. Affected fixtures are listed above.
 
 Specialist report: `/tmp/pyrun-analysis/cat-c-name-error.md`.
+
+## Resolution — Layer 2.1 landed (commit `1eddffa163`)
+
+Lead 1 was implemented: a body-walking discriminator
+(`needsSelfDespiteStatic` in `GenPython.scala`) detects lifted helpers
+whose lifted body still references the enclosing module's receiver.
+Demoted symbols are kept in `anonfunDemotedToInstance`, populated by a
+pre-pass over the class members in `genClassMembers` *before* any
+method body runs, so:
+
+- `genMethod` flips `JavaStatic → Public` (or `PrivateStatic → Private`)
+  for the demoted set, emitting an instance method with `self`.
+- `genNormalApply` and `genClosure` use the same set when computing
+  `isStaticTarget`, so the call site still passes the module receiver
+  and Python binds it to `self` (no `@staticmethod` decoration → normal
+  receiver binding kicks in). Without this symmetry, the prior naive
+  flip produced linker errors of the shape
+  `Unresolved module class 'java.lang'` / `'<empty>'` when the def site
+  no longer matched the call site.
+
+Gating is restricted to two synthesis paths whose bodies are known to
+escape the receiver: `sym.isAnonymousFunction` (LambdaLift) and
+`sym.name.toString.contains("superArg$")` (HoistSuperArgs), both
+required to live on a `ModuleClass`. The body walker then catches
+`This(enclosing)` and bare `Ident(member)` whose owner is the same
+module class and which is not a local/parameter/module/package.
+Closures are descended into because their `meth` reference is what
+controls runtime evaluation of `self`.
+
+Targets verified (commit binary regenerated end-to-end through `bin/scpyc`):
+i9507, given-eta, i24201a, tuple-ops, byname-varargs, quoted-sematics-1.
+`erased-lambdas` requires `experimental.erasedDefinitions` and is
+unrelated to this fix.
