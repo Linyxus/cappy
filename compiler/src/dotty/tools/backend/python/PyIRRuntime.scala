@@ -1612,12 +1612,88 @@ object PyIRRuntime:
        |            return _scpy_fn_static_forward
        |        raise AttributeError(name)
        |
+       |# Helper for `FunctionN.{tupled,curried,andThen,compose}` runtime
+       |# implementations below. The Scala stdlib bodies are
+       |# `apply(x1, ...)` over the receiver; in Python we route through
+       |# `__call__` (which `_scpy_Fn` defines) for closures, and fall
+       |# back to scanning `apply*` methods for non-`_scpy_Fn` Function-
+       |# extending classes that statically dispatch through here.
+       |def _scpy_fn_call(receiver, *args):
+       |    cls = type(receiver)
+       |    has_call = False
+       |    for b in cls.__mro__:
+       |        if b is object:
+       |            break
+       |        if "__call__" in vars(b):
+       |            has_call = True
+       |            break
+       |    if has_call:
+       |        return receiver(*args)
+       |    arity = _scpy_len(args)
+       |    target = None
+       |    sp_fallback = None
+       |    for cls_in_mro in cls.__mro__:
+       |        for attr_name, attr_val in vars(cls_in_mro).items():
+       |            if not attr_name.startswith("apply"):
+       |                continue
+       |            if not callable(attr_val):
+       |                continue
+       |            if _scpy_arity_of_method_name(attr_name) != arity:
+       |                continue
+       |            if _scpy_is_sp_method_name(attr_name):
+       |                if sp_fallback is None:
+       |                    sp_fallback = attr_val
+       |                continue
+       |            target = attr_val
+       |            break
+       |        if target is not None:
+       |            break
+       |    if target is None:
+       |        target = sp_fallback
+       |    if target is None:
+       |        raise AttributeError("apply" + "_" * (arity > 0))
+       |    return target.__get__(receiver, cls)(*args)
+       |
        |""".stripMargin +
     (0 to 22).map { n =>
+      val tupledMethod =
+        if n >= 2 then
+          val tupleParams = (1 to n).map(i => s"_scpy_t._$i").mkString(", ")
+          s"""|    def tupled__Lscala_dFunction1(self):
+              |        _scpy_self_ref = self
+              |        return _scpy_Fn1(lambda _scpy_t: _scpy_fn_call(_scpy_self_ref, $tupleParams))
+              |""".stripMargin
+        else ""
+      val curriedMethod =
+        if n >= 2 then
+          // Scala curried produces nested Function1s. Build by reducing.
+          val argsList = (1 to n).map(i => s"_scpy_a$i").mkString(", ")
+          // Innermost lambda captures all args and applies. Build from inside out.
+          val curriedLambda =
+            (n to 1 by -1).foldLeft(s"_scpy_fn_call(_scpy_self_ref, $argsList)") { (body, i) =>
+              s"_scpy_Fn1(lambda _scpy_a$i: $body)"
+            }
+          s"""|    def curried__Lscala_dFunction1(self):
+              |        _scpy_self_ref = self
+              |        return $curriedLambda
+              |""".stripMargin
+        else ""
+      val andThenCompose =
+        if n == 1 then
+          """|    def andThen__Lscala_dFunction1__Lscala_dFunction1(self, _scpy_g):
+             |        _scpy_self_ref = self
+             |        _scpy_g_ref = _scpy_g
+             |        return _scpy_Fn1(lambda _scpy_x: _scpy_fn_call(_scpy_g_ref, _scpy_fn_call(_scpy_self_ref, _scpy_x)))
+             |    def compose__Lscala_dFunction1__Lscala_dFunction1(self, _scpy_g):
+             |        _scpy_self_ref = self
+             |        _scpy_g_ref = _scpy_g
+             |        return _scpy_Fn1(lambda _scpy_x: _scpy_fn_call(_scpy_self_ref, _scpy_fn_call(_scpy_g_ref, _scpy_x)))
+             |""".stripMargin
+        else ""
       s"""|class Function$n(_scpy_Object, metaclass=_scpy_FnMeta):
           |    def __getattr__(self, name):
           |        return _scpy_fn_specialized_forward(self, name)
-          |
+          |$tupledMethod$andThenCompose$curriedMethod
           |""".stripMargin
     }.mkString +
     """|# Linker-only nominal stubs. Stdlib references them by name (some as
