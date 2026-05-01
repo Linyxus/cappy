@@ -1,4 +1,36 @@
-# `Class.getDeclaredFields/Methods/getField/getMethods` not supported
+# `Class.getDeclaredFields/Methods/getField/getMethods` partially stubbed
+
+## Status (Layer 4.1 — bd229b6839)
+
+The runtime now exposes empty/null/no-op stubs for the JDK reflection
+surface most fixtures touch incidentally:
+`getDeclared{Fields,Methods,Constructors,Classes,Annotations}`,
+`get{Fields,Methods,Constructors,Classes}`, `getDeclaredField/Method/
+Constructor` (raise `NoSuchField/MethodException`),
+`getEnclosingMethod/Constructor/Class`, `getEnumConstants`,
+`getModifiers`, `getCanonicalName`, `getTypeName`, `getPackageName`,
+`getNestHost/Members`, `getGenericInterfaces`, `getGenericSuperclass`,
+`getTypeParameters`, plus annotation/modifier predicates and
+`asSubclass`, `cast`, `newInstance`. `java.lang.reflect.Modifier`,
+`Constructor`, `Type`, `TypeVariable`, `Executable`,
+`InvocationTargetException` are wired with `_scpy_register_class` and
+linker entries; `ClassLoader.loadClass` falls back to the runtime
+registry then `Class.forName`.
+
+Fixtures that only check shape ("no field starting with `foo$`")
+flip green. Fixtures that consume actual reflective data
+(`paramForwarding` printing `private final int B.theValue`, `i18701`
+expecting an enclosing-method `toString`, `t7932` filtering the
+`Method[]` array, the `scala.reflect.Selectable` family that
+materializes fields via `rcls.getField(...)`) still fail at output-
+mismatch / assertion stage because no real reflective metadata is
+preserved.
+
+Going further requires threading declared-method/field tables into
+`_scpy_register_class` and synthesizing `Field`/`Method`/`Constructor`
+instances at class-construction time. Out of scope for this layer.
+
+## Original notes
 
 ## Minimal example for reproducing
 
