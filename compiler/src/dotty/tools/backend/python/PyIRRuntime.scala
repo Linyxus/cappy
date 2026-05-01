@@ -107,8 +107,6 @@ object PyIRRuntime:
   // JDK / scalalib classes referenced by stdlib but not implemented in
   // pylib. Same "linker-only stub" treatment as the invoke classes
   // above. None are exercised at runtime by pos-py tests.
-  private val ObjectInputStreamClass     = PyClassName("java.io.ObjectInputStream")
-  private val ObjectOutputStreamClass    = PyClassName("java.io.ObjectOutputStream")
   private val AbstractStringBuilderClass = PyClassName("java.lang.AbstractStringBuilder")
   private val ReflectMethodClass         = PyClassName("java.lang.reflect.Method")
   private val ReflectFieldClass          = PyClassName("java.lang.reflect.Field")
@@ -277,22 +275,6 @@ object PyIRRuntime:
         constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
         instanceMethods = MethodMatcher(simpleNamePrefixes = Set("")),
         staticMethods = MethodMatcher(simpleNamePrefixes = Set(""))
-      ),
-    ObjectInputStreamClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.ObjectClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
-        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
-      ),
-    ObjectOutputStreamClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.ObjectClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
-        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
       ),
     AbstractStringBuilderClass ->
       ProvidedClass(
@@ -1723,8 +1705,6 @@ object PyIRRuntime:
        |    return VarHandle(field_name)
        |class MethodHandles(_scpy_Object): pass
        |class MethodHandles_Lookup(_scpy_Object): pass
-       |class ObjectInputStream(_scpy_Object): pass
-       |class ObjectOutputStream(_scpy_Object): pass
        |class AbstractStringBuilder(_scpy_Object): pass
        |class AccessibleObject(_scpy_Object):
        |    # Reflection support is intentionally limited; see
@@ -2110,8 +2090,6 @@ object PyIRRuntime:
     """|_scpy_register_class(VarHandle, "java.lang.invoke.VarHandle", "class", "java.lang.Object")
        |_scpy_register_class(MethodHandles, "java.lang.invoke.MethodHandles", "class", "java.lang.Object")
        |_scpy_register_class(MethodHandles_Lookup, "java.lang.invoke.MethodHandles_Lookup", "class", "java.lang.Object")
-       |_scpy_register_class(ObjectInputStream, "java.io.ObjectInputStream", "class", "java.lang.Object")
-       |_scpy_register_class(ObjectOutputStream, "java.io.ObjectOutputStream", "class", "java.lang.Object")
        |_scpy_register_class(AbstractStringBuilder, "java.lang.AbstractStringBuilder", "class", "java.lang.Object")
        |_scpy_register_class(AccessibleObject, "java.lang.reflect.AccessibleObject", "class", "java.lang.Object")
        |_scpy_register_class(Method, "java.lang.reflect.Method", "class", "java.lang.reflect.AccessibleObject")
@@ -2179,14 +2157,26 @@ object PyIRRuntime:
        |            inst = object.__getattribute__(self, "_scpy_inst")
        |            cls = object.__getattribute__(self, "_scpy_cls")
        |            # Two-step init: first the synthesized no-arg
-       |            # `__init__` (JVM-style field zero-init), then the
-       |            # encoded no-arg ctor body that actually runs
-       |            # `<init>` for the module. Module classes always
-       |            # have a no-arg ctor; for the rare case where it has
-       |            # been DCE'd (no Scala-side reference), fall back to
-       |            # whatever ctor helper survives, alphabetically
-       |            # first.
-       |            inst.__init__()
+       |            # `__init__` (JVM-style field zero-init) for every
+       |            # class in the MRO, then the encoded no-arg ctor body
+       |            # that actually runs `<init>` for the module. We must
+       |            # walk the MRO root-first (mirroring `_scpy_new`)
+       |            # because each class's `__init__` only sets its OWN
+       |            # fields — Python doesn't auto-chain to parent
+       |            # `__init__`. Without this, an inherited `var x: T`
+       |            # without an explicit initializer (e.g.
+       |            # `scala.Enumeration.nextName`) reads back as a
+       |            # missing attribute on the subclass instance. Module
+       |            # classes always have a no-arg ctor; for the rare
+       |            # case where it has been DCE'd (no Scala-side
+       |            # reference), fall back to whatever ctor helper
+       |            # survives, alphabetically first.
+       |            for _scpy_klass in reversed(cls.__mro__):
+       |                if "_scpy_full_name" not in _scpy_klass.__dict__:
+       |                    continue
+       |                _scpy_init = _scpy_klass.__dict__.get("__init__")
+       |                if _scpy_init is not None:
+       |                    _scpy_init(inst)
        |            no_arg_helper = "_scpy_ctor_" + cls.__name__ + "__void__V"
        |            ctor = getattr(cls, no_arg_helper, None)
        |            if ctor is not None:
