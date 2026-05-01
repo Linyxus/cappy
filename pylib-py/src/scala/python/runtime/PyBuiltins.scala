@@ -209,3 +209,36 @@ object PyBuiltins:
       unsigned(i) = bytes(i) & 0xFF
       i += 1
     asBytes(bytesOf(unsigned)).decode(encoding)
+
+  // --- Instance-attribute introspection ----------------------------
+
+  /** Snapshot of `(attrName, attrValue)` pairs for a Scala instance via
+   *  Python's `vars(obj)`. Used by `scala.Enumeration.populateNameMap`
+   *  to recover declared `val Foo, Bar = Value` names without going
+   *  through Java reflection (which our runtime does not implement).
+   *  The keys are the unencoded Scala names — Python codegen stores
+   *  user-declared `val Red` as `self.Red`, not as the JVM-encoded
+   *  method name.
+   */
+  def instance_attrs(obj: Any): InstanceAttrs =
+    val rawDict = builtins.vars(obj)
+    new InstanceAttrs(
+      builtins.list(rawDict.keys()),
+      builtins.list(rawDict.values())
+    )
+
+  /** Index-random-access handle over a snapshot of an instance's
+   *  attribute names + values. Walked via `length` + `name(i)` /
+   *  `value(i)` from Scala source. */
+  final class InstanceAttrs private[runtime] (
+      private val keyList: Any,
+      private val valueList: Any
+  ):
+    def length: Int =
+      builtins.len(keyList).asInstanceOf[Int]
+
+    def name(index: Int): String =
+      getItem(keyList, index).asInstanceOf[String]
+
+    def value(index: Int): Any =
+      getItem(valueList, index)
