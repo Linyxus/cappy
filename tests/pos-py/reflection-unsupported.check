@@ -1,0 +1,13 @@
+getName:java.lang.String
+getSimpleName:String
+isArray:false
+isPrimitive:false
+isInterface:false
+uoe:getDeclaredFields:true
+uoe:getDeclaredMethods:true
+uoe:getMethods:true
+uoe:getFields:true
+uoe:getDeclaredField:true
+uoe:getDeclaredMethod:true
+uoe:getEnumConstants:true
+uoe:getEnclosingClass:true

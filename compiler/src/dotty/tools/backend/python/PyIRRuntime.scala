@@ -735,6 +735,38 @@ object PyIRRuntime:
        |                pass
        |    return Exception(short_name + ": " + str(message))
        |
+       |# Prefix used by every "JVM reflection is not supported" message.
+       |# Tests assert against this prefix; do not change without updating
+       |# `tests/pos-py/reflection-unsupported.scala` and any reachability
+       |# unit tests that pin the message shape.
+       |_SCPY_REFLECTION_UNSUPPORTED_PREFIX = (
+       |    "JVM reflection is not supported in the -scalapy backend"
+       |)
+       |
+       |def _scpy_reflection_unsupported(method_name):
+       |    # Build an UnsupportedOperationException that callers can
+       |    # `catch UnsupportedOperationException`. Lookup is deferred to
+       |    # runtime for the same reason as `_scpy_reflective_no_such`:
+       |    # the prelude is parsed before pylib classes are bound.
+       |    message = (
+       |        _SCPY_REFLECTION_UNSUPPORTED_PREFIX
+       |        + " (Class." + method_name + "). "
+       |        + "Excludelist the test or remove the reflective call; see "
+       |        + "notes/wave5-worklist/01-reflection-unsupported-and-blacklist.md."
+       |    )
+       |    exc_cls = globals().get("java_lang_UnsupportedOperationException")
+       |    if exc_cls is None:
+       |        exc_cls = globals().get("UnsupportedOperationException")
+       |    if exc_cls is not None:
+       |        try:
+       |            return exc_cls(message)
+       |        except Exception:
+       |            try:
+       |                return exc_cls(message, None, True, True)
+       |            except Exception:
+       |                pass
+       |    return Exception("UnsupportedOperationException: " + message)
+       |
        |class _scpy_Class(_scpy_Object):
        |    def __init__(self, name, kind, component_type=None, py_type=None, simple_name=None):
        |        self._scpy_name = name
@@ -828,81 +860,82 @@ object PyIRRuntime:
        |        return None
        |
        |    # --- Reflection stubs ---
-       |    # The Python runtime does not maintain JVM-style reflective
-       |    # metadata: declared field/method/constructor lists, generic
-       |    # signatures, annotations, and enum-constants tables are not
-       |    # preserved through PyIR and code generation. Most fixtures
-       |    # that hit these methods only check for a property of the
-       |    # array (e.g. `.exists(_.getName.startsWith(...))`) and pass
-       |    # with an empty result. Tests that depend on the actual
-       |    # contents of the reflective answer are documented in
-       |    # `notes/issue-reflection-class-introspection.md`.
+       |    # JVM-style reflective metadata (declared field/method/
+       |    # constructor lists, generic signatures, annotations, enum-
+       |    # constants tables) is not preserved through PyIR and code
+       |    # generation. Per Wave 5 priority #1
+       |    # (notes/wave5-worklist/01-reflection-unsupported-and-blacklist.md)
+       |    # we raise an explicit `UnsupportedOperationException` for
+       |    # these methods rather than returning fabricated empty arrays
+       |    # / `None` (which used to surface as confusing
+       |    # `AssertionError`s in user code that consumed the result).
+       |    # Cheap intrinsic ops above (`getName`, `getSimpleName`,
+       |    # `isArray`, `getSuperclass`, etc.) remain supported.
        |    def getDeclaredFields__ALjava_dlang_dreflect_dField(self):
-       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.Field"), [])
+       |        raise _scpy_reflection_unsupported("getDeclaredFields")
        |
        |    def getFields__ALjava_dlang_dreflect_dField(self):
-       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.Field"), [])
+       |        raise _scpy_reflection_unsupported("getFields")
        |
        |    def getDeclaredMethods__ALjava_dlang_dreflect_dMethod(self):
-       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.Method"), [])
+       |        raise _scpy_reflection_unsupported("getDeclaredMethods")
        |
        |    def getMethods__ALjava_dlang_dreflect_dMethod(self):
-       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.Method"), [])
+       |        raise _scpy_reflection_unsupported("getMethods")
        |
        |    def getDeclaredConstructors__ALjava_dlang_dreflect_dConstructor(self):
-       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.Constructor"), [])
+       |        raise _scpy_reflection_unsupported("getDeclaredConstructors")
        |
        |    def getConstructors__ALjava_dlang_dreflect_dConstructor(self):
-       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.Constructor"), [])
+       |        raise _scpy_reflection_unsupported("getConstructors")
        |
        |    def getDeclaredClasses__ALjava_dlang_dClass(self):
-       |        return _scpy_array_value(_scpy_class_of_name("java.lang.Class"), [])
+       |        raise _scpy_reflection_unsupported("getDeclaredClasses")
        |
        |    def getClasses__ALjava_dlang_dClass(self):
-       |        return _scpy_array_value(_scpy_class_of_name("java.lang.Class"), [])
+       |        raise _scpy_reflection_unsupported("getClasses")
        |
        |    def getGenericInterfaces__ALjava_dlang_dreflect_dType(self):
-       |        # No generic-type info; mirror getInterfaces but typed as Type[].
-       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.Type"), [])
+       |        raise _scpy_reflection_unsupported("getGenericInterfaces")
        |
        |    def getGenericSuperclass__Ljava_dlang_dreflect_dType(self):
-       |        return self.getSuperclass__Ljava_dlang_dClass()
+       |        raise _scpy_reflection_unsupported("getGenericSuperclass")
        |
        |    def getTypeParameters__ALjava_dlang_dreflect_dTypeVariable(self):
-       |        return _scpy_array_value(_scpy_class_of_name("java.lang.reflect.TypeVariable"), [])
+       |        raise _scpy_reflection_unsupported("getTypeParameters")
        |
        |    def getDeclaredField__Ljava_dlang_dString__Ljava_dlang_dreflect_dField(self, name):
-       |        raise _scpy_reflective_no_such("NoSuchFieldException", name)
+       |        raise _scpy_reflection_unsupported("getDeclaredField")
        |
        |    def getField__Ljava_dlang_dString__Ljava_dlang_dreflect_dField(self, name):
-       |        raise _scpy_reflective_no_such("NoSuchFieldException", name)
+       |        raise _scpy_reflection_unsupported("getField")
        |
        |    def getDeclaredMethod__Ljava_dlang_dString_ALjava_dlang_dClass__Ljava_dlang_dreflect_dMethod(self, name, *_args):
-       |        raise _scpy_reflective_no_such("NoSuchMethodException", name)
+       |        raise _scpy_reflection_unsupported("getDeclaredMethod")
        |
        |    def getMethod__Ljava_dlang_dString_ALjava_dlang_dClass__Ljava_dlang_dreflect_dMethod(self, name, *_args):
-       |        raise _scpy_reflective_no_such("NoSuchMethodException", name)
+       |        raise _scpy_reflection_unsupported("getMethod")
        |
        |    def getDeclaredConstructor__ALjava_dlang_dClass__Ljava_dlang_dreflect_dConstructor(self, *_args):
-       |        raise _scpy_reflective_no_such("NoSuchMethodException", "<init>")
+       |        raise _scpy_reflection_unsupported("getDeclaredConstructor")
        |
        |    def getConstructor__ALjava_dlang_dClass__Ljava_dlang_dreflect_dConstructor(self, *_args):
-       |        raise _scpy_reflective_no_such("NoSuchMethodException", "<init>")
+       |        raise _scpy_reflection_unsupported("getConstructor")
        |
        |    def getEnclosingMethod__Ljava_dlang_dreflect_dMethod(self):
-       |        return None
+       |        raise _scpy_reflection_unsupported("getEnclosingMethod")
        |
        |    def getEnclosingConstructor__Ljava_dlang_dreflect_dConstructor(self):
-       |        return None
+       |        raise _scpy_reflection_unsupported("getEnclosingConstructor")
        |
        |    def getEnclosingClass__Ljava_dlang_dClass(self):
-       |        return None
+       |        raise _scpy_reflection_unsupported("getEnclosingClass")
        |
        |    def getDeclaringClass__Ljava_dlang_dClass(self):
-       |        return None
+       |        raise _scpy_reflection_unsupported("getDeclaringClass")
        |
        |    def getEnumConstants__ALjava_dlang_dObject(self):
-       |        return None
+       |        raise _scpy_reflection_unsupported("getEnumConstants")
        |
        |    def getModifiers__I(self):
        |        return 0
@@ -939,26 +972,29 @@ object PyIRRuntime:
        |    def getProtectionDomain__Ljava_dsecurity_dProtectionDomain(self):
        |        return None
        |
+       |    # Annotation reflection: per the Wave 5 policy, all of these
+       |    # raise UnsupportedOperationException too. The runtime cannot
+       |    # reconstruct annotation instances from PyIR.
        |    def getAnnotation__Ljava_dlang_dClass__Ljava_dlang_dannotation_dAnnotation(self, ann_class):
-       |        return None
+       |        raise _scpy_reflection_unsupported("getAnnotation")
        |
        |    def getAnnotationsByType__Ljava_dlang_dClass__ALjava_dlang_dannotation_dAnnotation(self, ann_class):
-       |        return _scpy_array_value(_scpy_class_of_name("java.lang.annotation.Annotation"), [])
+       |        raise _scpy_reflection_unsupported("getAnnotationsByType")
        |
        |    def getAnnotations__ALjava_dlang_dannotation_dAnnotation(self):
-       |        return _scpy_array_value(_scpy_class_of_name("java.lang.annotation.Annotation"), [])
+       |        raise _scpy_reflection_unsupported("getAnnotations")
        |
        |    def getDeclaredAnnotations__ALjava_dlang_dannotation_dAnnotation(self):
-       |        return _scpy_array_value(_scpy_class_of_name("java.lang.annotation.Annotation"), [])
+       |        raise _scpy_reflection_unsupported("getDeclaredAnnotations")
        |
        |    def getDeclaredAnnotation__Ljava_dlang_dClass__Ljava_dlang_dannotation_dAnnotation(self, ann_class):
-       |        return None
+       |        raise _scpy_reflection_unsupported("getDeclaredAnnotation")
        |
        |    def getDeclaredAnnotationsByType__Ljava_dlang_dClass__ALjava_dlang_dannotation_dAnnotation(self, ann_class):
-       |        return _scpy_array_value(_scpy_class_of_name("java.lang.annotation.Annotation"), [])
+       |        raise _scpy_reflection_unsupported("getDeclaredAnnotationsByType")
        |
        |    def isAnnotationPresent__Ljava_dlang_dClass__Z(self, ann_class):
-       |        return False
+       |        raise _scpy_reflection_unsupported("isAnnotationPresent")
        |
        |    def isAnonymousClass__Z(self):
        |        return False
@@ -997,16 +1033,10 @@ object PyIRRuntime:
        |        return value
        |
        |    def newInstance__Ljava_dlang_dObject(self):
-       |        # Equivalent to deprecated `Class.newInstance()`. Without
-       |        # access to the no-arg ctor we cannot honor this; raise an
-       |        # exception consistent with the JDK.
-       |        py_type = self._scpy_py_type
-       |        if py_type is not None:
-       |            try:
-       |                return py_type()
-       |            except Exception:
-       |                pass
-       |        raise _scpy_reflective_no_such("InstantiationException", self._scpy_name)
+       |        # `Class.newInstance()` is part of the JVM-reflection
+       |        # surface; the Python backend does not support it (see
+       |        # notes/wave5-worklist/01-reflection-unsupported-and-blacklist.md).
+       |        raise _scpy_reflection_unsupported("newInstance")
        |
        |    def toGenericString__Ljava_dlang_dString(self):
        |        return self.toString__Ljava_dlang_dString()
