@@ -89,3 +89,24 @@ t8549b.scala                                # jvm-reflection-not-supported
 traitNoInit.scala                           # jvm-reflection-not-supported
 variable-pattern-access.scala               # jvm-reflection-not-supported
 weak-conformance.scala                      # jvm-reflection-not-supported
+
+# --- jvm-only surface (Wave 5 item 07) ----------------------------------
+# Wave 5 priority #4 (notes/wave5-worklist/07-excludelist-jvm-only.md).
+# Each fixture below pulls in JVM-only surface area that the Python backend
+# does not (and will not, in Wave 5) provide via pylib. Failure shape is
+# `Unresolved class '...'` at link time (compile.unresolved.{sun,swing_awt,
+# java_invoke,...}), except `t12348.scala`, whose `MethodHandles` use slips
+# past the linker as a module reference and surfaces as a runtime
+# `NameError`. Fixtures enumerated from
+# `/tmp/pyrun-analysis-postperfc/bucket-*.log`.
+lazy-impl.scala                # jvm-only-sun (sun.misc.Unsafe field accessor)
+t3613.scala                    # jvm-only-ui (extends javax.swing.AbstractListModel)
+java-package-private-bridge    # jvm-only-ui (extends javax.swing.JTable)
+scala2-library-test            # jvm-only-ui (Scala 2 library test references javax.swing.JTable)
+i11332.scala                   # jvm-only-invoke (java.lang.invoke.MethodHandle / MethodType)
+lambda-serialization.scala     # jvm-only-invoke (java.lang.invoke.SerializedLambda)
+t12348.scala                   # jvm-only-invoke (java.lang.invoke.MethodHandles.lookup / VarHandle)
+i14083.scala                   # jvm-reflection-not-supported (java.lang.reflect.Parameter)
+i11486                         # jvm-reflection-not-supported (java.lang.reflect.Parameter)
+i12492                         # jvm-reflection-not-supported (java.lang.reflect.Parameter)
+i15318                         # jvm-reflection-not-supported (java.lang.reflect.Parameter)
