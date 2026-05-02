@@ -130,7 +130,7 @@ private class PyCodeGen()(using genCtx: Context):
         args: List[PyTree],
         pos: PyPosition
     ): Option[PyTree] =
-      if !sym.exists || !sym.is(JavaStatic) then None
+      if !isStaticMember(sym) then None
       else if isSystemOwner(sym.owner) then
         sym.name.mangledString match
           case "arraycopy" =>
@@ -200,6 +200,27 @@ private class PyCodeGen()(using genCtx: Context):
     * site. */
   private def isAnonfunDemotedFromStatic(sym: Symbol): Boolean =
     sym.exists && anonfunDemotedToInstance.contains(sym)
+
+  /** True when `sym` should be emitted / dispatched as a Python
+    * `@staticmethod`. Mirrors the JVM/Scala.js backends'
+    * `isStaticMember` check (`JavaStatic` ∪ `isScalaStatic`).
+    *
+    * `MoveStatics` lifts `@scala.annotation.static` methods from a
+    * module class onto its companion class but intentionally does NOT
+    * set `JavaStatic` on the lifted symbol (to preserve
+    * `.enclosingClass`). Gating on `JavaStatic` alone therefore left
+    * `@static`-annotated members emitted as instance methods on the
+    * companion while every call site still routed through the module
+    * receiver — surfacing at runtime as e.g.
+    * `AttributeError: 'Test_' object has no attribute 'square__I__I'`.
+    *
+    * This predicate is the SINGLE source of truth for the decision.
+    * Every static-vs-instance branch (decl namespace, call-site
+    * receiver, intrinsic dispatch, `toString`/`getClass` exclusions,
+    * closure target shape) MUST go through here so the two ends of the
+    * contract stay consistent by construction. */
+  private def isStaticMember(sym: Symbol): Boolean =
+    sym.exists && (sym.is(JavaStatic) || sym.isScalaStatic)
 
   /** Side-channel for statements produced during expression generation
     * (Block-in-expression-position). Drained by `flattenToStmts` at the
@@ -732,7 +753,7 @@ private class PyCodeGen()(using genCtx: Context):
       // the receiver and forces the namespace back to instance. The
       // matching predicate fires at every call site, so dispatch shape
       // stays consistent.  See `notes/issue-anonfun-static-self-unbound.md`.
-      val isStatic = sym.is(JavaStatic) && !isAnonfunDemotedFromStatic(sym)
+      val isStatic = isStaticMember(sym) && !isAnonfunDemotedFromStatic(sym)
       val namespace = (isStatic, sym.is(Private)) match
         case (true,  true)  => PyMemberNamespace.PrivateStatic
         case (true,  false) => PyMemberNamespace.PublicStatic
@@ -1475,7 +1496,7 @@ private class PyCodeGen()(using genCtx: Context):
         val methodName = encoding.encodeMethodName(sym)
         val ownerName  = encoding.encodeClassName(sym.owner)
         val resultTpe  = encoding.encodeType(sym.info.finalResultType)
-        val isStaticTarget = sym.is(JavaStatic) && !isAnonfunDemotedFromStatic(sym)
+        val isStaticTarget = isStaticMember(sym) && !isAnonfunDemotedFromStatic(sym)
 
         genToStringSpecial(app, pos) match
           case Some(tree) => break(tree)
@@ -2245,7 +2266,7 @@ private class PyCodeGen()(using genCtx: Context):
    *  helper because they have no Scala-shaped method table. */
   private def genToStringSpecial(app: Apply, pos: PyPosition): Option[PyTree] =
     val sym = app.fun.symbol
-    if !isNullaryToString(sym) || sym.is(JavaStatic) then None
+    if !isNullaryToString(sym) || isStaticMember(sym) then None
     else
       app.fun match
         case Select(receiver, _) =>
@@ -2312,7 +2333,7 @@ private class PyCodeGen()(using genCtx: Context):
    *  the boxed value classes / `String`, route to `_scpy_get_class`. */
   private def genGetClassSpecial(app: Apply, pos: PyPosition): Option[PyTree] =
     val sym = app.fun.symbol
-    if !isNullaryGetClass(sym) || sym.is(JavaStatic) then None
+    if !isNullaryGetClass(sym) || isStaticMember(sym) then None
     else
       val receiver = qualifierOf(app.fun)
       if receiver.isEmpty then None
@@ -2836,7 +2857,7 @@ private class PyCodeGen()(using genCtx: Context):
     val ownerClass = encoding.encodeClassName(targetSym.owner)
     val resultTpe = encoding.encodeType(targetSym.info.finalResultType)
 
-    val isStaticTarget = targetSym.is(JavaStatic) && !isAnonfunDemotedFromStatic(targetSym)
+    val isStaticTarget = isStaticMember(targetSym) && !isAnonfunDemotedFromStatic(targetSym)
 
     val targetParamTypes = targetSym.info.paramInfoss.flatten
     val envValues = tree.env.map(genExpr)
