@@ -1,20 +1,23 @@
 # Worklist Index
 
-This is the entry file for the current worklist, which is to be managed by an agent.
+Entry point for the current worklist, managed by an orchestrating agent.
 
-The worklist consists of work items. Each work item has an informative id and is described in `{id}.md` in the current directory. Each task must be actionable, verifiable, atomic. All task items must be recorded in the index (in the `Work Items` section in the following).
+A worklist is a set of work items. Each item has a short, informative id and is described in `{id}.md` in this directory. Every item must be **actionable**, **verifiable**, and **atomic**. Every item must be registered in the `Work Items` section below.
 
-The `Work Item` section records a list of work items: their id, their simple description, and their *dependencies*. Each work item can declare other work items as pre-requistes.
+Each entry in `Work Items` records the item's id, a one-line description, and its *dependencies* (other work items that must complete first).
 
-The orchestrating agent (the main agent) assigns work items to subagents. Rules:
-- Each subagent should own their own git worktree. They work on their own branch.
-- Subagents should not run costly full-suite tests. They run tests that are localized, specific to their changes.
-- After a subagent finishes its work, it reports back to the main agent. The main agent is responsible for merging their changes / commits onto the current branch. And when necessary, run full tests to check regressions.
-- Subagents should never modify files inside the `worklist/` directory. It is the main agent's job to maintain the work item files and this index.md file.
-- When a workitem is done, the main agent summarises the status of that work item and append as a "Results" section to the markdown file. The markdown file should also be move to a subdirectory called `archived/`.
-- When a workitem is done, it could need follow-ups. In this case, the main agent should create new work items. The index MUST always be kept up-to-date.
-- The main agent keeps a fixed number of parallel sub-agents running. By default, it is 4. The user may specify it explicitly.
+## Roles
+
+The **main agent** orchestrates; **subagents** execute. Rules:
+
+- Each subagent owns its own git worktree and branch.
+- Subagents run only localized, specific tests relevant to their changes: never the full suite. It is too costly.
+- When a subagent finishes, it reports back to the main agent. The main agent is responsible for merging the subagent's commits onto the current branch and, when warranted, running the full test suite to check for regressions.
+- Subagents must never modify files under `worklist/`. Maintaining the work item files and this index is the main agent's job.
+- When a work item is done, the main agent appends a `Results` section to its markdown file summarizing the outcome, then moves the file into the `archived/` subdirectory.
+- If completing a work item surfaces follow-ups, the main agent creates new work items for them. The index MUST always be kept up to date.
+- The main agent keeps a fixed number of subagents running in parallel, 4 by default, unless the user specifies otherwise.
 
 ## Work Items
 
-The list of work item is to be filled here.
+_To be filled in._
