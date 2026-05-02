@@ -21,10 +21,24 @@ private[java] object ThrowablesSupport:
       case cause: Throwable => cause
       case _                => null
 
+  // Sentinel used by `AssertionError`'s no-arg constructor to signal
+  // that no detail message was supplied. The 1-arg ctor `AssertionError(null)`
+  // must produce `getMessage() == "null"` (per JVM `String.valueOf((Object) null)`),
+  // while the no-arg ctor must produce `getMessage() == null`. Auxiliary ctors
+  // must chain into the primary, so we piggyback this sentinel through it
+  // and unwrap in `assertionErrorMessage` / `assertionErrorCause`.
+  object NoMessage
+
+  def assertionErrorMessage(detail: Any): String | Null =
+    detail match
+      case NoMessage => null
+      case other     => stringValueOf(other)
+
   def assertionErrorCause(detail: Any, explicitCause: Throwable | Null): Throwable | Null =
     if explicitCause != null then explicitCause
     else
       detail match
+        case NoMessage        => null
         case cause: Throwable => cause
         case _                => null
 
@@ -243,9 +257,15 @@ class AbstractMethodError(primary: Any = null) extends IncompatibleClassChangeEr
 
 class AssertionError(detailMessage: Any = null, cause: Throwable | Null = null)
     extends Error(
-      ThrowablesSupport.stringValueOf(detailMessage),
+      ThrowablesSupport.assertionErrorMessage(detailMessage),
       ThrowablesSupport.assertionErrorCause(detailMessage, cause)
     ):
+  // No-arg ctor must produce `getMessage() == null`, distinct from
+  // `new AssertionError(null)` (which produces the string "null" per
+  // `String.valueOf((Object) null)`). Auxiliary ctors must chain into
+  // the primary, so the no-arg form passes the `NoMessage` sentinel
+  // and `assertionErrorMessage` unwraps it back to `null`.
+  def this() = this(ThrowablesSupport.NoMessage, null)
   def this(message: String) = this(message: Any, null)
   def this(message: Object) = this(message: Any, null)
   def this(message: scala.Boolean) = this(message: Any, null)
@@ -299,7 +319,9 @@ class NoSuchFieldError(primary: Any = null) extends IncompatibleClassChangeError
 
 class NoSuchMethodError(primary: Any = null) extends IncompatibleClassChangeError(primary)
 
-class OutOfMemoryError(primary: Any = null) extends VirtualMachineError(primary)
+class OutOfMemoryError(primary: Any = null) extends VirtualMachineError(primary):
+  def this() = this(null: Any)
+  def this(message: String) = this(message: Any)
 
 class StackOverflowError(primary: Any = null) extends VirtualMachineError(primary)
 
@@ -381,6 +403,7 @@ class IllegalThreadStateException(primary: Any = null) extends IllegalArgumentEx
 
 class IndexOutOfBoundsException(detail: Any = null)
     extends RuntimeException(ThrowablesSupport.indexMessage("Index out of range: ", detail)):
+  def this() = this(null: Any)
   def this(message: String) = this(message: Any)
   def this(index: scala.Int) = this(index: Any)
   def this(index: scala.Long) = this(index: Any)

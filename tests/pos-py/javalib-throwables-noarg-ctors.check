@@ -1,0 +1,9 @@
+oom-message-is-null:true
+oom-class:java.lang.OutOfMemoryError
+ioobe-message-is-null:true
+ioobe-class:java.lang.IndexOutOfBoundsException
+ae-message-is-null:true
+ae-class:java.lang.AssertionError
+oom-caught-null
+ioobe-caught-null
+ae-caught-null
