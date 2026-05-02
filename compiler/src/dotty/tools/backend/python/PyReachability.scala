@@ -276,6 +276,15 @@ object PyReachability:
         enqueue(Work.Instantiate(owner))
         enqueue(Work.AnalyzeMethod(owner, method))
 
+      // Runtime-prelude virtual-call seeds. Codegen replaces certain
+      // interface calls (e.g. `CharSequence.subSequence`) with
+      // `PyApplyExternal` calls into runtime helpers, so the analyzer
+      // never observes the underlying virtual call. Replay the call
+      // here so subtype overrides survive DCE; see [[virtualCallSeeds]].
+      for (staticRecv, method) <- PyIRRuntime.virtualCallSeeds do
+        enqueue(Work.ReachClass(staticRecv))
+        logVirtualCall(staticRecv, method)
+
     private def drain(): Unit =
       while worklist.nonEmpty do
         worklist.removeHead() match

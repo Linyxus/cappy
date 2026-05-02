@@ -563,6 +563,48 @@ object PyIRRuntime:
     )
   )
 
+  /** Virtual-call seeds for runtime-prelude helpers that dispatch on an
+   *  interface type. Unlike [[preludeCalls]] (which marks the owner as
+   *  instantiated and analyzes the method body), these entries log a
+   *  virtual call against the static receiver so the reachability engine
+   *  propagates the method to every subtype that ends up instantiated.
+   *
+   *  Used by `_scpy_charseq_*` (in `prelude`): codegen rewrites
+   *  `cs.subSequence(...)` etc. into `_scpy_charseq_sub_sequence(cs, ...)`.
+   *  The runtime helper falls back to `recv.subSequence__I_I__...(...)`
+   *  for non-`str` receivers (`StringBuilder`, `ArrayCharSequence`,
+   *  `SeqCharSequence`, ...). Without these seeds the analyzer never
+   *  sees a virtual call on `CharSequence.subSequence`, so the subtype
+   *  overrides get DCE'd and the helper's fallback `AttributeError`s.
+   */
+  private[python] val virtualCallSeeds: List[(PyClassName, PyMethodName)] = List(
+    PyClassName("java.lang.CharSequence") -> PyMethodName(
+      PySimpleMethodName("subSequence"),
+      List(PyPrimRef.IntRef, PyPrimRef.IntRef),
+      PyClassRef(PyClassName("java.lang.CharSequence"))
+    ),
+    PyClassName("java.lang.CharSequence") -> PyMethodName(
+      PySimpleMethodName("length"),
+      Nil,
+      PyPrimRef.IntRef
+    ),
+    PyClassName("java.lang.CharSequence") -> PyMethodName(
+      PySimpleMethodName("charAt"),
+      List(PyPrimRef.IntRef),
+      PyPrimRef.CharRef
+    ),
+    PyClassName("java.lang.CharSequence") -> PyMethodName(
+      PySimpleMethodName("isEmpty"),
+      Nil,
+      PyPrimRef.BooleanRef
+    ),
+    PyClassName("java.lang.CharSequence") -> PyMethodName(
+      PySimpleMethodName("toString"),
+      Nil,
+      PyClassRef(PyClassName("java.lang.String"))
+    )
+  )
+
   /** Python reserved words that must be escaped in identifiers. */
   val PythonKeywords: Set[String] = Set(
     "False", "None", "True", "and", "as", "assert", "async", "await",
@@ -2878,6 +2920,37 @@ object PyIRRuntime:
        |        bad = begin if begin < 0 or begin > len(s) else end
        |        raise StringIndexOutOfBoundsException(bad)
        |    return s[begin:end]
+       |
+       |# Polymorphic helpers for `java.lang.CharSequence` interface methods.
+       |# A `CharSequence`-typed receiver may carry a Python `str` at runtime
+       |# (no encoded `subSequence__I_I__...` etc.) or a real ported subclass
+       |# like `StringBuilder`/`ArrayCharSequence` that implements the
+       |# encoded methods. Dispatch on `isinstance(s, str)` so both shapes
+       |# work.
+       |def _scpy_charseq_length(s):
+       |    if isinstance(s, str):
+       |        return len(s)
+       |    return s.length__I()
+       |
+       |def _scpy_charseq_char_at(s, index):
+       |    if isinstance(s, str):
+       |        return _scpy_str_char_at(s, index)
+       |    return s.charAt__I__C(index)
+       |
+       |def _scpy_charseq_sub_sequence(s, begin, end):
+       |    if isinstance(s, str):
+       |        return _scpy_str_substring(s, begin, end)
+       |    return s.subSequence__I_I__Ljava_dlang_dCharSequence(begin, end)
+       |
+       |def _scpy_charseq_is_empty(s):
+       |    if isinstance(s, str):
+       |        return len(s) == 0
+       |    return s.isEmpty__Z()
+       |
+       |def _scpy_charseq_to_string(s):
+       |    if isinstance(s, str):
+       |        return s
+       |    return s.toString__Ljava_dlang_dString()
        |
        |def _scpy_str_contains(s, t):
        |    return _scpy_str_required_text(t) in s

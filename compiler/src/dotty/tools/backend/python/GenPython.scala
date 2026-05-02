@@ -150,6 +150,18 @@ private class PyCodeGen()(using genCtx: Context):
     def isStringInstanceMethod(sym: Symbol, isStaticTarget: Boolean): Boolean =
       !isStaticTarget && sym.exists && sym.owner == defn.StringClass
 
+    /** True when `sym` is a non-static instance method declared on the
+     *  `java.lang.CharSequence` interface (`length`, `charAt`,
+     *  `subSequence`, `toString`, `isEmpty`). The receiver's runtime type
+     *  may be a Python `str` (when the static type was widened to
+     *  `CharSequence`), in which case the encoded Scala method name does
+     *  not resolve. We route through polymorphic `_scpy_charseq_*` helpers
+     *  in `genCharSequenceCall`, which fall through to the encoded method
+     *  on non-`str` receivers like `StringBuilder` / `ArrayCharSequence`.
+     */
+    def isCharSequenceInstanceMethod(sym: Symbol, isStaticTarget: Boolean): Boolean =
+      !isStaticTarget && sym.exists && sym.owner == charSequenceClass
+
     /** True when `sym` is a static call on `java.lang.String` (covers both
      *  the Java class and the synthetic linked module class, since
      *  `String.valueOf` etc. can be referenced through either depending on
@@ -1496,6 +1508,19 @@ private class PyCodeGen()(using genCtx: Context):
             case Select(qual, _) =>
               break(genStringCall(sym, genExpr(qual), args, resultTpe, pos))
             case _ => ()
+        else if Intrinsics.isCharSequenceInstanceMethod(sym, isStaticTarget) then
+          // `cs: CharSequence` may carry a Python `str` at runtime
+          // (e.g. when stdlib code like Regex stores a String in a
+          // `CharSequence` field). The encoded method name doesn't resolve
+          // on `str`, so route through polymorphic `_scpy_charseq_*`
+          // helpers that fall back to the encoded method for non-`str`
+          // receivers.
+          app.fun match
+            case Select(qual, _) =>
+              genCharSequenceCall(sym, genExpr(qual), args, resultTpe, pos) match
+                case Some(tree) => break(tree)
+                case None       => ()
+            case _ => ()
         else if Intrinsics.isStringStaticMethod(sym, isStaticTarget) then
           break(genStringStaticCall(sym, args, resultTpe, pos))
 
@@ -1719,6 +1744,31 @@ private class PyCodeGen()(using genCtx: Context):
         // Unmapped: emit attribute access + dynamic call so Python
         // surfaces an AttributeError naming the method precisely.
         attr(name)
+
+  /** Map calls on the `java.lang.CharSequence` interface to polymorphic
+   *  runtime helpers. The static receiver type is `CharSequence`, but the
+   *  runtime type may be a Python `str` (no encoded methods) or a real
+   *  `CharSequence` subclass like `StringBuilder` / `ArrayCharSequence`
+   *  (does have encoded methods). Returns `None` for symbols we don't
+   *  recognize so the caller falls through to the regular dispatch.
+   */
+  private def genCharSequenceCall(
+      sym: Symbol,
+      recv: PyTree,
+      args: List[PyTree],
+      resultTpe: PyType,
+      pos: PyPosition
+  ): Option[PyTree] =
+    val name = sym.name.mangledString
+    def external(helperName: String, callArgs: List[PyTree] = args): PyTree =
+      PyApplyExternal(PyExternalName(helperName), recv :: callArgs)(resultTpe, pos)
+    name match
+      case "length"      => Some(external("_scpy_charseq_length", Nil))
+      case "charAt"      => Some(external("_scpy_charseq_char_at"))
+      case "subSequence" => Some(external("_scpy_charseq_sub_sequence"))
+      case "isEmpty"     => Some(external("_scpy_charseq_is_empty", Nil))
+      case "toString"    => Some(external("_scpy_charseq_to_string", Nil))
+      case _             => None
 
   private def genStringCtorCall(ctor: Symbol, args: List[PyTree], pos: PyPosition): PyTree =
     val methodName = PyMethodName(
