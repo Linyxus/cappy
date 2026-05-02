@@ -2886,6 +2886,71 @@ object PyIRRuntime:
        |        h = _scpy_i32(h * 31 + ord(ch))
        |    return h
        |
+       |def _scpy_any_hash_code(x):
+       |    # Models virtual `Object.hashCode()` dispatch for receivers
+       |    # whose static type is `Any`/`Object`/primitive-boxed. Unlike
+       |    # `Statics.anyHash` (the `.##` lowering, which applies JVM's
+       |    # cross-numeric collapse rule so `5L.## == 5.##`), this matches
+       |    # the boxed primitives' own `hashCode()` methods, which never
+       |    # collapse:
+       |    #   * `Boolean.hashCode = 1231/1237`
+       |    #   * `Integer.hashCode = intValue` (signed-32 truncation)
+       |    #   * `Long.hashCode    = (int)lv ^ (int)(lv >>> 32)`
+       |    #   * `Double.hashCode  = Long.hashCode(doubleToLongBits)`
+       |    # The Float-vs-Double distinction is unrecoverable from a raw
+       |    # Python `float`, so we bias toward Double; the Float boxed
+       |    # case (`Float.hashCode = floatToIntBits`) is not reachable
+       |    # without a runtime boxed-Float wrapper, and the
+       |    # `tests/run/hashhash.scala` Float-typed `.##` vs `.hashCode`
+       |    # gap is a known unsupportable case for this backend.
+       |    if x is None:
+       |        return 0
+       |    if isinstance(x, bool):
+       |        return 1231 if x else 1237
+       |    if isinstance(x, int):
+       |        # Apply the boxed-Long pattern (Int values fall out of the
+       |        # in-range short-circuit; out-of-range values use the
+       |        # `(int)lv ^ (int)(lv >>> 32)` mix). CPython `hash(int)`
+       |        # collapses `-1 -> -2` and reduces large ints mod
+       |        # `sys.hash_info.modulus`, so we can't defer to it.
+       |        if -0x80000000 <= x <= 0x7FFFFFFF:
+       |            return x
+       |        masked = x & 0xFFFFFFFFFFFFFFFF
+       |        lo = masked & 0xFFFFFFFF
+       |        hi = (masked >> 32) & 0xFFFFFFFF
+       |        result = (lo ^ hi) & 0xFFFFFFFF
+       |        return result - 0x100000000 if result >= 0x80000000 else result
+       |    if isinstance(x, float):
+       |        # The Float-vs-Double distinction is unrecoverable from a
+       |        # raw Python `float` (both Scala types lower to it). When
+       |        # the value round-trips through 32-bit float, prefer the
+       |        # `Float.hashCode = floatToIntBits` algorithm — this is
+       |        # what `tests/run/hashhash.scala` `confirmSame(5.5f)`
+       |        # demands (its JVM-side .## also routes through
+       |        # `Float.hashCode` via the `Statics.doubleHash` collapse
+       |        # chain when iv/lv don't round-trip). For non-Float-
+       |        # representable doubles, fall through to
+       |        # `Double.hashCode = Long.hashCode(doubleToLongBits)`.
+       |        if _scpy_math.isnan(x):
+       |            return 2146959360  # Long.hashCode of canonical Double NaN
+       |        try:
+       |            fv_bits = struct.unpack('<i', struct.pack('<f', x))[0]
+       |            fv_round = struct.unpack('<f', struct.pack('<f', x))[0]
+       |            if float(fv_round) == x:
+       |                return fv_bits
+       |        except (OverflowError, ValueError):
+       |            pass
+       |        bits = struct.unpack('<q', struct.pack('<d', x))[0]
+       |        masked = bits & 0xFFFFFFFFFFFFFFFF
+       |        lo = masked & 0xFFFFFFFF
+       |        hi = (masked >> 32) & 0xFFFFFFFF
+       |        result = (lo ^ hi) & 0xFFFFFFFF
+       |        return result - 0x100000000 if result >= 0x80000000 else result
+       |    if isinstance(x, str):
+       |        return _scpy_str_hash_code(x)
+       |    # Non-primitive: defer to the Scala/Python `__hash__` slot.
+       |    return x.__hash__()
+       |
        |def _scpy_str_equals(s, t):
        |    return s == t if isinstance(t, str) else False
        |

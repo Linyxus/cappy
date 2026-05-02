@@ -1506,6 +1506,10 @@ private class PyCodeGen()(using genCtx: Context):
           case Some(tree) => break(tree)
           case None       => ()
 
+        genHashCodeSpecial(app, pos) match
+          case Some(tree) => break(tree)
+          case None       => ()
+
         if !isStaticTarget && sym.name == nme.clone_ then
           app.fun match
             case Select(receiver, _) =>
@@ -2358,6 +2362,42 @@ private class PyCodeGen()(using genCtx: Context):
     sym == defn.BoxedShortClass || sym == defn.BoxedIntClass ||
     sym == defn.BoxedLongClass || sym == defn.BoxedFloatClass ||
     sym == defn.BoxedDoubleClass
+
+  /** `Object.hashCode()` invoked on a receiver whose static type is
+   *  `Any` / `AnyVal` / `Object` / `Matchable` / `String` / one of the
+   *  boxed value classes does NOT virtually dispatch to a JVM-faithful
+   *  algorithm: Python primitives (`int`, `float`, `str`, `bool`) have
+   *  built-in `__hash__` implementations that are SALTED (strings),
+   *  collapsed (`hash(-1) == -2`), or representation-based
+   *  (`Float.hashCode` should be `floatToIntBits` but Python `float.__hash__`
+   *  hashes the rational value). The JVM contract is that `Any#hashCode`
+   *  matches `Statics.anyHash` for Numbers and `x.hashCode()` for the
+   *  rest (which on the JVM is the type-correct algorithm). Route through
+   *  `_scpy_any_hash_code`, which mirrors `Statics.anyHash` and falls
+   *  back to a virtual `__hash__()` for non-primitive Scala objects.
+   *
+   *  Receivers whose static type is more specific (e.g. a user case
+   *  class, or a typed `String`) keep their normal dispatch — the
+   *  String case is already specialised by `genStringCall` to
+   *  `_scpy_str_hash_code`, and case classes have a synthesized
+   *  `__hash__` that already matches the JVM. */
+  private def genHashCodeSpecial(app: Apply, pos: PyPosition): Option[PyTree] =
+    val sym = app.fun.symbol
+    if !isNullaryHashCode(sym) || sym.is(JavaStatic) then None
+    else
+      val receiver = qualifierOf(app.fun)
+      if receiver.isEmpty then None
+      else
+        val receiverType = receiver.tpe.widenDealias
+        if isRawPythonGetClassType(receiverType) then
+          Some(PyApplyExternal(
+            PyExternalName("_scpy_any_hash_code"),
+            List(genExpr(receiver))
+          )(PyIntType, pos))
+        else None
+
+  private def isNullaryHashCode(sym: Symbol): Boolean =
+    sym.exists && sym.name.mangledString == "hashCode" && sym.info.paramInfoss.flatten.isEmpty
 
   /** String concatenation. The receiver is always String (post-erasure);
    *  wrap any non-String operand in `_scpy_to_str` so Python `+` succeeds.
