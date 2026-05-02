@@ -21,3 +21,68 @@ t8893.scala         # 2 × tick(10000000): 20M tail-recursive iterations
 t3502.scala         # LazyList prime sieve up to ~1.4M with per-element % check
 collections.scala   # 10 collection types × 5K-iter ++/contains test loops
 kmpSliceSearch.scala  # 100×10×5 nested KMP search; dominated by _scpy_is_assignable walks
+
+# --- jvm-reflection-not-supported -----------------------------------------
+# Wave 5 priority #1 (notes/wave5-worklist/01-reflection-unsupported-and-blacklist.md).
+# The -scalapy backend does not implement JVM reflection
+# (`getDeclared*`, `getEnumConstants`, `getEnclosing*`,
+# `getGenericInterfaces`, `getConstructors`, `loadClass`, `newInstance`,
+# annotation reflection). The runtime now raises
+# `UnsupportedOperationException` for these methods rather than returning
+# empty stubs. Each fixture below uses one of those calls incidentally; they
+# are excluded with the `jvm-reflection-not-supported` reason tag. Cluster
+# enumerated from `/tmp/postperfc-fingerprints/clusters-detail.md` §
+# "run.assert.reflection_or_charseq (53)".
+MeterCaseClass.scala                        # jvm-reflection-not-supported
+blame_eye_triple_eee-double.scala           # jvm-reflection-not-supported
+defaults-serizaliable-with-forwarders.scala # jvm-reflection-not-supported
+equality.scala                              # jvm-reflection-not-supported
+forwarder.scala                             # jvm-reflection-not-supported
+hashCodeDistribution.scala                  # jvm-reflection-not-supported
+hashhash.scala                              # jvm-reflection-not-supported
+i10527.scala                                # jvm-reflection-not-supported
+i11050.scala                                # jvm-reflection-not-supported
+i1284.scala                                 # jvm-reflection-not-supported
+i14340.scala                                # jvm-reflection-not-supported
+i1692.scala                                 # jvm-reflection-not-supported
+i18612-b.scala                              # jvm-reflection-not-supported
+i18612-d.scala                              # jvm-reflection-not-supported
+i18701.scala                                # jvm-reflection-not-supported
+i19224.scala                                # jvm-reflection-not-supported
+i19270.scala                                # jvm-reflection-not-supported
+i23479b.scala                               # jvm-reflection-not-supported
+i23882.scala                                # jvm-reflection-not-supported
+i24201a.scala                               # jvm-reflection-not-supported
+i24272.scala                                # jvm-reflection-not-supported
+i24553.scala                                # jvm-reflection-not-supported
+i3006.scala                                 # jvm-reflection-not-supported
+i4404c.scala                                # jvm-reflection-not-supported
+i4496b.scala                                # jvm-reflection-not-supported
+i4528.scala                                 # jvm-reflection-not-supported
+i4947c.scala                                # jvm-reflection-not-supported
+i9404.scala                                 # jvm-reflection-not-supported
+infiniteloop.scala                          # jvm-reflection-not-supported
+innerClass.scala                            # jvm-reflection-not-supported
+instanceof-serializable.scala               # jvm-reflection-not-supported
+is-valid-num.scala                          # jvm-reflection-not-supported
+nothing-lazy-val.scala                      # jvm-reflection-not-supported
+paramForwarding.scala                       # jvm-reflection-not-supported
+properties-version-string.scala             # jvm-reflection-not-supported
+redundantParents.scala                      # jvm-reflection-not-supported
+selectable-new.scala                        # jvm-reflection-not-supported
+serialize.scala                             # jvm-reflection-not-supported
+string-switch.scala                         # jvm-reflection-not-supported
+structural-compat.scala                     # jvm-reflection-not-supported
+structural.scala                            # jvm-reflection-not-supported
+t0631.scala                                 # jvm-reflection-not-supported
+t13033.scala                                # jvm-reflection-not-supported
+t4024.scala                                 # jvm-reflection-not-supported
+t4536.scala                                 # jvm-reflection-not-supported
+t6793.scala                                 # jvm-reflection-not-supported
+t7214.scala                                 # jvm-reflection-not-supported
+t7269.scala                                 # jvm-reflection-not-supported
+t7912.scala                                 # jvm-reflection-not-supported
+t8549b.scala                                # jvm-reflection-not-supported
+traitNoInit.scala                           # jvm-reflection-not-supported
+variable-pattern-access.scala               # jvm-reflection-not-supported
+weak-conformance.scala                      # jvm-reflection-not-supported
