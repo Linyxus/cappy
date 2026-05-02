@@ -328,9 +328,22 @@ private class PyCodeGen()(using genCtx: Context):
       // After a module class with no in-CU companion, emit a synthetic
       // forwarder class right after it so the final `.pyir` keeps the
       // forwarder beside its module.
+      //
+      // The `!byName.contains(plan.ownerName)` guard is load-bearing for
+      // iteration-order independence: when the companion class IS in
+      // this CU but happens to follow the module in `emitted`, the upper
+      // match for the companion will fold the plan in via
+      // `foldedOwners`. Emitting a synthetic forwarder here in that case
+      // would produce a duplicate class with the companion's name (the
+      // t6888 shape: `class abc$` + `object abc$` in the same CU,
+      // encoded `abc_scpy_d` vs `abc__`). The plan owner is the
+      // companion's encoded name, so checking `byName` is the precise
+      // condition for "the upper match will handle this".
       if classDef.kind == PyClassKind.ModuleClass then
         planByModule.get(classDef.name) match
-          case Some(plan) if !foldedOwners.contains(plan.ownerName) =>
+          case Some(plan)
+              if !foldedOwners.contains(plan.ownerName)
+                 && !byName.contains(plan.ownerName) =>
             generatedClasses += mkSyntheticForwarderClass(plan.ownerName, plan.fields, plan.methods, plan.pos)
             foldedOwners += plan.ownerName
           case _ => ()

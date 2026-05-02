@@ -40,9 +40,52 @@ class PyEncoding(using Context):
     // its companion module otherwise both encode to the same name and
     // the linker reports `Duplicate class`). `sanitizeName` later turns
     // each `$` into `_`.
+    //
+    // Scala source identifiers may THEMSELVES end with `$` (e.g.
+    // `class abc$`). After plain `$ → _` sanitization, the encoded name
+    // ends in `_` and is indistinguishable from a module class encoded
+    // name. The `companionClassNameOf` relation then aliases this regular
+    // class to the companion slot of the corresponding `object abc$`'s
+    // encoded form (`abc__`), and the linker emits a `Duplicate class`
+    // when both are present in the same CU. To break this collision by
+    // construction, we route the LAST path segment through a
+    // module-aware sanitization that escapes a non-module class's
+    // trailing user `$` with the reserved `_scpy_d` marker. Module
+    // classes keep the today's plain `$ → _` mapping (their auto-suffix
+    // `$` is already the trailing `_`), so:
+    //
+    //   class Foo     -> Foo            object Foo     -> Foo_
+    //   class Foo$    -> Foo_scpy_d     object Foo$    -> Foo__
+    //
+    // `companionClassNameOf` is updated to perform the inverse flip.
     val raw = rewired.javaClassName.toString
-    val segments = raw.split('.').toList.map(sanitizeName)
+    val rawSegments = raw.split('.').toList
+    val segments =
+      if rawSegments.isEmpty then rawSegments
+      else
+        val initSegs = rawSegments.init.map(sanitizeName)
+        val lastSeg  = sanitizeClassSimpleName(rawSegments.last, rewired.is(ModuleClass))
+        initSegs :+ lastSeg
     PyClassName(segments.mkString("."))
+
+  /** Sanitize a class's last path segment.
+   *
+   *  For module classes: identical to `sanitizeName`, since dotc has
+   *  appended exactly one `$` auto-suffix and the resulting trailing
+   *  `_` is the module marker we rely on.
+   *
+   *  For non-module classes: if the source name ends in `$`, escape that
+   *  trailing `$` with the reserved `_scpy_d` marker instead of the
+   *  plain `_`. This guarantees a non-module class's encoded name never
+   *  ends in `_`, so it cannot be confused with a module class. */
+  private def sanitizeClassSimpleName(name: String, isModule: Boolean): String =
+    if !isModule && name.nonEmpty && name.last == '$' then
+      // Replace the trailing user `$` with the reserved `_scpy_d`
+      // escape; sanitize the rest under the plain `$ → _` rule.
+      val prefix = sanitizeName(name.dropRight(1))
+      prefix + PyEncoding.UserDollarSuffix
+    else
+      sanitizeName(name)
 
   // --- Method names --------------------------------------------------
 
@@ -442,7 +485,12 @@ object PyEncoding:
   //
   // Scala module classes encode with a trailing `_` (post-`sanitizeName`
   // mapping of the JVM `$` suffix). The companion class on the other side
-  // of the relation has the same qualified name without that suffix.
+  // of the relation has the same qualified name without that suffix —
+  // EXCEPT when the user's source name itself ends in `$` (e.g.
+  // `class abc$`), in which case the encoder escapes that trailing user
+  // `$` with the reserved `_scpy_d` marker so the non-module class's
+  // encoded name cannot be aliased to a module class slot. The
+  // companion-flip rule below mirrors that escape.
   //
   // The two helpers below are the SINGLE source of truth for this
   // convention. Anywhere in the backend that needs to bridge the
@@ -452,23 +500,52 @@ object PyEncoding:
 
   private val ModuleSuffix: String = "_"
 
+  /** Reserved marker used to escape a non-module class's trailing user
+   *  `$` so its encoded name never ends in `_` (the module marker).
+   *  Lives in the `_scpy_*` reserved namespace; `sanitizeName` warns on
+   *  user identifiers that intrude on this namespace. */
+  private[python] val UserDollarSuffix: String = "_scpy_d"
+
   /** True iff `name` is a Scala module class encoded with the trailing
-   *  `_` convention (e.g. `scala.Predef_`). */
+   *  `_` convention (e.g. `scala.Predef_`).
+   *
+   *  A regular class whose source name ends in `$` (and thus whose
+   *  encoded name ends in `_scpy_d`) is intentionally NOT classified as
+   *  a module class — that is precisely what the `_scpy_d` escape buys. */
   def isModuleClassName(name: PyClassName): Boolean =
-    name.nameString.endsWith(ModuleSuffix)
+    val s = name.nameString
+    s.endsWith(ModuleSuffix) && !s.endsWith(UserDollarSuffix)
 
   /** The companion class on the other side of the underscore convention.
    *  Returns the suffix-flipped name regardless of direction:
-   *  - `Foo`  -> `Foo_`
-   *  - `Foo_` -> `Foo`
+   *  - `Foo`         -> `Foo_`
+   *  - `Foo_`        -> `Foo`
+   *  - `Foo_scpy_d`  -> `Foo__`        (class abc$ -> object abc$)
+   *  - `Foo__`       -> `Foo_scpy_d`   (object abc$ -> class abc$)
    *
    *  Note this is purely a name-level operation; the caller is
    *  responsible for verifying that the returned name is actually
    *  bundled as a `PyClassDef`. */
   def companionClassNameOf(name: PyClassName): PyClassName =
     val s = name.nameString
-    if s.endsWith(ModuleSuffix) then PyClassName(s.dropRight(ModuleSuffix.length))
-    else PyClassName(s + ModuleSuffix)
+    if s.endsWith(UserDollarSuffix) then
+      // Non-module class whose source name ends in `$`. The companion
+      // module class has its trailing-user-`$` encoded as plain `_`
+      // (because module-class sanitize is uniform `$ -> _`) and an
+      // additional `_` for the auto-suffix.
+      PyClassName(s.dropRight(UserDollarSuffix.length) + "__")
+    else if s.endsWith(ModuleSuffix) then
+      // Module class. Drop the auto-suffix `_`. If the now-trailing char
+      // is `_`, that came from a user `$` in the source name and the
+      // companion class encodes it with the `_scpy_d` escape.
+      val base = s.dropRight(ModuleSuffix.length)
+      if base.endsWith(ModuleSuffix) then
+        PyClassName(base.dropRight(ModuleSuffix.length) + UserDollarSuffix)
+      else
+        PyClassName(base)
+    else
+      // Plain non-module class. Companion module appends `_`.
+      PyClassName(s + ModuleSuffix)
 
   /** Field on the companion class with the same simple name, produced via
    *  `companionClassNameOf`. Convenience for DCE passes that need to know
