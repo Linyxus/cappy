@@ -243,6 +243,13 @@ private class PyCodeGen()(using genCtx: Context):
     // module-class PyClassDef back to its originating ClassSymbol.
     val emitted = mutable.ListBuffer.empty[(ClassSymbol, PyClassDef)]
 
+    // Collect every `@main`-bearing class encountered in this CU so we can
+    // pick the bundle's main entry deterministically below. The previous
+    // implementation overwrote `mainEntry` on every match, making the
+    // selection sensitive to the order in which `allTypeDefs` arrived from
+    // the pipeline (which is not guaranteed to be stable across runs).
+    val mainCandidates = mutable.ListBuffer.empty[PyIREmitter.MainEntry]
+
     for td <- allTypeDefs do
       val sym = td.symbol
       if encoding.hasExternAnnotation(sym) then
@@ -261,7 +268,20 @@ private class PyCodeGen()(using genCtx: Context):
         val classDef = genClassDef(td, kind)
         emitted += ((sym.asClass, classDef))
         if genCtx.platform.hasMainMethod(sym) then
-          mainEntry = Some((classDef.name, kind))
+          mainCandidates += ((classDef.name, kind))
+
+    mainEntry = PyCodeGenSupport.pickMainEntry(
+      mainCandidates.toList,
+      explicitName = genCtx.settings.XmainClass.value,
+      onAmbiguity = (names, chosen) =>
+        report.warning(
+          s"ScalaPy: compilation unit ${cunit.source.file.name} " +
+            s"declares multiple @main entry points (${names.mkString(", ")}); " +
+            s"emitting `$chosen` as the bundle's main. " +
+            "Set `-Xmain-class <name>` to choose explicitly.",
+          NoSourcePosition
+        )
+    )
 
     emitWithStaticForwarders(emitted.toList)
 
@@ -3288,3 +3308,51 @@ private class PyCodeGen()(using genCtx: Context):
       case _: PySkip    => Nil
       case other        => List(other)
     prefix ::: flat
+end PyCodeGen
+
+// Pure helpers used by `PyCodeGen`; factored out so unit tests can drive
+// them without instantiating the full backend phase.
+private[python] object PyCodeGenSupport:
+
+  // Pick the bundle's main entry from every `@main`-bearing class found
+  // in this CU, deterministically.
+  //
+  // The previous implementation overwrote `mainEntry` on each match in
+  // the traversal loop, so whichever `@main`-bearing class arrived last
+  // from the pipeline won. Across runs this could flip - for example
+  // `tests/run/main-functions.scala` (with `@main def Test` at top level
+  // and `@main def foo` inside `object A`) sometimes selected `Test` and
+  // sometimes `foo`.
+  //
+  // Selection rule (deterministic, total order over candidate names):
+  //   1. If `explicitName` is non-empty (typically `-Xmain-class`) and
+  //      matches a candidate's full name, use it (matches the JVM
+  //      backend's manifest override).
+  //   2. Otherwise, sort candidates by their encoded name string and
+  //      pick the first. When there is more than one candidate this
+  //      also calls `onAmbiguity` so the disambiguation is visible.
+  //
+  // The sort uses `PyClassName.nameString` directly: it is the encoded
+  // full class name (e.g. `Test`, `foo`, `pkg.Main`) and is part of the
+  // serialized `.pyir` contract, so the chosen entry is stable across
+  // runs and across machines for a given source. `Test` sorts before
+  // `foo` (capital letters precede lowercase in ASCII), which matches
+  // the convention vulpix uses for `tests/run/*` (it invokes
+  // `Test.main`).
+  def pickMainEntry(
+      candidates: List[PyIREmitter.MainEntry],
+      explicitName: String,
+      onAmbiguity: (List[String], String) => Unit
+  ): Option[PyIREmitter.MainEntry] =
+    candidates match
+      case Nil      => None
+      case c :: Nil => Some(c)
+      case many =>
+        val sorted = many.sortBy(_._1.nameString)
+        val explicit =
+          if explicitName.isEmpty then None
+          else sorted.find(_._1.nameString == explicitName)
+        val chosen = explicit.getOrElse(sorted.head)
+        onAmbiguity(sorted.map(_._1.nameString), chosen._1.nameString)
+        Some(chosen)
+end PyCodeGenSupport
