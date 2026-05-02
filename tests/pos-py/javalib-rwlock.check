@@ -1,0 +1,6 @@
+write-basic:true:false
+read-reentrant:2:0
+write-reentrant:2:0
+downgrade:1:true
+trylock:true:true
+symbol:true:false:hello
