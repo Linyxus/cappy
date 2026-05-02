@@ -36,10 +36,14 @@ kmpSliceSearch.scala  # 100×10×5 nested KMP search; dominated by _scpy_is_assi
 MeterCaseClass.scala                        # jvm-reflection-not-supported
 blame_eye_triple_eee-double.scala           # jvm-reflection-not-supported
 defaults-serizaliable-with-forwarders.scala # jvm-reflection-not-supported
-equality.scala                              # jvm-reflection-not-supported
+equality.scala                              # char-vs-numeric-eq (Wave 5 item 03 fixed the hash divergence; the residual failure is `5.toChar == 5.0d`/`5: BigInt`/`5: BigDecimal` returning false because `_scpy_Char.__eq__` rejects non-Char comparands — a structural Char-equality gap unrelated to Murmur3/numeric-hash. Tracked under #5 genuine-semantic.)
 forwarder.scala                             # jvm-reflection-not-supported
-hashCodeDistribution.scala                  # jvm-reflection-not-supported
-hashhash.scala                              # jvm-reflection-not-supported
+# `hashCodeDistribution.scala`, `hashhash.scala`, `t13033.scala`, `caseClassHash.scala` re-included
+# in Wave 5 item 03 (notes/wave5-worklist/03-assert-murmur3-hash.md) once
+# `library-py/src/scala/runtime/Statics.scala` was rewritten to be JVM-bit-exact
+# (Murmur3 mix/finalize) and `_scpy_any_hash_code` runtime helper was added so
+# `Object.hashCode()` on `Any`/primitive receivers no longer dispatches to Python's
+# salted `__hash__`.
 i10527.scala                                # jvm-reflection-not-supported
 i11050.scala                                # jvm-reflection-not-supported
 i1284.scala                                 # jvm-reflection-not-supported
@@ -75,7 +79,6 @@ string-switch.scala                         # jvm-reflection-not-supported
 structural-compat.scala                     # jvm-reflection-not-supported
 structural.scala                            # jvm-reflection-not-supported
 t0631.scala                                 # jvm-reflection-not-supported
-t13033.scala                                # jvm-reflection-not-supported
 t4024.scala                                 # jvm-reflection-not-supported
 t4536.scala                                 # jvm-reflection-not-supported
 t6793.scala                                 # jvm-reflection-not-supported

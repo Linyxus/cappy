@@ -1,0 +1,32 @@
+OK   Statics.mix(0, 0): -430675100
+OK   Statics.mix(0xcafebabe, 1): 451039597
+OK   Statics.finalizeHash(0, 0): 0
+OK   (1, 2).hashCode: 1316541600
+OK   (1, 2, 3).hashCode: 2016703621
+OK   ("a", "b").hashCode: 961399813
+OK   MurmurHash3.caseClassHash((1, 2)): 1316541600
+OK   P2(1, 2).hashCode: 692587590
+OK   P3(7, hello, 42L).hashCode: -1575658265
+OK   PMixed(true, 1.toByte, 2.toShort, 'c', 3).hashCode: -419584550
+OK   P0().hashCode: 2528
+OK   Statics.longHash(1L): 1
+OK   Statics.longHash(-1L): -1
+OK   Statics.longHash(1L << 40) == Long.hashCode(1L << 40): 256
+OK   Float.hashCode(0.0f): 0
+OK   Float.hashCode(-0.0f): -2147483648
+OK   Float.hashCode(NaN): 2143289344
+OK   Float.hashCode(+Inf): 2139095040
+OK   Float.hashCode(-Inf): -8388608
+OK   Double.hashCode(0.0): 0
+OK   Double.hashCode(-0.0): -2147483648
+OK   Double.hashCode(NaN): 2146959360
+OK   Double.hashCode(1.5): 1073217536
+OK   Double.hashCode(1e100): 1898351312
+OK   5.## == 5L.##: 5
+OK   5.## == 5.0f.##: 5
+OK   5.## == 5.0d.##: 5
+OK   5.0f.## == 5: 5
+OK   5.0d.## == 5: 5
+OK   "Hello, World!".hashCode: 1498789909
+OK   MurmurHash3.stringHash(Hello, World!): 236314546
+ALL OK
