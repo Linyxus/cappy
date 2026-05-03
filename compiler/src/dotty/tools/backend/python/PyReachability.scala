@@ -775,6 +775,20 @@ object PyReachability:
 
       case t: PyClosure =>
         walkTree(t.body)
+        // Closure bodies emit references to their target class directly
+        // through `PyApplyStatic` / `PyApplyDynamic` / `PyAttrAccess`
+        // (see `GenPython.genClosure`). When the target lives on a
+        // ModuleClass, the renderer routes the call through
+        // `_scpy_mod_<cls>_` (the lazy-module proxy), which only exists
+        // when `PyIREmitter.moduleClasses` selects the class for
+        // singleton emission — and that filter requires both
+        // `kind == ModuleClass` AND a no-arg constructor surviving DCE.
+        // Without an Instantiate edge, the no-arg ctor is pruned and the
+        // emitter never binds `_scpy_mod_<cls>_`; the closure raises
+        // `NameError` on first call. Walk the closure body a second time
+        // and explicitly seed Instantiate for every ModuleClass referenced
+        // through the same `_scpy_mod_*_` routing the emitter uses.
+        seedModuleAccessorsInClosure(t.body)
 
       case t: PyClassOf =>
         fromTypeRef(t.typeRef)
@@ -790,3 +804,113 @@ object PyReachability:
     private def fromType(tpe: PyType): Unit = tpe match
       case PyClassType(name) => enqueue(Work.ReachClass(name))
       case _                 => ()
+
+    /** True iff `cn` is bound in this bundle as a `ModuleClass`. The
+     *  `PyIREmitter.moduleClasses` filter only emits a `_scpy_mod_<cn>_`
+     *  lazy-module variable when the class is a ModuleClass with a
+     *  no-arg constructor; the no-arg ctor in turn survives DCE only
+     *  when the class is `Instantiate`d. We use this predicate to decide
+     *  whether a closure-body reference needs the module-load seed. */
+    private def isBundledModuleClass(cn: PyClassName): Boolean =
+      classByName.get(cn).exists(_.kind == PyClassKind.ModuleClass)
+
+    /** Mirror the `Instantiate` + ctor / static-ctor enqueues that
+     *  `PyLoadModule` performs, including the `loadModuleCompanion`
+     *  rerouting. Used by the closure-body walker to keep
+     *  `_scpy_mod_<cn>_` bound when a closure-body call targets a
+     *  ModuleClass through the `routeToModuleVar` path. Idempotent
+     *  through `instantiate`'s "already instantiated" guard. */
+    private def seedModuleLoad(cn: PyClassName): Unit =
+      enqueue(Work.ReachClass(cn))
+      enqueue(Work.Instantiate(cn))
+      classByName.get(cn).foreach { cd =>
+        for m <- cd.methods do
+          val ns = m.flags.namespace
+          if ns == PyMemberNamespace.Constructor || ns == PyMemberNamespace.StaticConstructor then
+            enqueue(Work.AnalyzeMethod(cn, m.name))
+      }
+      loadModuleCompanion(cn).foreach { mod =>
+        enqueue(Work.ReachClass(mod))
+        enqueue(Work.Instantiate(mod))
+        classByName.get(mod).foreach { cd =>
+          for m <- cd.methods do
+            val ns = m.flags.namespace
+            if ns == PyMemberNamespace.Constructor || ns == PyMemberNamespace.StaticConstructor then
+              enqueue(Work.AnalyzeMethod(mod, m.name))
+        }
+      }
+
+    /** Recursive walk over a closure body (or any subtree of one) that
+     *  seeds an extra `Instantiate` edge for every ModuleClass referenced
+     *  through the static-on-module routing the emitter uses. The
+     *  primary trigger is `PyApplyStatic(<ModuleClass>, …)`: that node
+     *  emits `_scpy_mod_<cls>_.<method>(…)` via
+     *  `routeToModuleVar`, but the regular `walkTree` only enqueues
+     *  `ReachClass` + `AnalyzeMethod` for it, never `Instantiate`. The
+     *  `PyApplyDynamic` / `PyAttrAccess` cases are covered for symmetry
+     *  in case future codegen lowers a Scala-source module-accessor
+     *  reference through one of those shapes; the `walkTree` for those
+     *  already recurses into their subtrees, so we only need to seed the
+     *  module-load edge when their callee/obj resolves to a ModuleClass.
+     *  Nested closures are handled by recursing into `PyClosure.body`
+     *  again (but `walkTree`'s `PyClosure` case will also do its own
+     *  seed pass when reached through the worklist). */
+    private def seedModuleAccessorsInClosure(tree: PyTree): Unit = tree match
+      case t: PyApplyStatic =>
+        if isBundledModuleClass(t.className) then seedModuleLoad(t.className)
+        t.args.foreach(seedModuleAccessorsInClosure)
+      case t: PyApply =>
+        seedModuleAccessorsInClosure(t.receiver)
+        t.args.foreach(seedModuleAccessorsInClosure)
+      case t: PyApplyStatically =>
+        seedModuleAccessorsInClosure(t.receiver)
+        t.args.foreach(seedModuleAccessorsInClosure)
+      case t: PyApplyDynamic =>
+        seedModuleAccessorsInClosure(t.callee)
+        t.args.foreach(seedModuleAccessorsInClosure)
+        t.kwargs.foreach((_, v) => seedModuleAccessorsInClosure(v))
+      case t: PyApplyExternal =>
+        t.args.foreach(seedModuleAccessorsInClosure)
+      case t: PyAttrAccess =>
+        seedModuleAccessorsInClosure(t.obj)
+      case t: PyNew =>
+        t.args.foreach(seedModuleAccessorsInClosure)
+      case t: PySelect =>
+        seedModuleAccessorsInClosure(t.qualifier)
+      case _: PySelectStatic    => ()
+      case t: PyVarDef          => seedModuleAccessorsInClosure(t.rhs)
+      case t: PyAssign          => seedModuleAccessorsInClosure(t.lhs); seedModuleAccessorsInClosure(t.rhs)
+      case t: PyReturn          => seedModuleAccessorsInClosure(t.value)
+      case t: PyWhile           => seedModuleAccessorsInClosure(t.cond); seedModuleAccessorsInClosure(t.body)
+      case t: PyIf              => seedModuleAccessorsInClosure(t.cond); seedModuleAccessorsInClosure(t.thenp); seedModuleAccessorsInClosure(t.elsep)
+      case t: PyTryCatch        => seedModuleAccessorsInClosure(t.block); seedModuleAccessorsInClosure(t.handler)
+      case t: PyTryFinally      => seedModuleAccessorsInClosure(t.block); seedModuleAccessorsInClosure(t.finalizer)
+      case t: PyMatch           =>
+        seedModuleAccessorsInClosure(t.selector)
+        t.cases.foreach { case (_, body) => seedModuleAccessorsInClosure(body) }
+        seedModuleAccessorsInClosure(t.default)
+      case t: PyBlock           =>
+        t.stats.foreach(seedModuleAccessorsInClosure)
+        seedModuleAccessorsInClosure(t.expr)
+      case t: PyLabeled         => seedModuleAccessorsInClosure(t.body)
+      case t: PyLabelReturn     => seedModuleAccessorsInClosure(t.value)
+      case t: PyIsInstanceOf    => seedModuleAccessorsInClosure(t.expr)
+      case t: PyAsInstanceOf    => seedModuleAccessorsInClosure(t.expr)
+      case t: PyNewArray        => seedModuleAccessorsInClosure(t.length)
+      case t: PyArrayValue      => t.elems.foreach(seedModuleAccessorsInClosure)
+      case t: PyArraySelect     => seedModuleAccessorsInClosure(t.array); seedModuleAccessorsInClosure(t.index)
+      case t: PyUnaryOp         => seedModuleAccessorsInClosure(t.lhs)
+      case t: PyBinaryOp        => seedModuleAccessorsInClosure(t.lhs); seedModuleAccessorsInClosure(t.rhs)
+      case t: PyClosure         => seedModuleAccessorsInClosure(t.body)
+      case t: PyLoadModule      =>
+        // `walkTree`'s PyLoadModule case already seeds the module load,
+        // but we recursively visit through the same node here so the
+        // structural recursion stays total even if a parent dispatched
+        // straight into us without going through `walkTree`.
+        if isBundledModuleClass(t.className) then seedModuleLoad(t.className)
+      case _: PyVarRef          => ()
+      case _: PyThis            => ()
+      case _: PyExternalRef     => ()
+      case _: PyClassOf         => ()
+      case _: PyLiteral         => ()
+      case _: PySkip            => ()

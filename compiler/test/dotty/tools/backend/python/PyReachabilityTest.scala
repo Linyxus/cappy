@@ -607,6 +607,125 @@ class PyReachabilityTest:
       result.isMethodReachable(baseIfaceName, helper)
     )
 
+  // -- Closure-body module accessor reachability -----------------------
+
+  @Test def closureBodyStaticCallToModuleClassInstantiatesIt(): Unit =
+    // Wave 6 item 08: `IArrayOps.scala` lambda body shape. A lambda
+    // lifted to a `@staticmethod` on a Scala module class is referenced
+    // ONLY through `PyClosure(body = PyApplyStatic(<modCls>, …))`. The
+    // emitter renders that as `_scpy_mod_<modCls>_.<method>(…)`, but
+    // `PyApplyStatic` alone enqueues only `ReachClass` + `AnalyzeMethod`,
+    // never `Instantiate`. Without Instantiate the no-arg ctor is pruned
+    // and `PyIREmitter.moduleClasses` skips the module — no
+    // `_scpy_mod_<modCls>_` binding is emitted and the closure raises
+    // `NameError` at first call. The closure-body walker must seed an
+    // explicit module-load on every static-on-ModuleClass reference
+    // inside a closure body.
+    val packageModName = className("scala.IArray_package_")
+    val ownerName      = className("example.User")
+    val anonfunSimple  = methodName("anonfun_1", List(PyClassRef(PyClassName.ObjectClass)), PyClassRef(PyClassName.ObjectClass))
+    val anonfunArgs = List(
+      PyParamDef(PyLocalName("s"), PyOriginalName.NoOriginalName,
+        PyClassType(PyClassName.ObjectClass), mutable = false, NoPos)
+    )
+    val packageMod = classDef(
+      name    = packageModName,
+      kind    = PyClassKind.ModuleClass,
+      methods = List(
+        ctor(),
+        method(
+          name      = anonfunSimple,
+          namespace = PyMemberNamespace.PublicStatic,
+          resultType = PyClassType(PyClassName.ObjectClass),
+          args       = anonfunArgs,
+          body       = PySkip()(NoPos)
+        )
+      )
+    )
+    val samParam = PyParamDef(
+      PyLocalName("_scpy_samarg_0"),
+      PyOriginalName.NoOriginalName,
+      PyClassType(PyClassName.ObjectClass),
+      mutable = false,
+      NoPos
+    )
+    val closureBody = PyApplyStatic(
+      PyApplyFlags.empty,
+      packageModName,
+      anonfunSimple,
+      List(PyVarRef(samParam.name)(samParam.ptpe, NoPos))
+    )(PyClassType(PyClassName.ObjectClass), NoPos)
+    val user = classDef(
+      name    = ownerName,
+      methods = List(method(
+        methodName("use"),
+        body = PyClosure(
+          params     = List(samParam),
+          resultType = PyClassType(PyClassName.ObjectClass),
+          body       = closureBody
+        )(NoPos)
+      ))
+    )
+    val result = PyReachability.analyze(
+      userClasses    = List(user),
+      supportClasses = List(packageMod),
+      mainEntry      = None
+    )
+    assertTrue(
+      "closure body's static call must keep the ModuleClass reachable",
+      result.isReachable(packageModName)
+    )
+    assertTrue(
+      "closure body's static call must Instantiate the ModuleClass so " +
+        "PyIREmitter.moduleClasses keeps the lazy-module binding",
+      result.isInstantiated(packageModName)
+    )
+    assertTrue(
+      "the lifted anonfun must be reachable",
+      result.isMethodReachable(packageModName, anonfunSimple)
+    )
+    // Sanity: a regular `PyApplyStatic` (outside a closure) still must
+    // not Instantiate the ModuleClass — that's the precise scope the
+    // walker is meant to extend, NOT a global "static-call instantiates
+    // its owner" change.
+    val packageModBare = classDef(
+      name    = className("scala.OtherPkg_"),
+      kind    = PyClassKind.ModuleClass,
+      methods = List(
+        ctor(),
+        method(
+          name = methodName("helper"),
+          namespace = PyMemberNamespace.PublicStatic
+        )
+      )
+    )
+    val bareCaller = classDef(
+      name = className("example.BareCaller"),
+      methods = List(method(
+        methodName("call"),
+        body = PyApplyStatic(
+          PyApplyFlags.empty,
+          packageModBare.name,
+          methodName("helper"),
+          Nil
+        )(PyVoidType, NoPos)
+      ))
+    )
+    val bareResult = PyReachability.analyze(
+      userClasses    = List(bareCaller),
+      supportClasses = List(packageModBare),
+      mainEntry      = None
+    )
+    assertTrue(
+      "bare static-on-ModuleClass call still reaches the class",
+      bareResult.isReachable(packageModBare.name)
+    )
+    assertFalse(
+      "bare static-on-ModuleClass call (outside a closure) must NOT " +
+        "Instantiate — closure-body walker is the ONLY new seed path",
+      bareResult.isInstantiated(packageModBare.name)
+    )
+
   // -- Drift checks against PyIRRuntime ---------------------------------
 
   @Test def preludeCallsAreActuallyReferencedFromPreludeText(): Unit =
