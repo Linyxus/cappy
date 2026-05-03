@@ -175,6 +175,12 @@ object Thread:
   def activeCount(): scala.Int = 1
   def enumerate(target: Array[Thread]): scala.Int = 0
 
+  // `Thread.yield()` is a hint on the JVM. Under CPython we have no
+  // useful equivalent; we model it as a no-op. The trailing underscore
+  // mirrors the encoded name at call sites (`yield_` because `yield`
+  // is reserved in Scala source).
+  def `yield`(): Unit = ()
+
   private final val JoinPollMillis = 5L
   private final val SleepPollMillis = 5L
 
