@@ -28,6 +28,13 @@ class Runtime private ():
   def addShutdownHook(hook: Thread): Unit = ()
   def removeShutdownHook(hook: Thread): scala.Boolean = false
 
+  // Memory-introspection stubs. Tests that branch on heap size (e.g.
+  // `t2849.scala` picking N based on `Runtime.totalMemory`) will simply
+  // pick the higher branch, which is always safe under CPython.
+  def totalMemory(): scala.Long = scala.Long.MaxValue
+  def maxMemory(): scala.Long = scala.Long.MaxValue
+  def freeMemory(): scala.Long = scala.Long.MaxValue
+
 object Runtime:
   private val currentRuntime = new Runtime
 
