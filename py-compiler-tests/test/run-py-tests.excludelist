@@ -68,7 +68,25 @@ infiniteloop.scala                          # jvm-reflection-not-supported
 innerClass.scala                            # jvm-reflection-not-supported
 instanceof-serializable.scala               # jvm-reflection-not-supported
 is-valid-num.scala                          # jvm-reflection-not-supported
+# Wave 6 item 03 (notes/wave6-worklist/03-null-unit-nothing-valdefs.md):
+# 9 fixtures testing val/var/lazy-val backing-field elision for `Null`,
+# `Unit`, and `Nothing` types. Each one's only assertion path goes
+# through `Class.getDeclaredFields` / `Class.getMethods` (post-erasure
+# reflection on the Foo backing field), which is unsupported per the
+# Wave 5 item 01 policy. Stdout output before the reflection check
+# matches the `.check` for every fixture (verified after the
+# `null-lazy-val` codegen fix; see commit). The companion
+# `nothing-lazy-val.scala` was already excluded by Wave 5 item 01.
+nothing-val.scala                           # jvm-reflection-not-supported
 nothing-lazy-val.scala                      # jvm-reflection-not-supported
+null-lazy-val.scala                         # jvm-reflection-not-supported
+null-val.scala                              # jvm-reflection-not-supported
+null-var.scala                              # jvm-reflection-not-supported
+unit-lazy-val.scala                         # jvm-reflection-not-supported
+unit-val.scala                              # jvm-reflection-not-supported
+unit-var.scala                              # jvm-reflection-not-supported
+unit-volatile-var.scala                     # jvm-reflection-not-supported
+unit_erasure.scala                          # jvm-reflection-not-supported
 paramForwarding.scala                       # jvm-reflection-not-supported
 properties-version-string.scala             # jvm-reflection-not-supported
 redundantParents.scala                      # jvm-reflection-not-supported
