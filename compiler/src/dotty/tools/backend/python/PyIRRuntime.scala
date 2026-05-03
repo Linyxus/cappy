@@ -89,8 +89,6 @@ object PyIRRuntime:
   private val VolatileShortRefClass   = PyClassName("scala.runtime.VolatileShortRef")
   private val VolatileObjectRefClass  = PyClassName("scala.runtime.VolatileObjectRef")
   private val BoxedUnitClass = PyClassName("scala.runtime.BoxedUnit")
-  private val IntCompanionClass = PyClassName("scala.Int_")
-  private val CharCompanionClass = PyClassName("scala.Char_")
 
   // VarHandle / MethodHandles / MethodHandles$Lookup — referenced by
   // stdlib's atomic/concurrent specializations. We don't shadow them in
@@ -222,22 +220,6 @@ object PyIRRuntime:
           PyFieldName(BoxedUnitClass, PySimpleFieldName("UNIT")),
           PyFieldName(BoxedUnitClass, PySimpleFieldName("TYPE"))
         )
-      ),
-    IntCompanionClass ->
-      ProvidedClass(
-        kind = PyClassKind.ModuleClass,
-        superClass = Some(PyClassName.ObjectClass),
-        javaProvided = true,
-        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("toChar")),
-        staticMethods = MethodMatcher(simpleNamePrefixes = Set("toChar"))
-      ),
-    CharCompanionClass ->
-      ProvidedClass(
-        kind = PyClassKind.ModuleClass,
-        superClass = Some(PyClassName.ObjectClass),
-        javaProvided = true,
-        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("toInt")),
-        staticMethods = MethodMatcher(simpleNamePrefixes = Set("toInt"))
       ),
     StaticAnnotationClass ->
       ProvidedClass(
@@ -2159,24 +2141,14 @@ object PyIRRuntime:
        |        raise NullPointerException()
        |    return int(value)
        |
-       |class _scpy_IntModule(_scpy_Object):
-       |    def toChar__I__C(self, value):
-       |        return chr(value & 0xFFFF)
-       |
-       |    def int2long__I__J(self, value):
-       |        return value
-       |
-       |class _scpy_CharModule(_scpy_Object):
-       |    def toInt__C__I(self, value):
-       |        return ord(value)
-       |
-       |    def char2int__C__I(self, value):
-       |        return ord(value)
-       |
-       |_scpy_mod_scala_Int_ = _scpy_IntModule()
-       |_scpy_mod_scala_Char_ = _scpy_CharModule()
-       |_scpy_mod_scala_Int__ = _scpy_mod_scala_Int_
-       |_scpy_mod_scala_Char__ = _scpy_mod_scala_Char_
+       |# `scala.Int_` and `scala.Char_` companion module classes (and their
+       |# `int2double` / `int2long` / `int2float` / `char2int` / `char2long`
+       |# / `char2float` / `char2double` implicit-coercion methods) are
+       |# supplied by the compiled `library-py` PyIR — they flow through the
+       |# linker like every other `scala.Long_` / `scala.Float_` / etc.
+       |# Earlier hand-written `_scpy_IntModule` / `_scpy_CharModule` stubs
+       |# shadowed those compiled defs, so calls such as
+       |# `_scpy_mod_scala_Int__.int2double__I__D(i)` raised AttributeError.
        |# `Class.forName(...)` is a static call on the JDK-provided
        |# `java.lang.Class`. The backend lowers it to
        |# `_scpy_mod_java_lang_Class_.forName__...(...)`. Bind the module
@@ -2229,8 +2201,6 @@ object PyIRRuntime:
        |_scpy_register_class(Mirror_SingletonProxy, "scala.deriving.Mirror_SingletonProxy", "class", "java.lang.Object", ("scala.deriving.Mirror_Product",))
        |_scpy_register_class(Enum, "java.lang.Enum", "class", "java.lang.Object", ("java.lang.Comparable", "java.io.Serializable"))
        |_scpy_register_class(BoxedUnit, "scala.runtime.BoxedUnit", "class", "java.lang.Object")
-       |_scpy_register_class(None, "scala.Int_", "class", "java.lang.Object")
-       |_scpy_register_class(None, "scala.Char_", "class", "java.lang.Object")
        |_scpy_register_class(None, "java.lang.Cloneable", "interface", None)
        |_scpy_register_class(None, "java.lang.Number", "class", "java.lang.Object", ("java.io.Serializable",))
        |_scpy_register_class(None, "java.lang.Boolean", "class", "java.lang.Object", ("java.lang.Comparable", "java.io.Serializable"))
