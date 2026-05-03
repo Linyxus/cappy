@@ -253,3 +253,25 @@ lambda-serialization-security.scala         # python-lambda-class-identity-not-s
 # read it back, or to teach the runtime to unwrap `java_lang_*`
 # proxies in primitive-typed call sites — both wider than item 05.
 numbereq.scala                              # explicit-boxed-number-not-stored (`new java.lang.Double(x.toDouble)` paths; pylib boxes don't round-trip through `doubleValue()`)
+
+# --- Wave 6 item 05 (notes/wave6-worklist/05-excludelist-sweep.md) --------
+# Mechanical excludelist sweep: fixtures whose failure mode matches an
+# already-established Wave 5 reason tag but were missed by the Wave 5
+# classifier. Each entry below uses an existing reason tag — no new tags
+# are invented in this item. Re-derived against the residual cluster in
+# `testlogs/tests-2026-05-03/tests-2026-05-03-T14-31-38.log`.
+generic-java-signatures-erased.scala        # jvm-reflection-not-supported (Class.getMethods + Method.toGenericString + getTypeParameters)
+i13703.scala                                # jvm-reflection-not-supported (`trait Foo extends reflect.Selectable`; var assignment via Selectable)
+i1387.scala                                 # jvm-reflection-not-supported (`classOf[java.nio.file.AccessMode].getEnumConstants`)
+i1692b.scala                                # jvm-reflection-not-supported (`target.getClass.getDeclaredField` + `field.setAccessible` + `field.get`)
+i18612-a.scala                              # jvm-reflection-not-supported (`scala.reflect.Selectable` + `selectDynamic("+")`)
+i18612-c.scala                              # jvm-reflection-not-supported (`scala.reflect.Selectable` + `selectDynamic`/`applyDynamic`)
+i19394.scala                                # jvm-reflection-not-supported (`scala.reflect.Selectable.reflectiveSelectable` structural call)
+i2883.scala                                 # jvm-reflection-not-supported (`obj.getClass.getDeclaredFields.map(_.toString)`)
+i4496a.scala                                # jvm-reflection-not-supported (`scala.reflect.Selectable.reflectiveSelectable` on refinement types)
+i6834.scala                                 # jvm-reflection-not-supported (`Foo.getClass.getConstructors.length`)
+i9155.scala                                 # jvm-reflection-not-supported (`Foo.getClass.getMethods.exists(_.getName == "w")`)
+mixin-bridge-methods.scala                  # jvm-reflection-not-supported (`classOf[Sub].getDeclaredMethods` + `Method.isBridge`)
+no-useless-forwarders.scala                 # jvm-reflection-not-supported (`getClass.getDeclaredMethods` + `Method.getName`)
+t8087.scala                                 # jvm-reflection-not-supported (`classOf[Bar].getDeclaredFields` + `Modifier.isVolatile(f.getModifiers)`)
+t8177f.scala                                # jvm-reflection-not-supported (`classOf[B].getDeclaredMethods` + `Method.toGenericString`)
