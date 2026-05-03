@@ -412,6 +412,27 @@ private class PyCodeGen()(using genCtx: Context):
     // the pipeline (which is not guaranteed to be stable across runs).
     val mainCandidates = mutable.ListBuffer.empty[PyIREmitter.MainEntry]
 
+    // CU-wide demotion pre-pass: walk every class's members BEFORE any
+    // class's body codegen so the `anonfunDemotedToInstance` set is fully
+    // populated when the FIRST class is generated. Otherwise the order of
+    // `allTypeDefs` (which can shift under `-Ycheck:all` and other phase
+    // re-typings) determines whether a sibling class's call site sees the
+    // demotion. A SAM anon class generated before its enclosing module
+    // class would emit `PyApplyStatic(...)` against a method that the
+    // module class later emits as instance — the linker rejects with
+    // `Unresolved static method`. See `tests/run/Parser.scala`.
+    for td <- allTypeDefs do
+      val sym = td.symbol
+      if !encoding.hasExternAnnotation(sym)
+         && !sym.isPrimitiveValueClass && sym != defn.ArrayClass
+      then
+        for tree <- collectMemberDefs(td) do
+          tree match
+            case dd: DefDef if !dd.symbol.isClassConstructor =>
+              if needsSelfDespiteStatic(dd) then
+                anonfunDemotedToInstance += dd.symbol
+            case _ => ()
+
     for td <- allTypeDefs do
       val sym = td.symbol
       if encoding.hasExternAnnotation(sym) then
@@ -1799,9 +1820,26 @@ private class PyCodeGen()(using genCtx: Context):
             // receiver lets reachability find pylib's declaration.
             val dispatchOwner =
               dispatchOwnerNameOpt(ownerName, receiver.tpe).getOrElse(ownerName)
+            // LambdaLift+MoveStatics receiver re-anchor: a `JavaStatic`
+            // helper hoisted out of a top-level def stays on its module
+            // class (`Foo$package$`) but dotc's tree shape after lifting
+            // is `Select(This(<empty>), liftedAnonfun)` — the `This` points
+            // at the lambda's enclosing PACKAGE, not at the static method's
+            // own module. Encoding `This(<empty>)` blindly produces
+            // `loadModule(_lessempty_greater)`, which the linker rejects.
+            // Routing through `moduleReceiver(sym.owner, …)` recovers the
+            // intended module-class instance for empty-package fixtures
+            // such as `tests/run/Parser.scala` (no `package` declaration,
+            // top-level `given strToToken = token(_)` lazy-val initializer).
+            val recvTree: PyTree =
+              if sym.is(JavaStatic) && receiver.isInstanceOf[This]
+                  && receiver.symbol.is(Package)
+                  && sym.owner.is(ModuleClass)
+              then moduleReceiver(sym.owner, pos)
+              else genExpr(receiver)
             PyApply(
               PyApplyFlags.empty,
-              genExpr(receiver),
+              recvTree,
               dispatchOwner,
               methodName,
               args
