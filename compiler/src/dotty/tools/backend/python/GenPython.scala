@@ -2683,7 +2683,27 @@ private class PyCodeGen()(using genCtx: Context):
       if locals.isEmpty then loweredBody
       else PyBlock(locals, loweredBody)(pos)
 
-    val assignedBody = rewriteLabelReturns(bodyWithPendings, labelName, tempLhs)
+    // Two kinds of value-producing exit paths must store into `temp`
+    // before the labeled block's emit-time `try/except` clears the
+    // exception:
+    //
+    //   1. Explicit `Return(label, v)` (post-DropBreaks: the rewritten
+    //      `break(v)` site, or every PatternMatcher arm). Handled by
+    //      `rewriteLabelReturns`.
+    //   2. **Fallthrough** — the body's normal-completion value. After
+    //      `DropBreaks` the boundary's original `try { ...; tailExpr }`
+    //      becomes `Labeled(label, { ...; tailExpr })`, where `tailExpr`
+    //      is the value when no `break` fires. PatternMatcher's lowering
+    //      doesn't have a fallthrough (every arm explicitly Returns), but
+    //      a `boundary` block does, and that path used to drop the
+    //      tail-expression value because `genStat` discards it.
+    //
+    // Apply `wrapFallthroughAssign` after `rewriteLabelReturns` so the
+    // already-rewritten label-return blocks (whose tail is now
+    // `PyLabelReturn(label, Unit)` — Nothing-typed, doesn't fall through)
+    // are correctly identified as non-fallthrough and skipped.
+    val rewrittenBody = rewriteLabelReturns(bodyWithPendings, labelName, tempLhs)
+    val assignedBody  = wrapFallthroughAssign(rewrittenBody, tempLhs)
 
     val labeled = PyLabeled(labelName, assignedBody)(PyVoidType, pos)
 
@@ -2749,6 +2769,90 @@ private class PyCodeGen()(using genCtx: Context):
       PyLabeled(lbl, rewriteLabelReturns(body, target, tempLhs))(tree.tpe, tree.pos)
 
     case _ => tree
+
+  /** Wrap every fallthrough tail-position value-producing leaf of `tree`
+   *  with `PyAssign(tempLhs, leaf)` so the labeled block's normal
+   *  completion stores its value into the temp before the emit-time
+   *  `try/except _scpy_lbl_N: pass` discards it.
+   *
+   *  Walks the structural composers (`PyBlock`, `PyIf`, `PyTryCatch`,
+   *  `PyTryFinally`, `PyMatch`) into their tail-position children, even
+   *  when those composers carry `tpe = PyVoidType` from `genStat`'s
+   *  statement-form lowering: the *node-level* tpe is irrelevant; what
+   *  matters is whether a sub-tree's tail position carries a value-
+   *  producing leaf. Stops without wrapping at:
+   *
+   *    - Diverging leaves (`PyReturn`, `PyLabelReturn`, throw via
+   *      `PyUnaryOp(Throw, _)`) — they don't fall through.
+   *    - Statement-only leaves (`PyAssign`, `PyVarDef`, `PyWhile`,
+   *      `PySkip`) — already produced no value to capture; these are
+   *      typically the body of a `genStat` Unit-arm.
+   *    - Nested `PyLabeled` — its fallthrough is its own concern; its
+   *      emit-time `except: pass` swallows its escape and any value it
+   *      produced is unobservable from here.
+   */
+  private def wrapFallthroughAssign(
+      tree: PyTree, tempLhs: PyAssignable
+  ): PyTree = tree match
+    // Diverging leaves — `tpe == PyNothingType` covers `PyReturn`,
+    // `PyLabelReturn`, throw, and any other diverging node.
+    case _ if tree.tpe == PyNothingType =>
+      tree
+
+    // Statement-only leaves: nothing flows to the tail value here.
+    case _: (PyAssign | PyVarDef | PyWhile | PySkip) =>
+      tree
+
+    case PyBlock(stats, expr) =>
+      PyBlock(stats, wrapFallthroughAssign(expr, tempLhs))(tree.pos)
+
+    case PyIf(cond, thenp, elsep) =>
+      // Whole `if` becomes statement-shaped after wrapping its arms
+      // with assignments, so it now has tpe = PyVoidType.
+      PyIf(
+        cond,
+        wrapFallthroughAssign(thenp, tempLhs),
+        wrapFallthroughAssign(elsep, tempLhs)
+      )(PyVoidType, tree.pos)
+
+    case PyTryCatch(block, errVar, origName, handler) =>
+      PyTryCatch(
+        wrapFallthroughAssign(block, tempLhs),
+        errVar, origName,
+        wrapFallthroughAssign(handler, tempLhs)
+      )(PyVoidType, tree.pos)
+
+    case PyTryFinally(block, finalizer) =>
+      // The finalizer runs for side effects only — its value never
+      // becomes the try/finally's value. Wrap only the protected block.
+      PyTryFinally(
+        wrapFallthroughAssign(block, tempLhs),
+        finalizer
+      )(tree.pos)
+
+    case PyMatch(selector, cases, default) =>
+      PyMatch(
+        selector,
+        cases.map { case (lits, body) => (lits, wrapFallthroughAssign(body, tempLhs)) },
+        wrapFallthroughAssign(default, tempLhs)
+      )(PyVoidType, tree.pos)
+
+    // A nested `PyLabeled` that produces a value is its own assignment
+    // story — see the docstring above. Leave it as-is; treat it as a
+    // non-fallthrough leaf (its emit-time wrapper swallows its escape).
+    case _: PyLabeled =>
+      tree
+
+    // PyUnitLit at tail position: the labeled block is value-producing
+    // (we wouldn't be here otherwise), so a Unit tail means a discarded
+    // value. Skip — assigning `None` would be redundant given the temp
+    // was already initialised to its default value.
+    case _: PyUnitLit =>
+      tree
+
+    // Value-producing leaf in tail position — assign it to the temp.
+    case _ =>
+      PyAssign(tempLhs, tree)(tree.pos)
 
   private var labeledResultCounter = 0
   private def freshLabeledResultName(): PyLocalName =
