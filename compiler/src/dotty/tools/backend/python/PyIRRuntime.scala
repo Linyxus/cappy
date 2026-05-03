@@ -2523,11 +2523,68 @@ object PyIRRuntime:
        |        raise ArithmeticException("/ by zero")
        |
        |def _scpy_float_to_str(x):
+       |    # Format a finite Double the way `java.lang.Double.toString`
+       |    # does on top of Python's `repr(float)`. The two algorithms
+       |    # agree on shortest-roundtrip significand digits in most
+       |    # cases (a handful of subnormal / nearly-half-ULP corners
+       |    # round differently between Python's algorithm and Java's
+       |    # Ryu — those will still diverge), but they disagree on the
+       |    # surface format:
+       |    #   * exponent thresholds — Java uses scientific for
+       |    #     |x| < 1e-3 OR |x| >= 1e7; Python uses 1e-4 / 1e16.
+       |    #   * exponent letter case and zero-padding — Python emits
+       |    #     `1e+20` / `1e-09`; Java emits `1.0E20` / `1.0E-9`.
+       |    #   * integer-valued floats — Java always has a trailing
+       |    #     `.0` (`1.0`), Python's `repr` does too in most cases.
+       |    # Negative zero is `-0.0` in both. Sign on `+` exponents is
+       |    # absent on the Java side.
        |    if _scpy_math.isnan(x):
        |        return "NaN"
        |    if _scpy_math.isinf(x):
        |        return "Infinity" if x > 0 else "-Infinity"
-       |    return _builtins.str(x)
+       |    if x == 0.0:
+       |        return "-0.0" if _scpy_math.copysign(1.0, x) < 0 else "0.0"
+       |    abs_x = -x if x < 0 else x
+       |    # Java's scientific-notation cutoffs.
+       |    use_sci = abs_x < 1e-3 or abs_x >= 1e7
+       |    s = _builtins.repr(x)
+       |    e_idx = s.find("e")
+       |    if e_idx < 0:
+       |        e_idx = s.find("E")
+       |    has_exp = e_idx >= 0
+       |    if use_sci and not has_exp:
+       |        # Coerce plain-form input (`0.0001`) to scientific. Use
+       |        # `{:e}` for shortest mantissa; trailing zeros are
+       |        # stripped below.
+       |        s = "{:e}".format(x)
+       |        e_idx = s.find("e")
+       |    elif not use_sci and has_exp:
+       |        # Coerce scientific-form input (`1e+16`) to plain.
+       |        s = "{:.20f}".format(x).rstrip("0")
+       |        if s.endswith("."):
+       |            s = s + "0"
+       |        e_idx = -1
+       |    if e_idx >= 0:
+       |        mantissa = s[:e_idx]
+       |        exp_str = s[e_idx + 1:]
+       |        if exp_str.startswith("+"):
+       |            exp_str = exp_str[1:]
+       |        neg_exp = exp_str.startswith("-")
+       |        if neg_exp:
+       |            exp_str = exp_str[1:]
+       |        exp_str = exp_str.lstrip("0") or "0"
+       |        if neg_exp:
+       |            exp_str = "-" + exp_str
+       |        if "." not in mantissa:
+       |            mantissa = mantissa + ".0"
+       |        else:
+       |            int_part, frac_part = mantissa.split(".", 1)
+       |            stripped = frac_part.rstrip("0")
+       |            mantissa = int_part + "." + (stripped if stripped else "0")
+       |        return mantissa + "E" + exp_str
+       |    if "." not in s:
+       |        s = s + ".0"
+       |    return s
        |
        |def _scpy_to_str(x):
        |    # Scala-faithful stringification: matches `String.valueOf`
@@ -2540,6 +2597,13 @@ object PyIRRuntime:
        |    to_string = getattr(x, "toString__Ljava_dlang_dString", None)
        |    if to_string is not None:
        |        return to_string()
+       |    # Boxed Doubles arrive here as plain Python floats. Java's
+       |    # `Double.toString` differs from Python's `repr` on exponent
+       |    # thresholds, exponent capitalisation, and integer-valued
+       |    # `.0` suffixes; route them through the shared formatter so
+       |    # `println(d)` matches `String.valueOf(d)`.
+       |    if isinstance(x, _builtins.float) and not isinstance(x, _builtins.bool):
+       |        return _scpy_float_to_str(x)
        |    return _builtins.str(x)
        |
        |def _scpy_call_to_string(x):
