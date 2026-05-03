@@ -124,6 +124,13 @@ object PyBuiltins:
   def float_parse(text: String): Double =
     builtins.float(text).asInstanceOf[Double]
 
+  /** Coerce any Python numeric value to a Python `float`. `math.floor`
+   *  and `math.ceil` return `int`, but their Java counterparts return
+   *  `double`; route their results through this helper at the boundary
+   *  so downstream `Double.toString` and string-concat see a real float. */
+  def float_of(value: Any): Double =
+    builtins.float(value).asInstanceOf[Double]
+
   def float_from_hex(text: String): Double =
     floatType.fromhex(text).asInstanceOf[Double]
 

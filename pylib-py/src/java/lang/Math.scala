@@ -26,6 +26,7 @@
 package java
 package lang
 
+import scala.python.runtime.PyBuiltins
 import scala.python.runtime.PyMath
 import scala.python.runtime.PyStruct
 
@@ -148,13 +149,26 @@ object Math:
   // for NaN and ±infinity (they convert to `int`). Java's spec returns
   // the argument unchanged for NaN, ±inf, and ±0.0. Guard those.
 
+  // Python's `math.ceil(x)` / `math.floor(x)` on a `float` argument
+  // return `int`, but Java's `Math.ceil` / `Math.floor` return
+  // `double`. `asInstanceOf[Double]` is erased on this backend, so
+  // without an explicit coercion the result remains a Python `int` at
+  // runtime — and downstream `Double.toString` / string-concat then
+  // formats it as `3` instead of `3.0`. Route through `PyBuiltins.float_of`.
+  //
+  // Java's `Math.ceil` additionally returns negative zero when the
+  // argument is in the open interval `(-1.0, 0.0)`; Python's
+  // `math.ceil` discards the sign on integer results, so we restore it
+  // explicitly when the rounded value is zero.
   def ceil(a: scala.Double): scala.Double =
     if PyMath.isnan(a) || PyMath.isinf(a) || a == 0.0 then a
-    else PyMath.ceil(a).asInstanceOf[scala.Double]
+    else
+      val r = PyBuiltins.float_of(PyMath.ceil(a))
+      if r == 0.0 && a < 0.0 then -0.0 else r
 
   def floor(a: scala.Double): scala.Double =
     if PyMath.isnan(a) || PyMath.isinf(a) || a == 0.0 then a
-    else PyMath.floor(a).asInstanceOf[scala.Double]
+    else PyBuiltins.float_of(PyMath.floor(a))
 
   /** Returns the `double` value that is closest in value to `a` and is
    *  equal to a mathematical integer. Ties round to even. */
