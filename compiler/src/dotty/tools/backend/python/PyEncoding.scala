@@ -214,6 +214,47 @@ class PyEncoding(using Context):
     try body
     finally currentLocalScope = saved
 
+  /** Reserve a name in the current local scope so subsequent
+   *  `encodeLocalName` calls for new symbols pick a unique alternative.
+   *
+   *  This is used to model Python's function-scope rule: any local
+   *  assignment to name `X` makes every other reference to `X` in the
+   *  same `def` resolve to the local — the module-scope binding is
+   *  shadowed for the whole function. So when a method body reads a
+   *  module-scope identifier (e.g. a top-level class) and we are about
+   *  to encode locals for that method, we must reserve those module
+   *  identifiers as if they were already locals. The
+   *  `encodeLocalName`'s `freshUnique` machinery then routes any
+   *  colliding user local through a `_2` suffix instead of silently
+   *  shadowing the module binding and producing
+   *  `UnboundLocalError` / `NameError` at runtime.
+   *
+   *  No-op when no local scope is active (the encoder still emits raw
+   *  names in that case). */
+  def reserveLocalName(name: String): Unit =
+    currentLocalScope match
+      case null  => ()
+      case scope => scope.usedLocals += name
+
+  /** The bare Python identifier that the emitter will use for class
+   *  `cn` at module scope.
+   *
+   *  Mirrors the non-runtime branch of
+   *  `PyIREmitter.Emitter.classIdentifier`: every non-runtime class is
+   *  rendered as its mangled FQN (`segments.map(sanitizeIdent)
+   *  .mkString("_")`). Runtime-provided classes and emitter
+   *  reserved-short-names (e.g. `java.lang.Exception` ->
+   *  `_scpy_java_Exception`) are remapped at emit time via tables this
+   *  encoder doesn't own; reservation against those is handled
+   *  elsewhere or already starts with `_scpy_` (which is itself
+   *  reserved by `sanitizeName`).
+   *
+   *  Used by `reserveLocalName` callers that want to seed the local
+   *  scope with class identifiers a method body will read at module
+   *  scope. */
+  def classIdentifierOf(cn: PyClassName): String =
+    cn.segments.map(sanitizeName).mkString("_")
+
   private def freshUnique(base: String, used: scala.collection.mutable.Set[String]): String =
     if !used.contains(base) then
       used += base; base

@@ -643,6 +643,7 @@ private class PyCodeGen()(using genCtx: Context):
     currentMethodSym = ctorSym
     val ctorPos = posOf(dd)
     encoding.withLocalScope {
+      reserveModuleScopeIdentifiers(dd)
       val params = dd.termParamss.flatten.map(genParamDef)
       val body =
         if dd.rhs.isEmpty then Some(PySkip()(ctorPos))
@@ -738,6 +739,7 @@ private class PyCodeGen()(using genCtx: Context):
     val pos = posOf(dd)
 
     encoding.withLocalScope {
+      reserveModuleScopeIdentifiers(dd)
       val params = dd.termParamss.flatten.map(genParamDef)
       val resultType = encoding.encodeType(sym.info.finalResultType)
 
@@ -790,6 +792,97 @@ private class PyCodeGen()(using genCtx: Context):
       mutable      = sym.is(Mutable),
       pos          = posOf(p)
     )
+
+  /** Pre-pass: walk the method body and reserve, in the active local
+   *  scope, the Python identifier of every top-level class the body
+   *  reads at module scope.
+   *
+   *  Python's function-scope rule is that any local assignment to name
+   *  `X` makes every other reference to `X` in the same `def` resolve
+   *  to the local — the module-scope binding is shadowed for the whole
+   *  function. Without reservation, a Scala source like
+   *
+   *      class opq
+   *      val opq = new opq()
+   *
+   *  encodes the local symbol `opq` to identifier `"opq"`, the same
+   *  string the emitter uses for `class opq:` at module scope. The
+   *  generated Python (`opq = _scpy_new(opq, opq._scpy_ctor_...)`)
+   *  reads `opq` on the RHS as the not-yet-bound local and raises
+   *  `UnboundLocalError`. Reserving `"opq"` in the local scope BEFORE
+   *  the param/local encoder runs reroutes the user's local through
+   *  `freshUnique`, which picks `"opq_2"` and leaves the module-scope
+   *  class binding readable.
+   *
+   *  Walks the parameter declarations and `rhs`. For every node that
+   *  the codegen below renders as a bare class identifier in module
+   *  scope (`New`, `This`, type tests, `Apply` on a static class
+   *  receiver, `Ident` of a non-method/non-module class member, …) we
+   *  collect the class symbol and reserve its encoded identifier.
+   *
+   *  Idempotent against the codegen below: the codegen MAY also lower
+   *  references through `_scpy_*`-prefixed helpers (e.g. `PyLoadModule`
+   *  uses `_scpy_mod_*_`, which never collides with user locals). For
+   *  those we still reserve the unprefixed identifier; the reservation
+   *  is just a string in `usedLocals`, and a stray reservation only
+   *  costs one suffix bump on a colliding local. */
+  private def reserveModuleScopeIdentifiers(dd: DefDef): Unit =
+    val seenSyms = mutable.Set.empty[Symbol]
+    def reserveClassSym(classSym: Symbol): Unit =
+      if classSym.exists && classSym.isClass && !classSym.is(Package)
+          && seenSyms.add(classSym) then
+        // Skip facades (no Python class is emitted for them) and the
+        // package class (its identifier is referenced via `_scpy_mod_*_`
+        // module-vars only, which start with `_scpy_` and cannot collide).
+        if !encoding.isFacadeSymbol(classSym) then
+          val cn = encoding.encodeClassName(classSym)
+          encoding.reserveLocalName(encoding.classIdentifierOf(cn))
+
+    val walker = new TreeTraverser:
+      override def traverse(tree: Tree)(using Context): Unit = tree match
+        case _: New =>
+          reserveClassSym(tree.tpe.typeSymbol)
+          traverseChildren(tree)
+        case t: This =>
+          reserveClassSym(t.symbol)
+          traverseChildren(tree)
+        case TypeApply(_, targs) =>
+          targs.foreach { ta => reserveClassSym(ta.tpe.typeSymbol) }
+          traverseChildren(tree)
+        case t @ Typed(_, tpt) =>
+          reserveClassSym(tpt.tpe.typeSymbol)
+          traverseChildren(tree)
+        case id: Ident =>
+          // A bare Ident referencing a class member without `self.`
+          // qualification renders as `<ClassId>.<member>(...)` (static
+          // call) or via a class-typed receiver. Reserve the owning
+          // class so its identifier doesn't collide with a same-named
+          // local elsewhere in the body. Modules are excluded — they
+          // route through `_scpy_mod_*_`, which is `_scpy_`-prefixed.
+          val sym = id.symbol
+          if sym.exists && !sym.is(Module) && !sym.is(Package) then
+            val owner = sym.owner
+            if owner.exists && owner.isClass then reserveClassSym(owner)
+        case sel @ Select(qual, _) =>
+          // `Test.foo()` where `Test` is a module renders via
+          // `_scpy_mod_*_`. But a static method on a non-module class
+          // (a `@JavaStatic` lifted method on a companion class) is
+          // rendered as `<ClassId>.<method>(...)`. Reserving the owner
+          // for any selected symbol is conservative-correct.
+          val selSym = sel.symbol
+          if selSym.exists then
+            val symOwner = selSym.owner
+            if symOwner.exists && symOwner.isClass then reserveClassSym(symOwner)
+          traverseChildren(tree)
+        case _ =>
+          traverseChildren(tree)
+
+    // Walk parameter type declarations + the body. We don't need to
+    // walk param names (they go through `encodeLocalName` with the
+    // already-seeded scope), only sub-trees that produce module-scope
+    // reads.
+    dd.termParamss.flatten.foreach(p => walker.traverse(p.tpt))
+    if !dd.rhs.isEmpty then walker.traverse(dd.rhs)
 
   /** Returns true when `dd` is a `@JavaStatic` synthetic helper on a
     * module class whose body still references the enclosing module's
