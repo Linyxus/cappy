@@ -210,7 +210,19 @@ object PyClasspathLoader:
         val bytes = java.nio.file.Files.readAllBytes(child.toPath)
         val cu = PyIRDeserializer.deserialize(bytes)
         if cu.classes.nonEmpty then
-          inputs += PyLinker.Input(cu.classes, cu.mainEntry, source)
+          // Per-class freshness for Support × Support duplicates:
+          // separate-compilation tests (e.g. `unroll-*-integration`)
+          // emit several `<source>_<N>.pyir` files into the output
+          // dir, each re-declaring the same JVM class with a
+          // different `@unroll` shape. The latest write reflects the
+          // latest source — mirror JVM `.class` overwrite semantics
+          // by stamping each Input with the file's last-modified
+          // time, which `PyLinker.collectClasses` consults during
+          // duplicate resolution. See `PyLinker.Input.priority`.
+          val priority =
+            try child.lastModified()
+            catch case _: SecurityException => 0L
+          inputs += PyLinker.Input(cu.classes, cu.mainEntry, source, priority)
       catch
         case e: PyIRException       => reportLoadFailure(child, required, e)
         case e: java.io.IOException => reportLoadFailure(child, required, e)

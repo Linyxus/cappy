@@ -41,10 +41,30 @@ object PyLinker:
   enum InputSource:
     case User, Support
 
+  /** A link input.
+   *
+   *  `priority` orders Support × Support duplicates: when two Support
+   *  inputs declare the same class, the one with the higher priority
+   *  wins. This mirrors JVM `.class` overwrite-by-recompile semantics
+   *  for separate-compilation tests, where each compilation round
+   *  rewrites the on-disk class but the corresponding `.pyir` lives
+   *  under a per-source-file name (e.g. `Unrolled_1.pyir`,
+   *  `Unrolled_2.pyir`, `Unrolled_3.pyir`) so all three coexist in
+   *  the output dir. Without per-class freshness, the round whose
+   *  `.pyir` happens to load first wins — including the V1 shape of
+   *  a class whose later rounds add `@unroll` forwarders.
+   *
+   *  `PyClasspathLoader` sets `priority` to the source `.pyir`'s
+   *  last-modified time (millis); in-memory User inputs and
+   *  jar-bundled support entries default to `0L`. The User vs.
+   *  Support precedence is unchanged — User always wins on collision
+   *  with Support; priority is consulted only between two Supports.
+   */
   final case class Input(
       classes:   List[PyClassDef],
       mainEntry: Option[PyIREmitter.MainEntry],
-      source:    InputSource = InputSource.User
+      source:    InputSource = InputSource.User,
+      priority:  Long         = 0L
   )
 
   final case class LinkedBundle(
@@ -537,7 +557,7 @@ object PyLinker:
       ordered.toList
 
     private def collectClasses(): List[PyClassDef] =
-      val classDefs = mutable.LinkedHashMap.empty[PyClassName, (PyClassDef, InputSource)]
+      val classDefs = mutable.LinkedHashMap.empty[PyClassName, (PyClassDef, InputSource, Long)]
 
       for
         input <- inputs
@@ -554,18 +574,28 @@ object PyLinker:
             error(s"Class '${cls.name.nameString}' collides with a runtime-provided class", cls.pos)
         else
           classDefs.get(cls.name) match
-            case Some((_, InputSource.User)) if input.source == InputSource.Support =>
+            case Some((_, InputSource.User, _)) if input.source == InputSource.Support =>
               // Stale `.pyir` on the classpath or in the output dir
               // carrying the same class name as a fresh User class.
               // The in-memory User copy is authoritative; drop silently.
               ()
+            case Some((_, InputSource.Support, existingPriority)) if input.source == InputSource.Support =>
+              // Support × Support duplicate: prefer the more recent
+              // `.pyir` so separate-compilation tests (multiple
+              // `Unrolled_<N>.pyir` files in the output dir, each
+              // re-declaring `Unrolled`) end up with the latest
+              // shape — matching the JVM `.class` overwrite model.
+              // Equal priority keeps the first-seen entry to remain
+              // deterministic when multiple stable jars happen to
+              // ship the same class.
+              if input.priority > existingPriority then
+                classDefs += cls.name -> (cls, input.source, input.priority)
             case Some(_) =>
-              // User × User or Support × Support duplicates remain hard
-              // errors. The first signals user error; the second is
-              // normally prevented by the canonical-path dedupe upstream.
+              // User × User duplicates remain hard errors — that's a
+              // genuine user mistake (two CUs declaring the same FQN).
               error(s"Duplicate class '${cls.name.nameString}'", cls.pos)
             case None =>
-              classDefs += cls.name -> (cls, input.source)
+              classDefs += cls.name -> (cls, input.source, input.priority)
 
       classDefs.values.iterator.map(_._1).toList
 

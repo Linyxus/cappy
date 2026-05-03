@@ -42,8 +42,43 @@ class GenPython extends Phase:
   override def isRunnable(using Context): Boolean =
     super.isRunnable && !ctx.usedBestEffortTasty
 
+  // Per-run queue of pending link tasks. Populated by each unit's `run`
+  // (which writes its `.pyir` to the output directory). Drained at the
+  // end of `runOn` so every CU's `.pyir` is on disk before any link
+  // step calls `PyClasspathLoader.loadSupportInputs`. Without this
+  // staging, a CU compiled earlier in the same invocation that
+  // references a class declared by a CU compiled later would fail at
+  // link time — `Unrolled_1.pyir` from `Unrolled_1.scala` doesn't
+  // exist on disk yet when `UnrollTestMain_1.scala` (which sorts ASCII
+  // before `Unrolled_1.scala` since `T < _`) runs through GenPython.
+  // Mirrors the `.class`-file model on the JVM: pickler/genBCode write
+  // bytecode for every CU before any classfile is consumed for
+  // resolution. See `notes/issue-genpython-cross-cu-link.md`.
+  private val pendingLinks = new mutable.ArrayBuffer[GenPython.PendingLink]
+
+  override def runOn(units: List[CompilationUnit])(using runCtx: Context): List[CompilationUnit] =
+    pendingLinks.clear()
+    val processed = super.runOn(units)
+    drainPendingLinks()
+    processed
+
   override protected def run(using Context): Unit =
-    new PyCodeGen().run()
+    val codegen = new PyCodeGen()
+    codegen.runWriteOnly() match
+      case Some(pending) => pendingLinks += pending
+      case None          => ()
+
+  private def drainPendingLinks()(using ctx: Context): Unit =
+    val tasks = pendingLinks.toList
+    pendingLinks.clear()
+    if !ctx.settings.scpyIrOnly.value then
+      for task <- tasks do
+        // Each task carries the in-memory User input + the just-written
+        // `.pyir` path. Loading Support inputs at this point means every
+        // sibling CU's `.pyir` is already on disk; the linker can resolve
+        // intra-compile cross-references without depending on filesystem
+        // ordering or sort order.
+        task.linkAndEmit()
 
 object GenPython:
   val name: String = "genPython"
@@ -60,6 +95,65 @@ object GenPython:
   private[python] val detachedShimAncestors: Set[PyClassName] = Set(
     PyClassName("java.lang.AbstractStringBuilder")
   )
+
+  /** A deferred link/emit task. Each CU's `run()` produces one
+   *  `PendingLink` (see `PyCodeGen.runWriteOnly`). The phase drains
+   *  the queue after every CU has written its `.pyir`, so the linker
+   *  sees every sibling CU on the classpath.
+   *
+   *  The compilation-unit `Context` is captured by the implicit at
+   *  construction time. `linkAndEmit` reinstates that context so that
+   *  diagnostics from `report.error` carry the correct source file.
+   */
+  private[python] final class PendingLink(
+      val sourceName:       String,
+      val sourceFile:       dotty.tools.dotc.util.SourceFile,
+      val outputDirectory:  dotty.tools.io.AbstractFile,
+      val irFile:           dotty.tools.io.AbstractFile,
+      val generatedClasses: List[PyClassDef],
+      val mainEntry:        Option[PyIREmitter.MainEntry]
+  )(using ctx: Context):
+
+    private val savedCtx: Context = ctx
+
+    def linkAndEmit(): Unit =
+      given Context = savedCtx
+      val userInput = PyLinker.Input(
+        classes   = generatedClasses,
+        mainEntry = mainEntry,
+        source    = PyLinker.InputSource.User
+      )
+      val irFileJava = Option(irFile.jpath).map(_.toFile.nn)
+      val supportInputs = PyClasspathLoader.loadSupportInputs(excludeOutputFile = irFileJava)
+      val linkedBundle =
+        try PyLinker.link(List(userInput), supportInputs)
+        catch
+          case err: PyLinkingException =>
+            err.errors.foreach { e =>
+              report.error(e.message, sourcePosOf(e.pos))
+            }
+            return
+
+      val outfile = outputDirectory.fileNamed(sourceName + ".py")
+      val output = outfile.bufferedOutput
+      try
+        val writer = new java.io.PrintWriter(output)
+        try
+          PyIREmitter.emit(linkedBundle.classes, linkedBundle.mainEntry, writer)
+          writer.flush()
+        finally writer.close()
+      finally output.close()
+
+    private def sourcePosOf(pos: PyPosition): SourcePosition =
+      if pos.isEmpty then NoSourcePosition
+      else if sourceFile.path != pos.source then NoSourcePosition
+      else
+        sourceFile.lineToOffsetOpt(pos.line) match
+          case Some(lineOffset) =>
+            val offset = (lineOffset + pos.column).max(0).min(sourceFile.length)
+            sourceFile.atSpan(Span(offset))
+          case None =>
+            NoSourcePosition
 
 /** Main code generator that translates post-erasure Scala trees into the
   * typed PyIR. Modeled after `dotty.tools.backend.sjs.JSCodeGen`.
@@ -255,10 +349,45 @@ private class PyCodeGen()(using genCtx: Context):
 
   // --- Entry point ---------------------------------------------------
 
-  def run(): Unit =
+  /** Per-unit driver that stops at `.pyir` emission and hands the
+   *  in-memory class set to the GenPython phase for deferred linking.
+   *  Returns `None` when `-scpy-ir-only` is set or no classes were
+   *  emitted: there's nothing for the linker to do.
+   *
+   *  Driven by `GenPython.run`, which is invoked once per CU. The
+   *  returned `PendingLink` is queued in the phase and drained after
+   *  every CU has written its `.pyir`, so the per-CU link step sees
+   *  every sibling CU on the classpath. See `GenPython.runOn`.
+   */
+  def runWriteOnly(): Option[GenPython.PendingLink] =
     pyDefn.force()
     genCompilationUnit(genCtx.compilationUnit)
-    linkAndWrite()
+    writeIRFile() match
+      case Some(irFile) if !genCtx.settings.scpyIrOnly.value =>
+        Some(new GenPython.PendingLink(
+          sourceName       = sourceNameOfCu,
+          sourceFile       = genCtx.compilationUnit.source,
+          outputDirectory  = genCtx.settings.outputDir.value,
+          irFile           = irFile,
+          generatedClasses = generatedClasses.toList,
+          mainEntry        = mainEntry
+        ))
+      case _ => None
+
+  private def sourceNameOfCu: String =
+    genCtx.compilationUnit.source.file.name.stripSuffix(".scala")
+
+  /** Serialize `generatedClasses` to a `.pyir` in the output dir. Returns
+   *  the written file (or `None` if nothing was emitted). */
+  private def writeIRFile(): Option[dotty.tools.io.AbstractFile] =
+    val outputDirectory = genCtx.settings.outputDir.value
+    val sourceName = sourceNameOfCu
+    val irFileName = deriveIrFileName(sourceName)
+    val irFile = outputDirectory.fileNamed(irFileName)
+    val irOut  = irFile.bufferedOutput
+    try PyIRSerializer.serialize(generatedClasses.toList, mainEntry, irOut)
+    finally irOut.close()
+    Some(irFile)
 
   // --- Compilation unit traversal ------------------------------------
 
@@ -3205,50 +3334,6 @@ private class PyCodeGen()(using genCtx: Context):
 
   // --- File output ---------------------------------------------------
 
-  private def linkAndWrite(): Unit =
-    val irOnly = genCtx.settings.scpyIrOnly.value
-    val outputDirectory = genCtx.settings.outputDir.value
-    val sourceName = genCtx.compilationUnit.source.file.name.stripSuffix(".scala")
-    val irFileName = deriveIrFileName(sourceName)
-
-    // Write this CU's `.pyir` first, containing only its own classes.
-    // Mirrors Scala.js `JSCodeGen.genIRFile`: the filesystem stays the
-    // source of truth for downstream compiles, even though we hand the
-    // current compile's classes to the linker in-memory below.
-    val irFile = outputDirectory.fileNamed(irFileName)
-    val irOut  = irFile.bufferedOutput
-    try PyIRSerializer.serialize(generatedClasses.toList, mainEntry, irOut)
-    finally irOut.close()
-
-    if irOnly then return
-
-    // Roots of reachability are exactly the classes the code generator
-    // just produced. Anything else on the classpath — or leftover in the
-    // output dir from a previous compile — is Support, subject to DCE.
-    val userInput = PyLinker.Input(
-      classes   = generatedClasses.toList,
-      mainEntry = mainEntry,
-      source    = PyLinker.InputSource.User
-    )
-    val irFileJava = Option(irFile.jpath).map(_.toFile.nn)
-    val supportInputs = PyClasspathLoader.loadSupportInputs(excludeOutputFile = irFileJava)
-    val linkedBundle =
-      try PyLinker.link(List(userInput), supportInputs)
-      catch
-        case err: PyLinkingException =>
-          reportLinkerErrors(err.errors)
-          return
-
-    val outfile = outputDirectory.fileNamed(sourceName + ".py")
-    val output = outfile.bufferedOutput
-    try
-      val writer = new java.io.PrintWriter(output)
-      try
-        PyIREmitter.emit(linkedBundle.classes, linkedBundle.mainEntry, writer)
-        writer.flush()
-      finally writer.close()
-    finally output.close()
-
   /** Compute the `.pyir` filename for this CU.
     *
     *  Format: `<package>.<sourceName>.pyir` when all generated classes share
@@ -3299,11 +3384,6 @@ private class PyCodeGen()(using genCtx: Context):
     packagePrefix match
       case Some(pkg) => s"$pkg.$sourceName${PyIRFormat.FileExtension}"
       case None      => sourceName + PyIRFormat.FileExtension
-
-  private def reportLinkerErrors(errors: List[PyLinkingError]): Unit =
-    errors.foreach { err =>
-      report.error(err.message, sourcePosOf(err.pos))
-    }
 
   private def sourcePosOf(pos: PyPosition): SourcePosition =
     if pos.isEmpty then NoSourcePosition
