@@ -204,7 +204,10 @@ Course-2002-08.scala                        # boolean-bitand-wrapped-i64 (`a & b
 # follow-up structural work and are excluded with reason tags.
 enum-values.scala                           # jvm-reflection-not-supported (uses `reflect.Selectable.reflectiveSelectable`'s `applyDynamic` which goes through `Class.getMethod`)
 i14198.scala                                # gc-semantic-dependency (`terminally(ref.get().get() == null)` polls until the JVM GC reclaims a `WeakReference`; CPython's reference-counting + cycle GC has different reclamation timing, so the loop never terminates)
-i7843.scala                                 # jvm-concurrent (uses `ForkJoinPool`, `Thread.UncaughtExceptionHandler`, `ExecutionException(String, Throwable)`, `StackOverflowError(String)` — same shape as the existing `jvm-only` cluster in item 07)
+# i7843.scala — was jvm-concurrent in Wave 5 item 13; now passes after
+# Wave 6 item 09 ported `Thread.UncaughtExceptionHandler` and shadowed
+# `scala.concurrent.impl.ExecutionContextImpl` to use `Executors.newSingleThreadExecutor`
+# instead of `ForkJoinPool`. Removed from excludelist.
 
 # --- Wave 5 item 05 (notes/wave5-worklist/05-assert-genuine-semantic.md) -
 # Genuine Scala-vs-Python semantic gaps. The NaN equality sub-shape was
