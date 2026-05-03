@@ -323,7 +323,9 @@ class OutOfMemoryError(primary: Any = null) extends VirtualMachineError(primary)
   def this() = this(null: Any)
   def this(message: String) = this(message: Any)
 
-class StackOverflowError(primary: Any = null) extends VirtualMachineError(primary)
+class StackOverflowError(primary: Any = null) extends VirtualMachineError(primary):
+  def this() = this(null: Any)
+  def this(message: String) = this(message: Any)
 
 class UnknownError(primary: Any = null) extends VirtualMachineError(primary)
 

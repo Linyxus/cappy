@@ -119,6 +119,16 @@ class Thread private (
   def getId(): scala.Long =
     threadId0
 
+  private var uncaughtHandler: Thread.UncaughtExceptionHandler | Null = null
+
+  final def setUncaughtExceptionHandler(handler: Thread.UncaughtExceptionHandler | Null): Unit =
+    uncaughtHandler = handler
+
+  final def getUncaughtExceptionHandler(): Thread.UncaughtExceptionHandler | Null =
+    val handler = uncaughtHandler
+    if handler != null then handler
+    else Thread.getDefaultUncaughtExceptionHandler()
+
   private[lang] final def consumeInterruptedStatus(): scala.Boolean =
     val wasInterrupted = interruptedState
     if wasInterrupted then
@@ -169,6 +179,24 @@ object Thread:
   final val MIN_PRIORITY = 1
   final val NORM_PRIORITY = 5
   final val MAX_PRIORITY = 10
+
+  /** SAM interface for uncaught exception handlers. JVM-shape: takes the
+   *  failing thread and the cause. The Python backend does not currently
+   *  install a `threading.excepthook` adapter — the handler is stored on
+   *  the `Thread` instance and consulted by reflection-style consumers
+   *  (e.g. `scala.concurrent.impl.ExecutionContextImpl.reportFailure`),
+   *  which is the only path in our test corpus that actually reads it.
+   */
+  trait UncaughtExceptionHandler:
+    def uncaughtException(t: Thread, e: Throwable): Unit
+
+  private var defaultHandler: UncaughtExceptionHandler | Null = null
+
+  def setDefaultUncaughtExceptionHandler(handler: UncaughtExceptionHandler | Null): Unit =
+    defaultHandler = handler
+
+  def getDefaultUncaughtExceptionHandler(): UncaughtExceptionHandler | Null =
+    defaultHandler
 
   // Stubs for thread-enumeration APIs. Returns 0/1 — pos-py tests don't
   // depend on accurate thread counts.
