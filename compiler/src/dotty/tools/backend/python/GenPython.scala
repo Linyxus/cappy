@@ -3254,13 +3254,19 @@ private class PyCodeGen()(using genCtx: Context):
     *  Format: `<package>.<sourceName>.pyir` when all generated classes share
     *  a package; `<sourceName>.pyir` when there are no generated classes or
     *  they all live at the top level. If a CU emits classes spanning multiple
-    *  packages (rare in Scala but legal), we drop the prefix and log a
-    *  warning - the former behaviour silently picked whichever class was
-    *  emitted first and produced a nondeterministic filename.
+    *  packages (rare in Scala but legal), we drop the prefix and log an
+    *  informational note - the former behaviour silently picked whichever
+    *  class was emitted first and produced a nondeterministic filename.
     *
     *  The package is derived from each `PyClassDef`'s own encoded name
     *  rather than from the CU's `PackageDef`, so it stays in lockstep with
     *  the name scheme used throughout the PyIR/linker pipeline.
+    *
+    *  The cross-package note uses `report.echo` rather than `report.warning`
+    *  so that user code that opts into `-Werror` (e.g. `i13215.scala`'s
+    *  `//> using options -Werror -WunstableInlineAccessors` directive)
+    *  doesn't get its compile elevated to an error by what is purely a
+    *  diagnostic about backend filename selection.
     */
   private def deriveIrFileName(sourceName: String): String =
     def packagePrefixOf(fullName: String): Option[String] =
@@ -3282,7 +3288,7 @@ private class PyCodeGen()(using genCtx: Context):
             .toList
             .sorted
             .mkString(", ")
-          report.warning(
+          report.echo(
             s"ScalaPy: compilation unit ${genCtx.compilationUnit.source.file.name} " +
               s"emits classes across multiple packages ($distinct); " +
               "falling back to un-prefixed PyIR filename.",
