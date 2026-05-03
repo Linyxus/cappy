@@ -220,3 +220,18 @@ blame_eye_triple_eee-float.scala            # nan-instance-method-dispatch (`isN
 # JVM-vs-Python semantic gap.
 getclass.scala                              # python-lambda-class-identity-not-supported (asserts `f.getClass.toString` matches `class Test$$$Lambda$`; Python closure has no JVM-shaped class name)
 lambda-serialization-security.scala         # python-lambda-class-identity-not-supported (asserts `reconstituted1.getClass == reconstituted2.getClass` after pickle round-trip; Python `function` class identity not preserved)
+
+# explicit-boxed-number-not-stored: pylib `java.lang.Double(value)` /
+# `java.lang.Float(value)` / `java.lang.Long(value)` constructors are
+# empty bodies — the underlying primitive is recovered via
+# `this.asInstanceOf[scala.Double]`, which works for the Predef
+# `double2Double` implicit (boxing is identity in Python) but *not*
+# for explicit `new java.lang.Double(d)`, which mints an `_scpy_Object`
+# instance whose Python type is `java_lang_Double`, not `float`.
+# `doubleValue()` on that instance returns the instance itself,
+# which then propagates into `_scpy_float_to_str` and trips
+# `math.isnan`. Structural fix is either to store the value in an
+# instance attribute (e.g. `_scpy_value`) and have `doubleValue()`
+# read it back, or to teach the runtime to unwrap `java_lang_*`
+# proxies in primitive-typed call sites — both wider than item 05.
+numbereq.scala                              # explicit-boxed-number-not-stored (`new java.lang.Double(x.toDouble)` paths; pylib boxes don't round-trip through `doubleValue()`)
