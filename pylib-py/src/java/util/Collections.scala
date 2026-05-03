@@ -92,7 +92,12 @@ object Collections {
   def swap(list: List[_], i: Int, j: Int): Unit =
     swapImpl(list.asInstanceOf[List[AnyRef]], i, j)
 
-  def min[T <: jl.Comparable[T]](coll: Collection[_ <: T]): T = {
+  // Bound `T <: AnyRef & jl.Comparable[T]` mirrors the JDK signature
+  // `<T extends Object & Comparable<? super T>>`. Without the leading
+  // `AnyRef` the erased return type is `Comparable`, but Scala/dotc
+  // emits the call site as `(Collection):Object` (because the JDK's
+  // first bound erases to `Object`), so the linker fails to match.
+  def min[T <: AnyRef & jl.Comparable[T]](coll: Collection[_ <: T]): T = {
     val iter = coll.iterator()
     if !iter.hasNext() then
       throw new NoSuchElementException()
@@ -116,7 +121,7 @@ object Collections {
     best
   }
 
-  def max[T <: jl.Comparable[T]](coll: Collection[_ <: T]): T = {
+  def max[T <: AnyRef & jl.Comparable[T]](coll: Collection[_ <: T]): T = {
     val iter = coll.iterator()
     if !iter.hasNext() then
       throw new NoSuchElementException()
@@ -138,6 +143,18 @@ object Collections {
       if comp.compare(next, best) > 0 then
         best = next
     best
+  }
+
+  // JDK signature: `<T> boolean addAll(Collection<? super T> c, T... elements)`.
+  // Erases to `(Collection, Object[]) Z`, matching the call sites that
+  // dotc emits for `Collections.addAll(coll, e1, e2, ...)`.
+  def addAll[T](c: Collection[_ >: T], elements: Array[T]): scala.Boolean = {
+    var changed = false
+    var i = 0
+    while i < elements.length do
+      if c.add(elements(i)) then changed = true
+      i += 1
+    changed
   }
 
   def emptyIterator[T](): Iterator[T] =
