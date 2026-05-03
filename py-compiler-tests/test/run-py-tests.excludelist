@@ -315,3 +315,19 @@ t6168b                                      # missing-driver:java-source (main.s
 t8601e                                      # missing-driver:java-source (Test.scala -> StaticInit.fld; StaticInit defined in StaticInit.java)
 t9915                                       # missing-driver:java-source (Test_2.scala -> new C_1 + c.nulled/c.supped; C_1 defined in C_1.java)
 varargs-extend-java-2                       # missing-driver:java-source (Test.scala -> Caller() + class Concrete extends AbstractBase; defined in Caller.java/AbstractBase.java)
+
+# --- Wave 6 item 09 (notes/wave6-worklist/09-jvm-concurrent-surface.md) ---
+# Java serialization (`java.io.ObjectOutputStream` / `ObjectInputStream` /
+# `writeObject` / `readObject` / `SerializedLambda`) is wire-format-locked
+# to the JVM. CPython's `pickle` is not byte-compatible, and implementing
+# JVM-spec serialization is multi-week work that the Python backend
+# explicitly defers. Per item 09 § "Decision space — per surface", these
+# fixtures are tagged (Y) `jvm-concurrent-not-supported:serialization`.
+# The named cluster was re-derived against
+# `testlogs/tests-2026-05-03/tests-2026-05-03-T14-31-38.log`.
+enums-serialization-compat.scala            # jvm-concurrent-not-supported:serialization (ObjectOutputStream/InputStream + writeObject/readObject on enum cases)
+inlineAddDeserializeLambda.scala            # jvm-concurrent-not-supported:serialization (ObjectOutputStream/InputStream of inline-added lambda)
+lambda-serialization-gc.scala               # jvm-concurrent-not-supported:serialization (ObjectOutputStream/InputStream of lambda + URLClassLoader-based GC test; depends on JVM ClassLoader semantics)
+serialize-stream.scala                      # jvm-concurrent-not-supported:serialization (ObjectOutputStream/InputStream over Stream/LazyList)
+t10232.scala                                # jvm-concurrent-not-supported:serialization (ObjectOutputStream/InputStream of lambda list)
+t5262.scala                                 # jvm-concurrent-not-supported:serialization (ObjectOutputStream/InputStream round-trip)
