@@ -1346,6 +1346,61 @@ object PyIRRuntime:
        |    def clone__Ljava_dlang_dObject(self):
        |        return _scpy_Array(self, self._scpy_class)
        |
+       |    def toString__Ljava_dlang_dString(self):
+       |        # Mirror JVM `Object.toString` on an array: descriptor
+       |        # of the runtime class joined with `@<lower-hex identity hash>`.
+       |        # For an `Array[Unit]` whose element class is
+       |        # `scala.runtime.BoxedUnit`, this yields strings shaped like
+       |        # `[Lscala.runtime.BoxedUnit;@1a2b3c`. The descriptor for an
+       |        # array class is just `_scpy_name` (e.g. `[Lscala.runtime.BoxedUnit;`),
+       |        # which is exactly what `_scpy_descriptor_for_class` returns
+       |        # when `_scpy_kind == "array"`.
+       |        #
+       |        # We deliberately don't reuse `_scpy_Object.toString` here:
+       |        # `_scpy_Array` extends `list`, and `list.__hash__ is None`,
+       |        # so dispatching through `self.__hash__()` would TypeError.
+       |        # JVM identity hash is `id(self) & 0xFFFFFFFF`.
+       |        return _scpy_descriptor_for_class(self._scpy_class) + "@" + _builtins.format(_builtins.id(self) & 0xFFFFFFFF, "x")
+       |
+       |    # JVM `Object.hashCode` and `Object.equals` are exposed under
+       |    # both their mangled (`hashCode__I` / `equals__Ljava_dlang_dObject__Z`)
+       |    # and Python-dunder (`__hash__` / `__eq__`) shapes. The encoder
+       |    # rewrites Scala-source `arr.hashCode` to `arr.__hash__()` and
+       |    # `arr.equals(x)` to `arr.__eq__(x)` (see `PyEncoding.specialMethodNameOf`),
+       |    # so the dunder forms are what user code actually invokes; the
+       |    # mangled forms are pinned for parity with `_scpy_Char` (which
+       |    # carries both shapes) and to handle any post-erasure bridge
+       |    # call that bypasses the encoder rewrite.
+       |    #
+       |    # Critically, `list.__hash__ is None` (lists are unhashable in
+       |    # Python), so without our own `__hash__` override the dunder
+       |    # call would TypeError. `_scpy_any_hash_code` (the `Any#hashCode`
+       |    # router used when the static receiver type is `AnyRef`/`Object`)
+       |    # also falls through to `x.__hash__()` for non-primitive
+       |    # receivers, so providing `__hash__` here covers that path too.
+       |
+       |    def __hash__(self):
+       |        h = _builtins.id(self) & 0xFFFFFFFF
+       |        if h >= 0x80000000:
+       |            h -= 0x100000000
+       |        return h
+       |
+       |    def hashCode__I(self):
+       |        return self.__hash__()
+       |
+       |    def __eq__(self, other):
+       |        # JVM `Object.equals` is reference identity by default.
+       |        # `_scpy_Array` doesn't override structural equality, so we
+       |        # explicitly opt out of the inherited `list.__eq__` (which
+       |        # would compare element-by-element).
+       |        return self is other
+       |
+       |    def __ne__(self, other):
+       |        return self is not other
+       |
+       |    def equals__Ljava_dlang_dObject__Z(self, other):
+       |        return self is other
+       |
        |def _scpy_class_of_name(name, kind="class"):
        |    clazz = _scpy_class_registry.get(name)
        |    if clazz is None:
@@ -2091,6 +2146,15 @@ object PyIRRuntime:
        |        return 0
        |
        |    def __str__(self):
+       |        return "()"
+       |
+       |    def toString__Ljava_dlang_dString(self):
+       |        # JVM `BoxedUnit.toString()` returns `"()"` (see
+       |        # `library/src/scala/runtime/BoxedUnit.java`). Without an
+       |        # explicit override, `_scpy_to_str` would walk up to
+       |        # `_scpy_Object.toString__Ljava_dlang_dString` and produce
+       |        # `scala.runtime.BoxedUnit@0` — observed in `tests/run/t5680.scala`
+       |        # after fixing the `_scpy_Array.toString` cluster.
        |        return "()"
        |
        |# Stdlib accesses `BoxedUnit.UNIT` as a static field via
