@@ -146,13 +146,17 @@ object Collections {
   }
 
   // JDK signature: `<T> boolean addAll(Collection<? super T> c, T... elements)`.
-  // Erases to `(Collection, Object[]) Z`, matching the call sites that
-  // dotc emits for `Collections.addAll(coll, e1, e2, ...)`.
-  def addAll[T](c: Collection[_ >: T], elements: Array[T]): scala.Boolean = {
+  // Must erase to `(Collection, Object[]) Z` to match the call site that
+  // dotc emits for `Collections.addAll(coll, e1, e2, ...)`. An unbounded
+  // `Array[T]` parameter would erase to `Object` (the special "generic
+  // array" erasure), so we declare the parameter as `Array[Object]`
+  // explicitly. Callers pass an `Array[AnyRef]` produced by varargs
+  // lowering, which is ABI-compatible.
+  def addAll(c: Collection[_], elements: Array[Object]): scala.Boolean = {
     var changed = false
     var i = 0
     while i < elements.length do
-      if c.add(elements(i)) then changed = true
+      if c.asInstanceOf[Collection[Object]].add(elements(i)) then changed = true
       i += 1
     changed
   }
