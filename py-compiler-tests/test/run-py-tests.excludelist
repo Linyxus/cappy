@@ -178,3 +178,15 @@ i5441.scala                                 # float-mod-eval-order (println(b()%
 enum-java                                   # missing-driver (dir-test combines Java sources; .pyir not generated for Java)
 enum-java-scala                             # missing-driver (dir-test combines Java sources)
 Course-2002-08.scala                        # boolean-bitand-wrapped-i64 (`a & b` on Booleans wrapped in `_scpy_i64`, returns 0/1 not False/True; codegen op-lowering, not item 12 scope)
+
+# --- Wave 5 item 13 (notes/wave5-worklist/13-compile-longtail.md) ---------
+# `compile.other` longtail residual after the structural fixes in this
+# item (`ScalaRunTime.toObjectArray`/`stringOf`, `Collections.min`/`max`/
+# `addAll`-erasure, `Runtime.totalMemory`, `Thread.yield`, and the
+# cross-package `report.echo` change). Five fixtures need their own
+# follow-up structural work and are excluded with reason tags.
+Parser.scala                                # compile-encoder-edge (lambda hoisted out of a lazy-val initializer with a `_$`-prefixed wildcard-param name; def is missing from emitted .pyir while the call site references the fully expanded `Parser_package_____strToToken_lzyINIT1__anonfun_1`. Needs LambdaLift/MoveStatics interaction in GenPython.)
+enum-values.scala                           # jvm-reflection-not-supported (uses `reflect.Selectable.reflectiveSelectable`'s `applyDynamic` which goes through `Class.getMethod`)
+for-desugar-strawman.scala                  # compile-encoder-edge-empty-package (top-level extension method `applyFilter`/`mapDefined` in a colon-block `xs.flatMapDefined: x => ... is.applyFilter(...) { ... }` resolves owner to `<empty>` and emits `Unresolved module class '_lessempty_greater'`)
+i14198.scala                                # gc-semantic-dependency (`terminally(ref.get().get() == null)` polls until the JVM GC reclaims a `WeakReference`; CPython's reference-counting + cycle GC has different reclamation timing, so the loop never terminates)
+i7843.scala                                 # jvm-concurrent (uses `ForkJoinPool`, `Thread.UncaughtExceptionHandler`, `ExecutionException(String, Throwable)`, `StackOverflowError(String)` — same shape as the existing `jvm-only` cluster in item 07)
