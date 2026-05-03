@@ -7,6 +7,7 @@ import java.util.Comparator
 import scala.concurrent.duration.*
 
 import dotty.Properties
+import dotty.tools.TestPlatform
 import dotty.tools.TestSources
 import dotty.tools.ToolArgs
 import dotty.tools.dotc.reporting.TestReporter
@@ -14,6 +15,23 @@ import dotty.tools.vulpix.*
 
 private[dotc] trait ScalaPyTestSuite extends ParallelTesting:
   implicit val summaryReport: SummaryReporting = new SummaryReport
+
+  // The Python backend exercises shared `tests/run/` fixtures whose
+  // separate-compilation siblings (e.g. `unroll-*-integration`) ship
+  // both `//> using target.platform jvm` and
+  // `//> using target.platform scala-js` files in the same group.
+  // The JVM variant uses Java reflection (`getMethod`, `Boolean.FALSE`)
+  // to inspect the bytecode-level forwarders synthesized by `@unroll`;
+  // the Scala.js variant is intentionally a no-op stub. Both name a
+  // shared symbol the platform-neutral test driver references, so
+  // exactly one of them must be kept.
+  //
+  // Selecting the Scala.js variant aligns with the Python backend:
+  // there are no JVM bytecode forwarders to reflect on, and the
+  // no-op stub keeps the test driver linkable. JVM-only sources
+  // would otherwise trip PyIR linker errors (e.g. on
+  // `java.lang.Boolean.FALSE`) that have no Python analogue.
+  override protected def testPlatform: TestPlatform = TestPlatform.ScalaJS
 
   // Bumped from 60s → 90s on 2026-05-02 to cover Perf B fixtures that
   // run correctly but exceed 60s under CPython interpretation

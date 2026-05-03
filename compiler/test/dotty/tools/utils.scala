@@ -76,15 +76,17 @@ def assertThrows[T <: Throwable: ClassTag](p: T => Boolean)(body: => Any): Unit 
 end assertThrows
 
 enum TestPlatform:
-  case JVM, ScalaJS
+  case JVM, ScalaJS, Python
   override def toString: String = this match
     case JVM     => "jvm"
     case ScalaJS => "scala-js"
+    case Python  => "python"
 
 object TestPlatform:
   def named(s: String): TestPlatform = s match
     case "jvm"      => TestPlatform.JVM
     case "scala-js" => TestPlatform.ScalaJS
+    case "python"   => TestPlatform.Python
     case _          => throw IllegalArgumentException(s)
 
 /** Famous tool names in the ecosystem. Used for tool args in test files. */
@@ -141,7 +143,7 @@ private val toolArg = raw"(?://|/\*| \*) ?(?i:(${ToolName.values.mkString("|")})
 /** Directive to specify to vulpix the options to pass to Dotty */
 private val directiveOptionsArg = raw"//> using option(?:s)? (.*)".r
 private val directiveJavacOptions = raw"//> using javacOpt (.*)".r
-private val directiveTargetOptions = raw"//> using target.platform (jvm|scala-js)".r
+private val directiveTargetOptions = raw"//> using target.platform (jvm|scala-js|python)".r
 private val directiveUnsupported = raw"//> using (scala) (.*)".r
 private val directiveUnknown = raw"//> using (.*)".r
 
