@@ -34,7 +34,6 @@ kmpSliceSearch.scala  # 100×10×5 nested KMP search; dominated by _scpy_is_assi
 # enumerated from `/tmp/postperfc-fingerprints/clusters-detail.md` §
 # "run.assert.reflection_or_charseq (53)".
 MeterCaseClass.scala                        # jvm-reflection-not-supported
-blame_eye_triple_eee-double.scala           # jvm-reflection-not-supported
 defaults-serizaliable-with-forwarders.scala # jvm-reflection-not-supported
 equality.scala                              # char-vs-numeric-eq (Wave 5 item 03 fixed the hash divergence; the residual failure is `5.toChar == 5.0d`/`5: BigInt`/`5: BigDecimal` returning false because `_scpy_Char.__eq__` rejects non-Char comparands — a structural Char-equality gap unrelated to Murmur3/numeric-hash. Tracked under #5 genuine-semantic.)
 forwarder.scala                             # jvm-reflection-not-supported
@@ -190,3 +189,34 @@ enum-values.scala                           # jvm-reflection-not-supported (uses
 for-desugar-strawman.scala                  # compile-encoder-edge-empty-package (top-level extension method `applyFilter`/`mapDefined` in a colon-block `xs.flatMapDefined: x => ... is.applyFilter(...) { ... }` resolves owner to `<empty>` and emits `Unresolved module class '_lessempty_greater'`)
 i14198.scala                                # gc-semantic-dependency (`terminally(ref.get().get() == null)` polls until the JVM GC reclaims a `WeakReference`; CPython's reference-counting + cycle GC has different reclamation timing, so the loop never terminates)
 i7843.scala                                 # jvm-concurrent (uses `ForkJoinPool`, `Thread.UncaughtExceptionHandler`, `ExecutionException(String, Throwable)`, `StackOverflowError(String)` — same shape as the existing `jvm-only` cluster in item 07)
+
+# --- Wave 5 item 05 (notes/wave5-worklist/05-assert-genuine-semantic.md) -
+# Genuine Scala-vs-Python semantic gaps. The NaN equality sub-shape was
+# fixed in `library-py BoxesRunTime.equals` (skip the `eq` shortcut for
+# Python `float`s so generic `==` honours IEEE-754 `NaN != NaN`); the
+# fixtures below remain blocked by separate, deeper structural gaps that
+# fall outside this item's surgical scope.
+
+# nan-instance-method-dispatch: `Double.NaN.isNaN` lowers to
+# `boxedDouble.isNaN__Z()`. After `Predef.double2Double`, `boxedDouble`
+# is the same Python `float`, which has no `isNaN__Z` attribute. The
+# structural fix is to teach GenPython to special-case `isNaN`/`isInfinite`
+# on raw-Python receivers (analogous to `_scpy_get_class` for `Object.getClass`)
+# or to teach the runtime to dispatch instance-method calls on primitive
+# floats through the registered `java.lang.Float`/`java.lang.Double`
+# class. Either approach is wider than the NaN-equality fix and is left
+# for a follow-up.
+blame_eye_triple_eee-double.scala           # nan-instance-method-dispatch (`isNaN__Z` on raw Python float; first 8 lines now match check)
+blame_eye_triple_eee-float.scala            # nan-instance-method-dispatch (`isNaN__Z` on raw Python float; first 8 lines now match check)
+
+# python-lambda-class-identity-not-supported: Scala `() => x` lifts to a
+# distinct synthetic class on the JVM; LambdaMetafactory may share the
+# class for identical literals, but two lambdas with different captures
+# always have distinct `getClass`. Python closures and SAM bridges all
+# share `<class 'function'>` (or `_scpy_FnN`), so `lam1.getClass ==
+# lam2.getClass` collapses to `true` regardless of the source. Without
+# synthesizing a wrapper class per lambda site (which fights closure
+# capture identity and Python serialization), this is a fundamental
+# JVM-vs-Python semantic gap.
+getclass.scala                              # python-lambda-class-identity-not-supported (asserts `f.getClass.toString` matches `class Test$$$Lambda$`; Python closure has no JVM-shaped class name)
+lambda-serialization-security.scala         # python-lambda-class-identity-not-supported (asserts `reconstituted1.getClass == reconstituted2.getClass` after pickle round-trip; Python `function` class identity not preserved)
