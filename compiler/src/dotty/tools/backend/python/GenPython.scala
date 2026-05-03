@@ -3365,7 +3365,23 @@ private class PyCodeGen()(using genCtx: Context):
     case _             => None
 
   private def moduleReceiver(moduleClass: Symbol, pos: PyPosition): PyTree =
-    if moduleClass == currentClassSym then
+    // Static methods (Python `@staticmethod`) have no `self` binding, so
+    // even when the call target lives on the same module class we cannot
+    // emit `PyThis()` from inside the body. Resolve through the module
+    // singleton via `PyLoadModule(currentClassSym)` instead. Demoted
+    // anonfuns (see `anonfunDemotedToInstance`) keep their `self` because
+    // they are emitted as instance methods, so they are excluded from the
+    // re-routing. This guards against the empty-package extension-method
+    // shape exercised by `tests/run/for-desugar-strawman.scala`, where a
+    // top-level `extension`-derived anonfun on a synthetic
+    // `<file>$package$` module class calls a sibling static helper on the
+    // same module — without the guard the call lowered to `self.method(…)`
+    // and Python raised `NameError: name 'self' is not defined`.
+    val inStaticContext =
+      currentMethodSym != null && currentMethodSym.exists
+        && (currentMethodSym.is(JavaStatic) || currentMethodSym.isScalaStatic)
+        && !isAnonfunDemotedFromStatic(currentMethodSym)
+    if moduleClass == currentClassSym && !inStaticContext then
       PyThis()(PyClassType(encoding.encodeClassName(currentClassSym)), pos)
     else
       PyLoadModule(encoding.encodeClassName(moduleClass))(pos)
