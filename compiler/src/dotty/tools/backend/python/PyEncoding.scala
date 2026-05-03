@@ -297,6 +297,19 @@ class PyEncoding(using Context):
   def originalNameOf(sym: Symbol): PyOriginalName =
     PyOriginalName.fromString(sym.name.unexpandedName.toString)
 
+  /** JVM-style dotted full name for a class symbol (e.g. `pkg.Outer$Inner`,
+   *  `Outer$$anon$1`).  Used by codegen to populate
+   *  `PyClassDef.originalName` for class definitions so the runtime can
+   *  return JVM-shaped output from `Class.getName()` rather than the
+   *  Python-encoded form (`_` for `$`, `_scpy_d` for trailing `$`, …).
+   *  This is the same name that the JVM backend uses for class files. */
+  def jvmClassNameOf(sym: Symbol): String =
+    val rewired =
+      if sym.isAllOf(ModuleClass | JavaDefined) && sym.linkedClass.exists then
+        sym.linkedClass
+      else sym
+    rewired.javaClassName.toString
+
   // --- Python interop annotations -----------------------------------
 
   def externBindingOf(sym: Symbol): Option[ExternBinding] =

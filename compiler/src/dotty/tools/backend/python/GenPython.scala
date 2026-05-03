@@ -564,7 +564,12 @@ private class PyCodeGen()(using genCtx: Context):
 
     PyClassDef(
       name         = className,
-      originalName = encoding.originalNameOf(sym),
+      // Carry the JVM dotted full name so the runtime can reverse-map
+      // `Class.getName()` back to JVM form (`Foo$$anon$1`) instead of the
+      // Python-encoded form (`Foo__anon_1`). The emitter still extracts
+      // the Scala simple name from this dotted form via
+      // `stripScalaSimpleName`, which handles both inputs.
+      originalName = PyOriginalName.fromString(encoding.jvmClassNameOf(sym)),
       kind         = kind,
       superClass   = superClass,
       interfaces   = interfaces,

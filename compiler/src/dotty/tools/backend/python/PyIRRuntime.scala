@@ -792,7 +792,7 @@ object PyIRRuntime:
        |    return Exception("UnsupportedOperationException: " + message)
        |
        |class _scpy_Class(_scpy_Object):
-       |    def __init__(self, name, kind, component_type=None, py_type=None, simple_name=None):
+       |    def __init__(self, name, kind, component_type=None, py_type=None, simple_name=None, jvm_name=None):
        |        self._scpy_name = name
        |        self._scpy_kind = kind
        |        self._scpy_component_type = component_type
@@ -804,8 +804,22 @@ object PyIRRuntime:
        |        # symbol; runtime-registered helper classes leave it None and
        |        # `_scpy_simple_name_of` falls back to a heuristic on `_scpy_name`.
        |        self._scpy_simple_name = simple_name
+       |        # JVM-style dotted full name (e.g. `Foo$$anon$1`,
+       |        # `pkg.Outer$Inner`). Codegen records this for user classes;
+       |        # runtime-registered helper classes (e.g. `java.lang.Object`)
+       |        # already use JVM-shaped strings for `_scpy_name`, so they
+       |        # leave `_scpy_jvm_name` unset and `getName()` falls back to
+       |        # `_scpy_name`.
+       |        self._scpy_jvm_name = jvm_name
        |
        |    def getName__Ljava_dlang_dString(self):
+       |        # Prefer the JVM-shaped name when codegen recorded one so
+       |        # `getClass.getName` matches what the JVM backend emits
+       |        # (`Foo$$anon$1`) instead of the Python-encoded form
+       |        # (`Foo__anon_1`). The fallback to `_scpy_name` covers
+       |        # array classes (descriptor strings) and runtime helpers.
+       |        if self._scpy_jvm_name is not None:
+       |            return self._scpy_jvm_name
        |        return self._scpy_name
        |
        |    def getSimpleName__Ljava_dlang_dString(self):
@@ -814,7 +828,11 @@ object PyIRRuntime:
        |            if comp is None:
        |                return "[]"
        |            return comp.getSimpleName__Ljava_dlang_dString() + "[]"
-       |        name = self._scpy_name
+       |        # Prefer the JVM-shaped name when codegen recorded one:
+       |        # parsing on the encoded form (`_scpy_name`) would split on
+       |        # `_` boundaries that the encoder introduced for `$`,
+       |        # producing wrong names like `1` for `Foo__anon_1`.
+       |        name = self._scpy_jvm_name if self._scpy_jvm_name is not None else self._scpy_name
        |        # Strip the outer-class prefix (after the last `$`) for
        |        # nested types, then the package prefix (after the last `.`).
        |        dollar = name.rfind("$")
@@ -965,13 +983,25 @@ object PyIRRuntime:
        |        return 0
        |
        |    def getCanonicalName__Ljava_dlang_dString(self):
+       |        # JVM canonical name elides `$` separators and is undefined
+       |        # for anonymous/local classes. Approximate with `getName()`
+       |        # so codegen's recorded JVM name shows through.
+       |        if self._scpy_jvm_name is not None:
+       |            return self._scpy_jvm_name
        |        return self._scpy_name
        |
        |    def getTypeName__Ljava_dlang_dString(self):
+       |        if self._scpy_jvm_name is not None:
+       |            return self._scpy_jvm_name
        |        return self._scpy_name
        |
        |    def getPackageName__Ljava_dlang_dString(self):
-       |        name = self._scpy_name
+       |        # Use the JVM-shaped name when present so the package
+       |        # qualifier is split at the right `.` boundary; the
+       |        # encoded `_scpy_name` shares the same package prefix
+       |        # but the inner-class form differs only in the final
+       |        # segment, where `getPackageName` doesn't look anyway.
+       |        name = self._scpy_jvm_name if self._scpy_jvm_name is not None else self._scpy_name
        |        dot = name.rfind(".")
        |        return name[:dot] if dot >= 0 else ""
        |
@@ -1066,11 +1096,16 @@ object PyIRRuntime:
        |        return self.toString__Ljava_dlang_dString()
        |
        |    def toString__Ljava_dlang_dString(self):
+       |        # `Class.toString` reports the user-visible name (JVM-shaped
+       |        # when codegen recorded one), not the encoded `_scpy_name`.
+       |        # Mirrors `getName()` so `println(getClass)` prints e.g.
+       |        # `class Foo$$anon$1` rather than `class Foo__anon_1`.
+       |        display_name = self._scpy_jvm_name if self._scpy_jvm_name is not None else self._scpy_name
        |        if self._scpy_kind == "primitive":
-       |            return self._scpy_name
+       |            return display_name
        |        if self._scpy_kind == "interface":
-       |            return "interface " + self._scpy_name
-       |        return "class " + self._scpy_name
+       |            return "interface " + display_name
+       |        return "class " + display_name
        |
        |    def __str__(self):
        |        return self.toString__Ljava_dlang_dString()
@@ -1318,10 +1353,10 @@ object PyIRRuntime:
        |        _scpy_class_registry[name] = clazz
        |    return clazz
        |
-       |def _scpy_register_class(py_type, name, kind="class", superclass_name=None, interface_names=(), component_type=None, simple_name=None):
+       |def _scpy_register_class(py_type, name, kind="class", superclass_name=None, interface_names=(), component_type=None, simple_name=None, jvm_name=None):
        |    clazz = _scpy_class_registry.get(name)
        |    if clazz is None:
-       |        clazz = _scpy_Class(name, kind, component_type, py_type, simple_name)
+       |        clazz = _scpy_Class(name, kind, component_type, py_type, simple_name, jvm_name)
        |        _scpy_class_registry[name] = clazz
        |    else:
        |        clazz._scpy_kind = kind
@@ -1330,6 +1365,8 @@ object PyIRRuntime:
        |            clazz._scpy_py_type = py_type
        |        if simple_name is not None:
        |            clazz._scpy_simple_name = simple_name
+       |        if jvm_name is not None:
+       |            clazz._scpy_jvm_name = jvm_name
        |    clazz._scpy_superclass_name = superclass_name
        |    clazz._scpy_interface_names = tuple(interface_names)
        |    if py_type is not None:

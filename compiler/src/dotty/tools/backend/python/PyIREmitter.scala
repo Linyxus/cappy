@@ -375,6 +375,7 @@ object PyIREmitter:
 
     private def emitClassMetadata(cls: PyClassDef): Unit =
       line("_scpy_full_name = \"" + escapeString(cls.name.nameString) + "\"")
+      line("_scpy_jvm_name = \"" + escapeString(classJvmName(cls)) + "\"")
       line("_scpy_simple_name = \"" + escapeString(classSimpleName(cls)) + "\"")
       line("_scpy_kind = \"" + classKindLiteral(cls.kind) + "\"")
       line("_scpy_superclass = " + classSuperclassLiteral(cls))
@@ -386,19 +387,29 @@ object PyIREmitter:
 
     private def emitClassRegistration(cls: PyClassDef): Unit =
       val clsId = classIdentifier(cls.name)
-      line(s"_scpy_register_class($clsId, $clsId._scpy_full_name, $clsId._scpy_kind, $clsId._scpy_superclass, $clsId._scpy_interfaces, simple_name=$clsId._scpy_simple_name)")
+      line(s"_scpy_register_class($clsId, $clsId._scpy_full_name, $clsId._scpy_kind, $clsId._scpy_superclass, $clsId._scpy_interfaces, simple_name=$clsId._scpy_simple_name, jvm_name=$clsId._scpy_jvm_name)")
 
     /** User-visible Scala simple name for `cls`. Mirrors what the JVM
      *  Scala stdlib computes via `getClass.getName` post-processing:
      *  drop a trailing module-class `$` (so `D1$` → `D1`), drop the
      *  package qualifier (after the last `.`), and drop the
      *  outer-class prefix (after the last `$` that introduces an inner
-     *  type). The source-level `originalName` is preferred when
-     *  available (it tracks the user-written identifier through
-     *  Dotty's name-expansion machinery). */
+     *  type). The JVM-dotted form recorded on `originalName` carries
+     *  enough info for `stripScalaSimpleName` to extract the simple part
+     *  on its own; the encoded `cls.name.simpleName` is the fallback for
+     *  IR nodes that pre-date that contract. */
     private def classSimpleName(cls: PyClassDef): String =
       val raw = cls.originalName.value.getOrElse(cls.name.simpleName)
       stripScalaSimpleName(raw)
+
+    /** JVM-style dotted full name for `cls` (e.g. `Foo$$anon$1`,
+     *  `pkg.Outer$Inner`). Codegen now records this in
+     *  `originalName` for class symbols (see `GenPython.genClassDef`).
+     *  When the IR doesn't carry it (older bundles, support classes
+     *  without a Symbol), fall back to the encoded class name; that
+     *  preserves the historical behaviour of `Class.getName()`. */
+    private def classJvmName(cls: PyClassDef): String =
+      cls.originalName.value.getOrElse(cls.name.nameString)
 
     private def stripScalaSimpleName(raw: String): String =
       val noTrailing =
