@@ -1448,7 +1448,25 @@ object PyIREmitter:
 
       // Type tests / casts
       case PyIsInstanceOf(expr, testType) =>
-        s"_scpy_is_value_of_type(${exprToStr(expr)}, ${typeRefToClassExpr(testType)})"
+        // `Null` and `Nothing` have no instances at runtime, so an
+        // `isInstanceOf[Null]` / `isInstanceOf[Nothing]` test must
+        // unconditionally yield `False` while still evaluating the
+        // receiver (for any side effects). The runtime helper short-
+        // circuits to `False` when given `clazz=None` (see
+        // `_scpy_is_value_of_type`), giving us the exact JVM
+        // `instanceof scala/runtime/{Null$,Nothing$}` semantics: the
+        // bytecode pops the operand and produces `false`. Critical
+        // for the `LazyVals` mini-phase's `Null`-typed lazy-val
+        // accessor: the first arm of its three-way dispatch is
+        // `result.isInstanceOf[Null]` — without `False` here, the
+        // `_scpy_class_of_name("java.lang.Object")` fallback matched
+        // every non-null value (including the `LazyVals.NullValue`
+        // sentinel), leaking the sentinel object out of the accessor.
+        testType match
+          case PyPrimRef(PyPrimRef.Tag.NullRef | PyPrimRef.Tag.NothingRef) =>
+            s"_scpy_is_value_of_type(${exprToStr(expr)}, None)"
+          case _ =>
+            s"_scpy_is_value_of_type(${exprToStr(expr)}, ${typeRefToClassExpr(testType)})"
 
       case PyAsInstanceOf(expr, target) =>
         // Python is duck-typed, so most reference casts are no-ops. The
