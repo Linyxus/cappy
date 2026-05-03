@@ -213,17 +213,13 @@ i7843.scala                                 # jvm-concurrent (uses `ForkJoinPool
 # fixtures below remain blocked by separate, deeper structural gaps that
 # fall outside this item's surgical scope.
 
-# nan-instance-method-dispatch: `Double.NaN.isNaN` lowers to
-# `boxedDouble.isNaN__Z()`. After `Predef.double2Double`, `boxedDouble`
-# is the same Python `float`, which has no `isNaN__Z` attribute. The
-# structural fix is to teach GenPython to special-case `isNaN`/`isInfinite`
-# on raw-Python receivers (analogous to `_scpy_get_class` for `Object.getClass`)
-# or to teach the runtime to dispatch instance-method calls on primitive
-# floats through the registered `java.lang.Float`/`java.lang.Double`
-# class. Either approach is wider than the NaN-equality fix and is left
-# for a follow-up.
-blame_eye_triple_eee-double.scala           # nan-instance-method-dispatch (`isNaN__Z` on raw Python float; first 8 lines now match check)
-blame_eye_triple_eee-float.scala            # nan-instance-method-dispatch (`isNaN__Z` on raw Python float; first 8 lines now match check)
+# nan-instance-method-dispatch: resolved by Wave 6 item 01b — codegen
+# intercept on boxed-primitive instance methods (Object/AnyRef/Number/
+# boxed-prim receivers) routes `isNaN__Z`/`isInfinite__Z`/`*Value__*`
+# calls through `_scpy_Double_*` / `_scpy_Boolean_*` runtime helpers
+# that dispatch on `isinstance(x, float|int|bool)` and fall through to
+# the encoded method on real ported boxes.
+# (Entries `blame_eye_triple_eee-{double,float}.scala` removed.)
 
 # python-lambda-class-identity-not-supported: Scala `() => x` lifts to a
 # distinct synthetic class on the JVM; LambdaMetafactory may share the

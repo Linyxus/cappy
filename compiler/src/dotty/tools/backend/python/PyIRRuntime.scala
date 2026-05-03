@@ -584,6 +584,33 @@ object PyIRRuntime:
       PySimpleMethodName("toString"),
       Nil,
       PyClassRef(PyClassName("java.lang.String"))
+    ),
+    // Boxed-primitive instance methods that the `_scpy_Double_*` /
+    // `_scpy_Boolean_*` helpers (in `prelude`) fall through to when the
+    // runtime receiver isn't a raw Python primitive. Without these seeds
+    // the analyzer never sees a virtual call on the boxed-primitive
+    // method, so the pylib subtype implementations get DCE'd and the
+    // helper's fallback `AttributeError`s on the rare ported-box receiver.
+    PyClassName("java.lang.Double") -> PyMethodName(
+      PySimpleMethodName("isNaN"), Nil, PyPrimRef.BooleanRef
+    ),
+    PyClassName("java.lang.Double") -> PyMethodName(
+      PySimpleMethodName("isInfinite"), Nil, PyPrimRef.BooleanRef
+    ),
+    PyClassName("java.lang.Double") -> PyMethodName(
+      PySimpleMethodName("doubleValue"), Nil, PyPrimRef.DoubleRef
+    ),
+    PyClassName("java.lang.Double") -> PyMethodName(
+      PySimpleMethodName("floatValue"), Nil, PyPrimRef.FloatRef
+    ),
+    PyClassName("java.lang.Double") -> PyMethodName(
+      PySimpleMethodName("intValue"), Nil, PyPrimRef.IntRef
+    ),
+    PyClassName("java.lang.Double") -> PyMethodName(
+      PySimpleMethodName("longValue"), Nil, PyPrimRef.LongRef
+    ),
+    PyClassName("java.lang.Boolean") -> PyMethodName(
+      PySimpleMethodName("booleanValue"), Nil, PyPrimRef.BooleanRef
     )
   )
 
@@ -3151,6 +3178,97 @@ object PyIRRuntime:
        |    if isinstance(s, str):
        |        return s
        |    return s.toString__Ljava_dlang_dString()
+       |
+       |# Polymorphic helpers for `java.lang.Double`/`Float`/`Long`/`Integer`/
+       |# `Boolean` instance methods invoked through an `Object`/`AnyRef`/
+       |# `java.lang.Number`/boxed-primitive static receiver. The runtime
+       |# value may be a raw Python `float`/`int`/`bool` (boxing is identity
+       |# on this backend — `boxToDouble` returns the same `float`), in which
+       |# case the encoded method name (`isNaN__Z`, `intValue__I`, ...) does
+       |# not resolve. Dispatch on `isinstance(...)` so calls on raw
+       |# primitives produce JVM-faithful values, and fall through to the
+       |# encoded method on real ported boxed instances (e.g. one minted
+       |# explicitly via `new java.lang.Double(d)` — see Wave 5 item 05's
+       |# `explicit-boxed-number-not-stored` discussion).
+       |#
+       |# `bool` is a subclass of `int` in Python, so the bool checks must
+       |# come first wherever a primitive int receiver would also accept a
+       |# bool (currently none — Boolean methods are gated on bool only).
+       |def _scpy_Double_isNaN(x):
+       |    if isinstance(x, bool):
+       |        return False
+       |    if isinstance(x, (int, float)):
+       |        return _scpy_math.isnan(x) if isinstance(x, float) else False
+       |    return x.isNaN__Z()
+       |
+       |def _scpy_Double_isInfinite(x):
+       |    if isinstance(x, bool):
+       |        return False
+       |    if isinstance(x, (int, float)):
+       |        return _scpy_math.isinf(x) if isinstance(x, float) else False
+       |    return x.isInfinite__Z()
+       |
+       |def _scpy_Double_doubleValue(x):
+       |    if isinstance(x, bool):
+       |        return 1.0 if x else 0.0
+       |    if isinstance(x, (int, float)):
+       |        return _builtins.float(x)
+       |    return x.doubleValue__D()
+       |
+       |def _scpy_Double_floatValue(x):
+       |    if isinstance(x, bool):
+       |        return 1.0 if x else 0.0
+       |    if isinstance(x, (int, float)):
+       |        return _scpy_f32(x)
+       |    return x.floatValue__F()
+       |
+       |def _scpy_Double_intValue(x):
+       |    if isinstance(x, bool):
+       |        return 1 if x else 0
+       |    if isinstance(x, float):
+       |        # `Double.intValue() = (int)d`: truncate toward zero, then
+       |        # apply JVM 32-bit narrowing (`d2i` on infinity / NaN /
+       |        # out-of-range values clamps to Int.{MaxValue, MinValue, 0}).
+       |        if _scpy_math.isnan(x):
+       |            return 0
+       |        if x >= 2147483647.0:
+       |            return 2147483647
+       |        if x <= -2147483648.0:
+       |            return -2147483648
+       |        return _builtins.int(x)
+       |    if isinstance(x, int):
+       |        return _scpy_i32(x)
+       |    return x.intValue__I()
+       |
+       |def _scpy_Double_longValue(x):
+       |    if isinstance(x, bool):
+       |        return 1 if x else 0
+       |    if isinstance(x, float):
+       |        if _scpy_math.isnan(x):
+       |            return 0
+       |        if x >= 9223372036854775807.0:
+       |            return 9223372036854775807
+       |        if x <= -9223372036854775808.0:
+       |            return -9223372036854775808
+       |        return _scpy_i64(_builtins.int(x))
+       |    if isinstance(x, int):
+       |        return _scpy_i64(x)
+       |    return x.longValue__J()
+       |
+       |def _scpy_Double_byteValue(x):
+       |    # `Number.byteValue() = (byte)intValue()`: signed-8-bit narrow.
+       |    v = _scpy_Double_intValue(x) & 0xFF
+       |    return v - 0x100 if v >= 0x80 else v
+       |
+       |def _scpy_Double_shortValue(x):
+       |    # `Number.shortValue() = (short)intValue()`: signed-16-bit narrow.
+       |    v = _scpy_Double_intValue(x) & 0xFFFF
+       |    return v - 0x10000 if v >= 0x8000 else v
+       |
+       |def _scpy_Boolean_booleanValue(x):
+       |    if isinstance(x, bool):
+       |        return x
+       |    return x.booleanValue__Z()
        |
        |def _scpy_str_contains(s, t):
        |    return _scpy_str_required_text(t) in s

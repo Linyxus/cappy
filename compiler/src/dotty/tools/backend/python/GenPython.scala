@@ -257,6 +257,43 @@ private class PyCodeGen()(using genCtx: Context):
     def isCharSequenceInstanceMethod(sym: Symbol, isStaticTarget: Boolean): Boolean =
       !isStaticTarget && sym.exists && sym.owner == charSequenceClass
 
+    /** True when `sym` is a non-static instance method on a JVM boxed-
+     *  primitive class (`java.lang.Double`/`Float`/`Long`/`Integer`/
+     *  `Byte`/`Short`/`Boolean`/`Number`) whose runtime receiver is
+     *  almost certainly a raw Python `float`/`int`/`bool`. Boxing on
+     *  this backend is identity (`boxToDouble(d)` returns the same
+     *  Python `float`), so calls like `(d: java.lang.Double).isNaN()`
+     *  end up dispatching against a `float`, which does not carry the
+     *  encoded `isNaN__Z` method. Routed through `_scpy_Double_*` /
+     *  `_scpy_Boolean_*` runtime helpers in `genBoxedPrimitiveCall`.
+     *
+     *  We intercept on the boxed-primitive owner rather than on
+     *  `Object`/`AnyRef` because:
+     *
+     *  - `Object`-shape calls have already been routed by
+     *    `genHashCodeSpecial` / `genGetClassSpecial` / `genToStringSpecial`
+     *    (the only interesting `Object` instance methods on a primitive).
+     *  - Calls whose static receiver is `java.lang.Double` etc. are
+     *    typically introduced by Predef boxing implicits (`double2Double`)
+     *    or explicit `asInstanceOf[java.lang.Double]` casts; the
+     *    post-erasure `sym.owner` is the boxed-primitive class.
+     *  - `java.lang.Number` is the abstract parent, so calls dispatched
+     *    through a `Number`-typed value (e.g. generic `Numeric` code) also
+     *    get caught here.
+     */
+    def isBoxedPrimitiveInstanceMethod(sym: Symbol, isStaticTarget: Boolean): Boolean =
+      !isStaticTarget && sym.exists && {
+        val owner = sym.owner
+        owner == defn.BoxedDoubleClass ||
+          owner == defn.BoxedFloatClass ||
+          owner == defn.BoxedLongClass ||
+          owner == defn.BoxedIntClass ||
+          owner == defn.BoxedByteClass ||
+          owner == defn.BoxedShortClass ||
+          owner == defn.BoxedBooleanClass ||
+          owner == defn.BoxedNumberClass
+      }
+
     /** True when `sym` is a static call on `java.lang.String` (covers both
      *  the Java class and the synthetic linked module class, since
      *  `String.valueOf` etc. can be referenced through either depending on
@@ -1909,6 +1946,18 @@ private class PyCodeGen()(using genCtx: Context):
                 case Some(tree) => break(tree)
                 case None       => ()
             case _ => ()
+        else if Intrinsics.isBoxedPrimitiveInstanceMethod(sym, isStaticTarget) then
+          // `(d: java.lang.Double).isNaN()` etc. — the runtime receiver is
+          // a raw Python `float`/`int`/`bool` because boxing is identity
+          // on this backend. Route through polymorphic `_scpy_Double_*` /
+          // `_scpy_Boolean_*` helpers that dispatch on `isinstance` and
+          // fall back to the encoded method for real ported boxes.
+          app.fun match
+            case Select(qual, _) =>
+              genBoxedPrimitiveCall(sym, genExpr(qual), args, resultTpe, pos) match
+                case Some(tree) => break(tree)
+                case None       => ()
+            case _ => ()
         else if Intrinsics.isStringStaticMethod(sym, isStaticTarget) then
           break(genStringStaticCall(sym, args, resultTpe, pos))
 
@@ -2174,6 +2223,46 @@ private class PyCodeGen()(using genCtx: Context):
       case "isEmpty"     => Some(external("_scpy_charseq_is_empty", Nil))
       case "toString"    => Some(external("_scpy_charseq_to_string", Nil))
       case _             => None
+
+  /** Map calls on boxed-primitive instance methods (`java.lang.Double#isNaN`,
+   *  `java.lang.Long#intValue`, ...) to polymorphic runtime helpers.
+   *  See [[Intrinsics.isBoxedPrimitiveInstanceMethod]] for the predicate
+   *  this pairs with. Returns `None` for symbols we don't recognize so
+   *  the caller falls through to regular dispatch (which on a real
+   *  ported box will succeed by virtue of the `virtualCallSeeds` keeping
+   *  the encoded methods alive).
+   */
+  private def genBoxedPrimitiveCall(
+      sym: Symbol,
+      recv: PyTree,
+      args: List[PyTree],
+      resultTpe: PyType,
+      pos: PyPosition
+  ): Option[PyTree] =
+    val name = sym.name.mangledString
+    def external(helperName: String): PyTree =
+      PyApplyExternal(PyExternalName(helperName), recv :: args)(resultTpe, pos)
+    val owner = sym.owner
+    name match
+      // Numeric narrowings — Number contract; we only need one helper
+      // family because all numeric boxes (Number, Double, Float, Long,
+      // Integer, Byte, Short) have the same JVM contract on these
+      // names: truncate-and-narrow against the runtime numeric value.
+      case "intValue"    if owner != defn.BoxedBooleanClass => Some(external("_scpy_Double_intValue"))
+      case "longValue"   if owner != defn.BoxedBooleanClass => Some(external("_scpy_Double_longValue"))
+      case "floatValue"  if owner != defn.BoxedBooleanClass => Some(external("_scpy_Double_floatValue"))
+      case "doubleValue" if owner != defn.BoxedBooleanClass => Some(external("_scpy_Double_doubleValue"))
+      case "byteValue"   if owner != defn.BoxedBooleanClass => Some(external("_scpy_Double_byteValue"))
+      case "shortValue"  if owner != defn.BoxedBooleanClass => Some(external("_scpy_Double_shortValue"))
+      // Float-specific predicates — only meaningful on Double/Float boxes.
+      case "isNaN"      if owner == defn.BoxedDoubleClass || owner == defn.BoxedFloatClass =>
+        Some(external("_scpy_Double_isNaN"))
+      case "isInfinite" if owner == defn.BoxedDoubleClass || owner == defn.BoxedFloatClass =>
+        Some(external("_scpy_Double_isInfinite"))
+      // Boolean unboxing.
+      case "booleanValue" if owner == defn.BoxedBooleanClass =>
+        Some(external("_scpy_Boolean_booleanValue"))
+      case _ => None
 
   private def genStringCtorCall(ctor: Symbol, args: List[PyTree], pos: PyPosition): PyTree =
     val methodName = PyMethodName(
