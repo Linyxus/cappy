@@ -110,3 +110,71 @@ i14083.scala                   # jvm-reflection-not-supported (java.lang.reflect
 i11486                         # jvm-reflection-not-supported (java.lang.reflect.Parameter)
 i12492                         # jvm-reflection-not-supported (java.lang.reflect.Parameter)
 i15318                         # jvm-reflection-not-supported (java.lang.reflect.Parameter)
+
+# --- Wave 5 item 12 (notes/wave5-worklist/12-stdout-diff-mismatches.md) ---
+# Stdout-diff fixtures that use JVM reflection (`getDeclared*`,
+# `getModifiers`-driven formatting). Each one walks reflective method/field
+# arrays and prints them via `Method.toString`/`Field.toString`, so they
+# fall under the same `jvm-reflection-not-supported` invariant as the
+# items above. Surfaced during the wave-5 stdout-diff cluster sweep.
+capturing.scala                             # jvm-reflection-not-supported
+i11367.scala                                # jvm-reflection-not-supported
+i14693.scala                                # jvm-reflection-not-supported (Array(i: Long) pattern: ClassTag-based extractor not implemented in -scalapy backend)
+i15723.scala                                # parent-init-order (this.y read before subclass override assigns; structural to ctor lowering, not in item 12 scope)
+i18701.fixed.scala                          # jvm-reflection-not-supported
+i21346.scala                                # jvm-reflection-not-supported
+i22497.scala                                # jvm-reflection-not-supported
+i4404a.scala                                # class-modifiers-not-tracked (Wave 5 item 12 fixed class-name leakage; `Modifier.toString(c.getModifiers)` still returns "" because `_scpy_Class.getModifiers` is hardcoded to 0)
+i4404b.scala                                # generic-eraseure-instanceof (case-class instanceOf reports `false` where JVM reports `true` after type-arg erasure; not stdout-diff-bucket scope)
+i4523.scala                                 # jvm-reflection-not-supported
+parameterized-type.scala                    # jvm-reflection-not-supported
+paramForwarding_separate                    # jvm-reflection-not-supported
+paramForwarding_together.scala              # jvm-reflection-not-supported
+paramForwarding_together_b.scala            # jvm-reflection-not-supported
+refined-signature.scala                     # jvm-reflection-not-supported
+returned-context-function-signature.scala   # jvm-reflection-not-supported
+t10889                                      # jvm-reflection-not-supported (no `Test*.py` main; dir-test driver picks SomeScala.py with no @main)
+i12753                                      # jvm-reflection-not-supported (dir-test, multiple .scala files, picked .py has no @main)
+t3452c.scala                                # missing-static-forwarder (output duplicated; structural to MixinForwarder lowering, not in item 12 scope)
+t4023.scala                                 # jvm-reflection-not-supported (Class.getDeclaredClasses)
+t4537                                       # jvm-reflection-not-supported (dir-test, all four .py files lack @main)
+t6260-delambdafy.scala                      # jvm-reflection-not-supported
+t6380.scala                                 # jvm-reflection-not-supported (Throwable.getCause printing depends on declared throws + reflection)
+t6827.scala                                 # string-subseq-neg-index (CharSequence.subSequence semantic; structural to javalib String, not class-name)
+t7374                                       # missing-driver (dir-test driver finds no Test*.py; SomeScala.scala emits Some.py with no @main)
+t7932.scala                                 # jvm-reflection-not-supported
+toplevel-implicits                          # compile-fail (toplevel implicit definitions, separate compilation issue)
+transparent                                 # compile-fail (transparent inline interaction)
+trait-static-forwarder                      # missing-driver (dir-test, no @main on `forwarders.py`)
+tupled-function-extension-method.scala      # compile-fail (extension method tupling + scopes)
+quotes-add-erased                           # compile-fail (scala.quoted.runtime references)
+quotes-reflection                           # compile-fail (scala.quoted.runtime references)
+value-class-array-signature.scala           # jvm-reflection-not-supported
+# Stack-trace formatting: Python frames are reported with the class
+# name scaffold (`<pycode>`) rather than the JVM-shaped class name,
+# and method names are unsanitized (`bar_1` rather than `bar$1`). The
+# structural fix is to teach `java.lang.StackTrace` to look up the
+# bundle class by qualname and use its `_scpy_jvm_name`, plus a
+# `_scpy_d`-aware reverse for method `co_name`s. Tracked separately
+# from the getName/toString fix already landed in this item.
+i3006b.scala                                # stack-trace-method-name (decoded `bar_1` instead of `bar$1`; reverse of `$ → _` for `co_name` not yet implemented)
+i2738.scala                                 # stack-trace-class-name (declaringClass is `<pycode>`; reverse-lookup via `_scpy_class_registry` not implemented)
+i3340.scala                                 # stack-trace-class-name (Throwable.getStackTrace reports Python qualnames)
+i4947.scala                                 # stack-trace-class-name (Throwable.getStackTrace reports Python qualnames)
+i4947a2.scala                               # stack-trace-class-name (Throwable.getStackTrace reports Python qualnames)
+i4947b                                      # separate-compilation-resolution (dir-test compiles Lib_1 then Test_2; Test_2 fails to resolve `Lib_` because the second compile re-runs typer without the first's emitted .pyir on classpath)
+assert-stack.scala                          # stack-trace-class-name (assertFailed stack reports `<lambda>`/`assertFailed` without owner)
+# Tuple specialization: `Tuple2$mcII$sp` is the JVM specialization
+# variant for `(Int, Int)`. The -scalapy backend does not emit the
+# `mcII$sp` specialized class, so `getClass.getName` reports the
+# generic `scala.Tuple2`. Structural to specialization lowering, not
+# in item 12 scope.
+i11114.scala                                # tuple-specialization-not-emitted
+# Output-ordering / semantic mismatches that look like stdout diffs
+# but are not in the four buckets named by item 12. Each is its own
+# structural fix in a different layer.
+exceptions-nest.scala                       # try-catch-finally-ordering (continuation order after Throwable; semantic, not item 12 scope)
+i5441.scala                                 # float-mod-eval-order (println(b()%a()) before %.toFloat; semantic, not item 12 scope)
+enum-java                                   # missing-driver (dir-test combines Java sources; .pyir not generated for Java)
+enum-java-scala                             # missing-driver (dir-test combines Java sources)
+Course-2002-08.scala                        # boolean-bitand-wrapped-i64 (`a & b` on Booleans wrapped in `_scpy_i64`, returns 0/1 not False/True; codegen op-lowering, not item 12 scope)
