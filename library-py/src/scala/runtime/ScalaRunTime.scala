@@ -127,3 +127,91 @@ object ScalaRunTime:
     if a == null then null.asInstanceOf[B] else f
 
   inline def nullForGC[T]: T = null.asInstanceOf[T]
+
+  /** Convert any array into an `Array[Object]`. Mirrors stdlib
+   *  `ScalaRunTime.toObjectArray`: needed when a primitive array is
+   *  passed to a generic `T*` Java vararg, so the compiler emits
+   *  `Java.asList(toObjectArray(Array[Int](...)))`. The Python backend
+   *  does not distinguish boxed vs unboxed arrays at runtime, so a
+   *  shallow copy through `AnyRef` is sufficient.
+   */
+  def toObjectArray(src: AnyRef): Array[Object] =
+    if src == null then throw new NullPointerException
+    else src match
+      case x: Array[Object @unchecked] => x
+      case x: Array[Int]     => copyToObjectArray(x.length, i => x(i).asInstanceOf[Object])
+      case x: Array[Long]    => copyToObjectArray(x.length, i => x(i).asInstanceOf[Object])
+      case x: Array[Double]  => copyToObjectArray(x.length, i => x(i).asInstanceOf[Object])
+      case x: Array[Float]   => copyToObjectArray(x.length, i => x(i).asInstanceOf[Object])
+      case x: Array[Char]    => copyToObjectArray(x.length, i => x(i).asInstanceOf[Object])
+      case x: Array[Byte]    => copyToObjectArray(x.length, i => x(i).asInstanceOf[Object])
+      case x: Array[Short]   => copyToObjectArray(x.length, i => x(i).asInstanceOf[Object])
+      case x: Array[Boolean] => copyToObjectArray(x.length, i => x(i).asInstanceOf[Object])
+      case _                 => src.asInstanceOf[Array[Object]]
+
+  private def copyToObjectArray(n: Int, get: Int => Object): Array[Object] =
+    val out = new Array[Object](n)
+    var i = 0
+    while i < n do
+      out(i) = get(i)
+      i += 1
+    out
+
+  /** Pretty-print any value, mirroring stdlib `ScalaRunTime.stringOf`.
+   *  Used by tests and by Scala 3 `repl`-style helpers. The Python
+   *  backend has no JVM reflection, so we approximate the stdlib
+   *  behavior by special-casing the common cases (null, String, Array,
+   *  Map, Iterable, Tuple, primitive) and falling back to `toString`. */
+  def stringOf(arg: Any): String = stringOf(arg, scala.Int.MaxValue)
+
+  def stringOf(arg: Any, maxElements: Int): String =
+    def isTuple(x: Any): Boolean = x match
+      case _: Product if x.getClass.getName.startsWith("scala.Tuple") => true
+      case _ => false
+
+    def useOwnToString(x: Any): Boolean = x match
+      case _: scala.collection.immutable.Range => true
+      case _: scala.collection.immutable.NumericRange[?] => true
+      case _: scala.collection.SortedOps[?, ?] => true
+      case _: scala.collection.StringOps => true
+      case _: StringBuilder => true
+      case _: scala.collection.View[?] => true
+      case _ => false
+
+    def mapInner(arg: Any): String = arg match
+      case (k, v) => inner(k) + " -> " + inner(v)
+      case _      => inner(arg)
+
+    def arrayToString(x: AnyRef): String =
+      val arr = x.asInstanceOf[Array[Any]]
+      val n = math.min(arr.length, maxElements)
+      val parts = new Array[String](n)
+      var i = 0
+      while i < n do
+        parts(i) = inner(arr(i))
+        i += 1
+      parts.mkString("Array(", ", ", ")")
+
+    def inner(arg: Any): String = arg match
+      case null                                => "null"
+      case ""                                  => "\"\""
+      case s: String                           =>
+        if s.length > 0 && (s.head.isWhitespace || s.last.isWhitespace) then "\"" + s + "\""
+        else s
+      case x if useOwnToString(x)              => x.toString
+      case x: AnyRef if isArray(x)             => arrayToString(x)
+      case x: scala.collection.Map[?, ?]       =>
+        x.iterator.take(maxElements).map(mapInner)
+          .mkString(x.collectionClassName + "(", ", ", ")")
+      case x: Iterable[?]                      =>
+        x.iterator.take(maxElements).map(inner)
+          .mkString(x.collectionClassName + "(", ", ", ")")
+      case x: Product if isTuple(x) && x.productArity == 1 =>
+        "(" + inner(x.productElement(0)) + ",)"
+      case x: Product if isTuple(x)            =>
+        x.productIterator.map(inner).mkString("(", ",", ")")
+      case x                                   => "" + x
+
+    try inner(arg)
+    catch
+      case _: UnsupportedOperationException | _: AssertionError => "" + arg
