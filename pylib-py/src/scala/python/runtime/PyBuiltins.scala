@@ -104,6 +104,15 @@ object PyBuiltins:
   def equal(a: Any, b: Any): Boolean =
     operatorEq(a, b)
 
+  @extern("builtins", "isinstance")
+  private def isInstanceOf(value: Any, ty: Any): Boolean = native
+
+  /** True iff `value` is a Python `float`. Used by `BoxesRunTime.equals`
+   *  to detect boxed `Double`/`Float` operands so the IEEE-754
+   *  `NaN != NaN` semantics survive the unboxed-primitive identity. */
+  def is_float(value: Any): Boolean =
+    isInstanceOf(value, floatType)
+
   // --- Parsing ------------------------------------------------------
 
   def int_parse(text: String): Long =
