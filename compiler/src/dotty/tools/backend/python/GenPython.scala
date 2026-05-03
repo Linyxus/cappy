@@ -9,6 +9,7 @@ import Contexts.*
 import Decorators.*
 import Flags.*
 import Names.*
+import NameKinds.LazyVarHandleName
 import NameOps.*
 import Phases.*
 import Symbols.*
@@ -315,6 +316,43 @@ private class PyCodeGen()(using genCtx: Context):
     * contract stay consistent by construction. */
   private def isStaticMember(sym: Symbol): Boolean =
     sym.exists && (sym.is(JavaStatic) || sym.isScalaStatic)
+
+  /** True when `sym` should be emitted / accessed as a class-level
+    * (`@scala.annotation.static`) FIELD slot on its owner.
+    *
+    * Methods can use the broader `isStaticMember` predicate because
+    * `PyApplyStatic` carries a built-in module-routing fallback at
+    * emit time (a synthesized static-method forwarder on the
+    * companion class delegates to the underlying module instance —
+    * see `genStaticForwarders` and the `PyApplyStatic` emit cases).
+    * Fields have no analogous indirection: the static-field forwarder
+    * synthesized by `genStaticFieldForwarders` just sets a default
+    * `None` at class level, so emitting `<Companion>.<field>` for a
+    * JDK-typed `JavaStatic` access (e.g. `java.lang.Byte.TYPE`)
+    * would read the uninitialized class slot instead of the module's
+    * real storage. Restrict the field-side `PySelectStatic` routing
+    * to genuinely Scala-static fields (`@scala.annotation.static`,
+    * preserved across `MoveStatics`); JDK static fields fall through
+    * to the existing module-routing path, where pylib stores the
+    * value on the `_`-suffixed companion module. */
+  private def isStaticFieldOwner(sym: Symbol): Boolean =
+    sym.exists && sym.isScalaStatic
+
+  /** True when `lhs` is an assignment to a per-lazy-val
+    * `<container>$lzyHandle` VarHandle field.
+    *
+    * `LazyVals.scala` synthesizes one such field per lazy val and
+    * marks the symbol with both `@ScalaStaticAnnot` and the
+    * `LazyVarHandleName` name kind (see `LazyVals#transformValDef`
+    * around `defn.MethodHandlesClass.select(MethodHandles_lookup)`).
+    * `MoveStatics` then folds the field into the companion class's
+    * `<clinit>` body. The emitter handles handle creation via the
+    * runtime helper `_scpy_make_lazy_handle`, so the lifted
+    * assignment must be dropped at codegen — see the call site in
+    * `genStat`'s `Assign` arm. */
+  private def isLazyVarHandleAssign(lhs: Tree): Boolean = lhs match
+    case t: RefTree => t.symbol.exists && t.symbol.name.is(LazyVarHandleName)
+    case _          => false
 
   /** Side-channel for statements produced during expression generation
     * (Block-in-expression-position). Drained by `flattenToStmts` at the
@@ -764,8 +802,27 @@ private class PyCodeGen()(using genCtx: Context):
             // are reported even if the val is never referenced.
             encoding.externBindingOf(sym)
           else
+            // `@scala.annotation.static val/var` lifts the field from the
+            // module class onto the companion class via `MoveStatics`,
+            // intentionally without setting `JavaStatic` (so
+            // `.enclosingClass` keeps pointing at the companion).
+            // Detect via the field-side predicate `isStaticFieldOwner`
+            // (= `isScalaStatic`) so the emitter knows to lay the field
+            // out as a class-level attribute and skip the per-instance
+            // zero-init in `__init__`. The same predicate gates
+            // declaration and every read/write site, so the
+            // static-vs-instance decision stays consistent by
+            // construction. JDK static fields (`JavaStatic` only,
+            // routed through `genStaticFieldForwarders`) keep their
+            // existing module-routing read/write path and so do not
+            // need the static-namespace flag here.
+            val staticField = isStaticFieldOwner(sym)
+            val baseFlags   = PyMemberFlags.empty.withMutable(sym.is(Mutable))
+            val fieldFlags  =
+              if staticField then baseFlags.withNamespace(PyMemberNamespace.PublicStatic)
+              else baseFlags
             fields += PyFieldDef(
-              flags        = PyMemberFlags.empty.withMutable(sym.is(Mutable)),
+              flags        = fieldFlags,
               name         = encoding.encodeFieldName(sym),
               originalName = encoding.originalNameOf(sym),
               ftpe         = encoding.encodeType(sym.info),
@@ -1234,7 +1291,23 @@ private class PyCodeGen()(using genCtx: Context):
         genTry(t)
 
       case Assign(lhs, rhs) =>
-        PyAssign(genAssignableLhs(lhs), genExpr(rhs))(pos)
+        // Drop assignments to per-lazy-val `<container>$lzyHandle`
+        // VarHandle fields that `MoveStatics` lifts into `<clinit>`.
+        // The JVM body uses `MethodHandles.lookup().findVarHandle(...)`
+        // to bind the handle; the Python backend never wires that
+        // call (no real `MethodHandles` infrastructure) and instead
+        // initializes each lazy-handle field at class-definition time
+        // via the runtime helper `_scpy_make_lazy_handle(...)` (see
+        // `PyIREmitter.classLevelFieldInitExpr`'s `_lzyHandle`-suffix
+        // arm). Re-running the JVM-shaped assignment from `<clinit>`
+        // would either NameError on the unbundled
+        // `_scpy_mod_java_lang_invoke_MethodHandles_` proxy or
+        // overwrite the runtime-shim handle with a broken object.
+        // Skipping at codegen keeps the contract one-sided: the
+        // emitter is the single source of truth for the handle's
+        // initialization expression.
+        if isLazyVarHandleAssign(lhs) then PySkip()(pos)
+        else PyAssign(genAssignableLhs(lhs), genExpr(rhs))(pos)
 
       case Block(stats, expr) =>
         val statTrees = stats.map(genStat)
@@ -1280,7 +1353,17 @@ private class PyCodeGen()(using genCtx: Context):
         // singleton) member. `Param` alone is not disqualifying — a
         // constructor param-accessor can keep both `Param` and `ParamAccessor`
         // flags while still representing a field on the class.
-        if sym.owner.is(ModuleClass) && !sym.is(Method) && !sym.is(Module)
+        if isStaticFieldOwner(sym) && !sym.is(Method) && !sym.is(Module)
+            && !sym.is(Package)
+        then
+          // `@scala.annotation.static val/var`. The synthetic `<clinit>`
+          // body emits `Assign(ref(field), rhs)` where `field`'s symbol
+          // owner is the companion class. Route to a class-level
+          // attribute write so the field lands on `<Companion>.<name>`,
+          // matching the declaration site (which threaded the same
+          // `isScalaStatic` check into the field's namespace).
+          PySelectStatic(encoding.encodeFieldName(sym))(encoding.encodeType(tree.tpe), pos)
+        else if sym.owner.is(ModuleClass) && !sym.is(Method) && !sym.is(Module)
             && !sym.is(Package)
         then
           PySelect(
@@ -1298,10 +1381,23 @@ private class PyCodeGen()(using genCtx: Context):
         else
           PyVarRef(encoding.encodeLocalName(sym))(encoding.encodeType(tree.tpe), pos)
       case sel @ Select(qual, _) =>
-        PySelect(
-          genExpr(qual),
-          encoding.encodeFieldName(sel.symbol)
-        )(encoding.encodeType(tree.tpe), pos)
+        val sym = sel.symbol
+        if isStaticFieldOwner(sym) && !sym.is(Method) && !sym.is(Module)
+            && !sym.is(Package)
+        then
+          // `@scala.annotation.static val/var` write through a qualified
+          // selection (e.g. `Foo.field = rhs`). Route to a class-level
+          // attribute write on the lifted owner, matching the
+          // declaration / read sites that consult the same predicate.
+          // The qualifier is discarded because the field lives on the
+          // class slot, not on the qualifier instance — Scala's typer
+          // already proved the qualifier reduces to the static owner.
+          PySelectStatic(encoding.encodeFieldName(sym))(encoding.encodeType(tree.tpe), pos)
+        else
+          PySelect(
+            genExpr(qual),
+            encoding.encodeFieldName(sym)
+          )(encoding.encodeType(tree.tpe), pos)
       case _ =>
         report.error(s"Unsupported assignment LHS: ${tree.show}", tree.sourcePos)
         PyVarRef(PyLocalName("_scpy_error"))(PyAnyType, pos)
@@ -1370,6 +1466,14 @@ private class PyCodeGen()(using genCtx: Context):
           else if sym.is(Module) then
             if isStringCompanionModule(sym) then PyLoadModule(stringCompanionClassName)(pos)
             else PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
+          else if isStaticFieldOwner(sym) && !sym.is(Method) then
+            // `@scala.annotation.static val/var` read through a
+            // qualified selection (e.g. `Foo.field`). The lifted symbol
+            // owner is the companion class; route to a class-level
+            // attribute read, mirroring the declaration / write sites
+            // that consult the same predicate. See item 11 (commit
+            // `9aa829b83b`) for the method-side analogue.
+            PySelectStatic(encoding.encodeFieldName(sym))(encoding.encodeType(tree.tpe), pos)
           else
             PySelect(
               genExpr(qualifier),
@@ -1387,6 +1491,17 @@ private class PyCodeGen()(using genCtx: Context):
               else PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
             else if isSystemStreamStaticFieldRef(sym) then
               genStaticFieldGetter(sym, tree.tpe, pos)
+            else if isStaticFieldOwner(sym) && !sym.is(Method) && !sym.is(Module)
+                && !sym.is(Package)
+            then
+              // Bare-name read of a `@scala.annotation.static val/var`
+              // (e.g. `field` inside the synthesized `<clinit>` body or
+              // inside a sibling `@static def` that references another
+              // `@static` field on the same companion class). Route to
+              // the class-level attribute, matching the assign-LHS and
+              // qualified-Select branches that consult the same
+              // predicate.
+              PySelectStatic(encoding.encodeFieldName(sym))(encoding.encodeType(tree.tpe), pos)
             else if sym.owner.is(ModuleClass) && !sym.is(Method) && !sym.is(Module)
                 && !sym.is(Package)
             then

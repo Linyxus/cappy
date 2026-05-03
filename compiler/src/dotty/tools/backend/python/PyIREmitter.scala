@@ -243,6 +243,30 @@ object PyIREmitter:
           line(s"$modVar = _scpy_lazy_module($clsId)")
         emptyLine()
 
+      // Run the synthesized `<clinit>` for every non-module class that
+      // carries one. JVM semantics: `<clinit>` runs lazily on first
+      // static use. Python equivalent: run it once after the bundle is
+      // fully wired (all classes defined and registered, all module
+      // singletons bound). Running earlier — e.g. inside
+      // `emitClassRegistration` directly — would touch lazy-module
+      // bindings that haven't been emitted yet (the `MoveStatics`
+      // initializer for `LazyVarHandle`s reads
+      // `_scpy_mod_java_lang_invoke_MethodHandles_`, which only exists
+      // after the singleton block above). Doing it here mirrors the
+      // module-singleton pass: the bundle is in steady state, so any
+      // static-init reference resolves cleanly through the normal
+      // lazy-module path.
+      val classesNeedingStaticInit = orderedClasses.flatMap { cls =>
+        staticInitMethodOf(cls).map(m => (cls, m))
+      }
+      if classesNeedingStaticInit.nonEmpty then
+        line("# -- @static field initializers --")
+        emptyLine()
+        for (cls, clinit) <- classesNeedingStaticInit do
+          val clsId = classIdentifier(cls.name)
+          line(s"$clsId.${clinit.name.encoded}()")
+        emptyLine()
+
       mainEntry.foreach(entry => emitMainGuard(entry, orderedClasses))
 
     // -- Class definition ----------------------------------------
@@ -271,8 +295,19 @@ object PyIREmitter:
       // initialized field — Python would raise AttributeError. Java's
       // semantics for uninitialized static fields are "null", so a class-
       // level `None` default matches and breaks the cascade.
+      //
+      // For non-module classes, emit the same class-level default for
+      // any `@scala.annotation.static val/var` (`PublicStatic` / `PrivateStatic`
+      // namespace). The value is then overwritten by the synthesized
+      // `<clinit>` (`StaticConstructor` method) below the class body.
+      // Mirrors the JVM's "uninitialized static field reads as default"
+      // semantics for the window between class definition and `<clinit>`
+      // execution.
       if cls.kind == PyClassKind.ModuleClass && cls.fields.nonEmpty then
         for f <- cls.fields do
+          line(s"${f.name.encoded} = ${classLevelFieldInitExpr(f)}")
+      else if cls.kind != PyClassKind.ModuleClass then
+        for f <- cls.fields if f.flags.namespace.isStatic do
           line(s"${f.name.encoded} = ${classLevelFieldInitExpr(f)}")
 
       // Emit a no-arg `__init__(self)` (used by module lazy-init, and as
@@ -388,6 +423,23 @@ object PyIREmitter:
     private def emitClassRegistration(cls: PyClassDef): Unit =
       val clsId = classIdentifier(cls.name)
       line(s"_scpy_register_class($clsId, $clsId._scpy_full_name, $clsId._scpy_kind, $clsId._scpy_superclass, $clsId._scpy_interfaces, simple_name=$clsId._scpy_simple_name, jvm_name=$clsId._scpy_jvm_name)")
+
+    /** True iff `cls` carries a synthesized `<clinit>` method —
+     *  `MoveStatics` lifts every `@scala.annotation.static val/var`
+     *  initializer body into a `<clinit>` on the companion class.
+     *
+     *  Detect by method *name* (`isStaticInit`), not by namespace:
+     *  `MoveStatics` flags the synthetic ctor as `Synthetic | Method |
+     *  Private` + `@ScalaStaticAnnot`, which lands in PyIR as a
+     *  `PrivateStatic`-namespace method whose simple name is
+     *  `<clinit>`. The encoded Python name (`_scpy_clinit`) is the
+     *  same regardless of namespace, so call-site emission goes
+     *  through the encoded method name. Only fires on non-`ModuleClass`
+     *  classes — `ModuleClass`es initialise through their normal
+     *  constructor + lazy-module path. */
+    private def staticInitMethodOf(cls: PyClassDef): Option[PyMethodDef] =
+      if cls.kind == PyClassKind.ModuleClass then None
+      else cls.methods.find(m => m.flags.namespace.isStatic && m.name.simple.isStaticInit)
 
     /** User-visible Scala simple name for `cls`. Mirrors what the JVM
      *  Scala stdlib computes via `getClass.getName` post-processing:
@@ -531,10 +583,16 @@ object PyIREmitter:
     private def emitSyntheticInit(cls: PyClassDef): Unit =
       line("def __init__(self) -> None:")
       indent()
-      if cls.fields.isEmpty then
+      // Skip `@scala.annotation.static val/var` fields: they live as
+      // class-level attributes (emitted by `emitClassDef` / written by
+      // the synthesized `<clinit>`), not as per-instance attributes, so
+      // a `self.<name> = default` assignment here would shadow the
+      // static slot on every instance and read back stale defaults.
+      val instanceFields = cls.fields.filterNot(_.flags.namespace.isStatic)
+      if instanceFields.isEmpty then
         line("pass")
       else
-        for f <- cls.fields do
+        for f <- instanceFields do
           line(s"self.${f.name.encoded} = ${fieldInitExpr(f)}")
       dedent()
 
@@ -563,8 +621,12 @@ object PyIREmitter:
       line("def __init__(self, *args) -> None:")
       indent()
       // Field zero-init: every instance attribute starts at the JVM
-      // default for its declared type.
-      for f <- cls.fields do
+      // default for its declared type. `@scala.annotation.static val/var`
+      // fields (`PublicStatic` / `PrivateStatic` namespace) are skipped:
+      // they are class-level attributes and would be shadowed by a
+      // per-instance `self.<name> = default` write here.
+      val instanceFields = cls.fields.filterNot(_.flags.namespace.isStatic)
+      for f <- instanceFields do
         line(s"self.${f.name.encoded} = ${fieldInitExpr(f)}")
       // Group ctors by arity. For each non-empty arity, emit a helper
       // call only when there is exactly one ctor at that arity (so
@@ -591,7 +653,7 @@ object PyIREmitter:
       // codegen path through `_scpy_new` is the supported one):
       // silently leave the instance zero-initted. This matches what
       // happens when the linker has DCE'd the relevant helper.
-      if cls.fields.isEmpty && nonEmptyArities.isEmpty then
+      if instanceFields.isEmpty && nonEmptyArities.isEmpty then
         line("pass")
       dedent()
 
@@ -1302,7 +1364,29 @@ object PyIREmitter:
       case PySelect(qual, field) =>
         s"${parenthesize(qual)}.${field.encoded}"
       case PySelectStatic(field) =>
-        s"${classIdentifier(field.owner)}.${field.encoded}"
+        // Mirror `PyApplyStatic`'s rerouting policy. Three cases:
+        //   1. The owner has no `_scpy_mod_*_` binding (no
+        //      `_`-suffixed companion module class) — emit the field
+        //      directly on the owner's class identifier. Common for
+        //      `@scala.annotation.static val/var` on a user-defined
+        //      companion class without a sibling module, and for
+        //      JDK Java classes whose Scala-side binding is purely
+        //      class-level.
+        //   2. The owner is a non-`ModuleClass` and locally carries a
+        //      static `PyFieldDef` with the same name — emit on the
+        //      class itself (the `MoveStatics`-lifted shape).
+        //   3. Otherwise — the owner has a sibling `_`-suffixed
+        //      module that carries the field (typical JDK-shaped
+        //      static fields like `java.lang.Byte.TYPE`, where pylib
+        //      defines the field as a regular `val` on `object
+        //      Byte`). Route through the module instance, mirroring
+        //      the pre-fix `PySelect(genExpr(qualifier), ...)` path.
+        if hasNoModuleVarBinding(field.owner) then
+          s"${classIdentifier(field.owner)}.${field.encoded}"
+        else if hasOwnStaticField(field.owner, field) then
+          s"${classIdentifier(field.owner)}.${field.encoded}"
+        else
+          s"${moduleValueExpr(routeToModuleVar(field.owner))}.${field.encoded}"
 
       // Calls
       case PyApply(_, receiver, className, method, args) =>
@@ -1870,6 +1954,26 @@ object PyIREmitter:
             (m.flags.namespace == PyMemberNamespace.PublicStatic
               || m.flags.namespace == PyMemberNamespace.PrivateStatic)
             && m.name == method
+          }
+        case _ => false
+
+    /** Mirror of `hasOwnStaticMethod` for static fields: true iff `cn`
+     *  is a non-`ModuleClass` in this bundle that locally defines a
+     *  static field named `field`.
+     *
+     *  Used by `PySelectStatic` emission to detect the
+     *  `@scala.annotation.static val/var` shape, where `MoveStatics`
+     *  has lifted the field onto the companion class itself rather
+     *  than its `_`-suffixed module class. Without this check, the
+     *  emitter would fall back to the module-routing path used for
+     *  JDK-typed static fields (e.g. `java.lang.Byte.TYPE`, where
+     *  pylib's `object Byte` carries the field on the module), which
+     *  would read from the wrong slot. */
+    private def hasOwnStaticField(cn: PyClassName, field: PyFieldName): Boolean =
+      classByName.get(cn) match
+        case Some(c) if c.kind != PyClassKind.ModuleClass =>
+          c.fields.exists { f =>
+            f.flags.namespace.isStatic && f.name == field
           }
         case _ => false
 
