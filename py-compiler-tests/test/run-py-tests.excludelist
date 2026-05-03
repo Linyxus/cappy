@@ -275,3 +275,49 @@ mixin-bridge-methods.scala                  # jvm-reflection-not-supported (`cla
 no-useless-forwarders.scala                 # jvm-reflection-not-supported (`getClass.getDeclaredMethods` + `Method.getName`)
 t8087.scala                                 # jvm-reflection-not-supported (`classOf[Bar].getDeclaredFields` + `Modifier.isVolatile(f.getModifiers)`)
 t8177f.scala                                # jvm-reflection-not-supported (`classOf[B].getDeclaredMethods` + `Method.toGenericString`)
+
+# --- Wave 6 item 04 (notes/wave6-worklist/04-java-source-dir-tests.md) ----
+# Java-source dir-tests: each fixture below is a multi-source dir-test
+# whose Scala stage references a symbol declared in a sibling `.java`
+# file. The Python backend has no `.java` -> `.class`/`.pyir` step, so
+# the second-stage Scala compile fails to link the Java symbol with
+# `Unresolved class/superclass/interface/module/field`. Same shape as
+# `enum-java` / `enum-java-scala` already excluded under `missing-driver`;
+# this block uses the more specific `missing-driver:java-source` tag.
+# Re-derived against `testlogs/tests-2026-05-03/tests-2026-05-03-T14-31-38.log`.
+annotation-info-not-erased                  # missing-driver:java-source (Test.scala -> classOf[C] / @Resource; Resource defined in Resource.java)
+arrays-from-java                            # missing-driver:java-source (Test_2.scala -> C_2.test(); C_2 defined in C_2.java)
+beans                                       # missing-driver:java-source (Test_4.scala -> JavaTest(); JavaTest defined in Test_3.java)
+i12086                                      # missing-driver:java-source (Test_3.scala -> Test_1/Test_2 + new C; C/D defined in Test_1.java/Test_2.java)
+i15199                                      # missing-driver:java-source (ScalaChild extends Child_1; Child_1 defined in Child_1.java)
+i16474                                      # missing-driver:java-source (test.scala -> repro.Case1/Case2; defined in Case1.java/Case2.java)
+i17255                                      # missing-driver:java-source (Module.scala -> p.J.f(); J defined in J.java)
+i22628                                      # missing-driver:java-source (MyServerCall extends mylib.PublicServerCallBase; defined in PublicServerCallBase.java)
+i24507                                      # missing-driver:java-source (test.scala class T extends a.A; A defined in A.java)
+i2760                                       # missing-driver:java-source (Test.scala -> fork: Fork; Fork defined in Fork.java)
+i2780                                       # missing-driver:java-source (Foo extends bla.Base; Base defined in Base.java)
+i7990                                       # missing-driver:java-source (Test_2.scala -> Exception_1("error"); defined in Exception_1.java)
+i8001                                       # missing-driver:java-source (Test_3.scala -> B_2.test(); B_2 defined in B_2.java)
+i8101                                       # missing-driver:java-source (Bar extends JavaFoo with Foo; JavaFoo defined in JavaFoo.java)
+i8599                                       # missing-driver:java-source (Test_3.scala -> new JavaClass_2; defined in JavaClass_2.java)
+i8602                                       # missing-driver:java-source (Test_3.scala -> new ChildClass_2(); defined in ChildClass_2.java)
+i8661                                       # missing-driver:java-source (Test.scala -> identity(new C).hi(); pk.B/pk.C defined in B.java/C.java)
+java-ann-super-class-separate               # missing-driver:java-source (Test_2.scala -> new Ann_1; Ann_1 annotation defined in Ann_1.java)
+java-annot-params                           # missing-driver:java-source (run_1.scala / Test_1.scala -> annots.Use_0/Use_1/run_1; defined in Annots_0.java/Use_0.java/Use_1.java)
+java-intersection                           # missing-driver:java-source (Sub extends A_1; A_1 defined in A_1.java)
+java-longnames                              # missing-driver:java-source (Test_2.scala -> p.Long_1.<long inner class>; defined in Long_1.java)
+java-varargs                                # missing-driver:java-source (Test_2.scala -> A_1.foo(...); A_1 defined in A_1.java)
+repeatable                                  # missing-driver:java-source (Test_1.scala -> classOf[U].getAnnotation(classOf[FirstLevel_0]); annotations defined in FirstLevel_0.java/Plain_0.java/SecondLevel_0.java)
+t3452b                                      # missing-driver:java-source (S_3.scala -> J_2.j(); J_2 defined in J_2.java)
+t3452b-bcode                                # missing-driver:java-source (S_3.scala -> J_2.j(); J_2 defined in J_2.java)
+t3452e                                      # missing-driver:java-source (Test.scala -> new B; B defined in B.java)
+t4119                                       # missing-driver:java-source (S extends foo.bar.J; J defined in J.java)
+t4238                                       # missing-driver:java-source (s_2.scala -> new J_1; J_1 defined in J_1.java)
+t4317                                       # missing-driver:java-source (S_3.scala -> new J_2(); J_2 defined in J_2.java)
+t6138                                       # missing-driver:java-source (ScalaClass.scala -> JavaClass.bar; JavaClass defined in JavaClass.java)
+t6138-2                                     # missing-driver:java-source (ScalaClass.scala -> JavaClass.bar; JavaClass defined in JavaClass.java)
+t6168                                       # missing-driver:java-source (main.scala -> JavaTest.main / SomeClass / SomeClass2 / Context; defined in *.java)
+t6168b                                      # missing-driver:java-source (main.scala -> JavaTest.main / SomeClass / Context; defined in *.java)
+t8601e                                      # missing-driver:java-source (Test.scala -> StaticInit.fld; StaticInit defined in StaticInit.java)
+t9915                                       # missing-driver:java-source (Test_2.scala -> new C_1 + c.nulled/c.supped; C_1 defined in C_1.java)
+varargs-extend-java-2                       # missing-driver:java-source (Test.scala -> Caller() + class Concrete extends AbstractBase; defined in Caller.java/AbstractBase.java)
