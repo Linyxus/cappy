@@ -1,20 +1,14 @@
 # Excludelist for `tests/run/` fixtures that the Python backend cannot run.
 #
-# Intentionally empty: failures from a fresh run should be triaged as backend
-# bugs first, not silently exempted. Add an entry only after a fixture has
-# been confirmed unsupportable (e.g. requires reflection, JVM-only formatting
-# that won't byte-match, threading semantics not modeled in the runtime).
-#
 # Format: one entry per line, matching the file or directory name as listed
 # under `tests/run/`. `#` starts a comment. Always include a `# reason` tag
-# so future readers know why the entry was added.
+# so future developers know why the entry was added.
 #
 # Example:
 #   reflect-foo.scala  # uses scala.reflect; not supported by the Python backend
 
-# --- Perf B': hot loops too slow under CPython interpretation -----------
-# Triaged 2026-05-02 in `notes/issue-stockrun-timeout-cluster.md`. Each
-# of these completes correctly on the JVM and produces correct output
+# --- performance: hot loops too slow under CPython interpretation -----------
+# Each of these completes correctly on the JVM and produces correct output
 # under the Python backend, but its hot loop exceeds even a 90s harness
 # budget. Excluded with reason rather than masked as a flaky timeout.
 t8893.scala         # 2 × tick(10000000): 20M tail-recursive iterations
@@ -23,26 +17,17 @@ collections.scala   # 10 collection types × 5K-iter ++/contains test loops
 kmpSliceSearch.scala  # 100×10×5 nested KMP search; dominated by _scpy_is_assignable walks
 
 # --- jvm-reflection-not-supported -----------------------------------------
-# Wave 5 priority #1 (notes/wave5-worklist/01-reflection-unsupported-and-blacklist.md).
 # The -scalapy backend does not implement JVM reflection
 # (`getDeclared*`, `getEnumConstants`, `getEnclosing*`,
 # `getGenericInterfaces`, `getConstructors`, `loadClass`, `newInstance`,
 # annotation reflection). The runtime now raises
 # `UnsupportedOperationException` for these methods rather than returning
 # empty stubs. Each fixture below uses one of those calls incidentally; they
-# are excluded with the `jvm-reflection-not-supported` reason tag. Cluster
-# enumerated from `/tmp/postperfc-fingerprints/clusters-detail.md` §
-# "run.assert.reflection_or_charseq (53)".
+# are excluded with the `jvm-reflection-not-supported` reason tag.
 MeterCaseClass.scala                        # jvm-reflection-not-supported
 defaults-serizaliable-with-forwarders.scala # jvm-reflection-not-supported
 equality.scala                              # char-vs-numeric-eq (Wave 5 item 03 fixed the hash divergence; the residual failure is `5.toChar == 5.0d`/`5: BigInt`/`5: BigDecimal` returning false because `_scpy_Char.__eq__` rejects non-Char comparands — a structural Char-equality gap unrelated to Murmur3/numeric-hash. Tracked under #5 genuine-semantic.)
 forwarder.scala                             # jvm-reflection-not-supported
-# `hashCodeDistribution.scala`, `hashhash.scala`, `t13033.scala`, `caseClassHash.scala` re-included
-# in Wave 5 item 03 (notes/wave5-worklist/03-assert-murmur3-hash.md) once
-# `library-py/src/scala/runtime/Statics.scala` was rewritten to be JVM-bit-exact
-# (Murmur3 mix/finalize) and `_scpy_any_hash_code` runtime helper was added so
-# `Object.hashCode()` on `Any`/primitive receivers no longer dispatches to Python's
-# salted `__hash__`.
 i10527.scala                                # jvm-reflection-not-supported
 i11050.scala                                # jvm-reflection-not-supported
 i1284.scala                                 # jvm-reflection-not-supported
@@ -68,7 +53,6 @@ infiniteloop.scala                          # jvm-reflection-not-supported
 innerClass.scala                            # jvm-reflection-not-supported
 instanceof-serializable.scala               # jvm-reflection-not-supported
 is-valid-num.scala                          # jvm-reflection-not-supported
-# Wave 6 item 03 (notes/wave6-worklist/03-null-unit-nothing-valdefs.md):
 # 9 fixtures testing val/var/lazy-val backing-field elision for `Null`,
 # `Unit`, and `Nothing` types. Each one's only assertion path goes
 # through `Class.getDeclaredFields` / `Class.getMethods` (post-erasure
@@ -108,14 +92,12 @@ variable-pattern-access.scala               # jvm-reflection-not-supported
 weak-conformance.scala                      # jvm-reflection-not-supported
 
 # --- jvm-only surface (Wave 5 item 07) ----------------------------------
-# Wave 5 priority #4 (notes/wave5-worklist/07-excludelist-jvm-only.md).
 # Each fixture below pulls in JVM-only surface area that the Python backend
-# does not (and will not, in Wave 5) provide via pylib. Failure shape is
+# does not (and will not) provide via pylib. Failure shape is
 # `Unresolved class '...'` at link time (compile.unresolved.{sun,swing_awt,
 # java_invoke,...}), except `t12348.scala`, whose `MethodHandles` use slips
 # past the linker as a module reference and surfaces as a runtime
-# `NameError`. Fixtures enumerated from
-# `/tmp/pyrun-analysis-postperfc/bucket-*.log`.
+# `NameError`.
 lazy-impl.scala                # jvm-only-sun (sun.misc.Unsafe field accessor)
 t3613.scala                    # jvm-only-ui (extends javax.swing.AbstractListModel)
 java-package-private-bridge    # jvm-only-ui (extends javax.swing.JTable)
@@ -273,15 +255,9 @@ no-useless-forwarders.scala                 # jvm-reflection-not-supported (`get
 t8087.scala                                 # jvm-reflection-not-supported (`classOf[Bar].getDeclaredFields` + `Modifier.isVolatile(f.getModifiers)`)
 t8177f.scala                                # jvm-reflection-not-supported (`classOf[B].getDeclaredMethods` + `Method.toGenericString`)
 
-# --- Wave 6 item 04 (notes/wave6-worklist/04-java-source-dir-tests.md) ----
 # Java-source dir-tests: each fixture below is a multi-source dir-test
 # whose Scala stage references a symbol declared in a sibling `.java`
-# file. The Python backend has no `.java` -> `.class`/`.pyir` step, so
-# the second-stage Scala compile fails to link the Java symbol with
-# `Unresolved class/superclass/interface/module/field`. Same shape as
-# `enum-java` / `enum-java-scala` already excluded under `missing-driver`;
-# this block uses the more specific `missing-driver:java-source` tag.
-# Re-derived against `testlogs/tests-2026-05-03/tests-2026-05-03-T14-31-38.log`.
+# file.
 annotation-info-not-erased                  # missing-driver:java-source (Test.scala -> classOf[C] / @Resource; Resource defined in Resource.java)
 arrays-from-java                            # missing-driver:java-source (Test_2.scala -> C_2.test(); C_2 defined in C_2.java)
 beans                                       # missing-driver:java-source (Test_4.scala -> JavaTest(); JavaTest defined in Test_3.java)
@@ -319,15 +295,10 @@ t8601e                                      # missing-driver:java-source (Test.s
 t9915                                       # missing-driver:java-source (Test_2.scala -> new C_1 + c.nulled/c.supped; C_1 defined in C_1.java)
 varargs-extend-java-2                       # missing-driver:java-source (Test.scala -> Caller() + class Concrete extends AbstractBase; defined in Caller.java/AbstractBase.java)
 
-# --- Wave 6 item 09 (notes/wave6-worklist/09-jvm-concurrent-surface.md) ---
 # Java serialization (`java.io.ObjectOutputStream` / `ObjectInputStream` /
 # `writeObject` / `readObject` / `SerializedLambda`) is wire-format-locked
 # to the JVM. CPython's `pickle` is not byte-compatible, and implementing
-# JVM-spec serialization is multi-week work that the Python backend
-# explicitly defers. Per item 09 § "Decision space — per surface", these
-# fixtures are tagged (Y) `jvm-concurrent-not-supported:serialization`.
-# The named cluster was re-derived against
-# `testlogs/tests-2026-05-03/tests-2026-05-03-T14-31-38.log`.
+# JVM-spec serialization is a nontrivial endeavour.
 enums-serialization-compat.scala            # jvm-concurrent-not-supported:serialization (ObjectOutputStream/InputStream + writeObject/readObject on enum cases)
 inlineAddDeserializeLambda.scala            # jvm-concurrent-not-supported:serialization (ObjectOutputStream/InputStream of inline-added lambda)
 lambda-serialization-gc.scala               # jvm-concurrent-not-supported:serialization (ObjectOutputStream/InputStream of lambda + URLClassLoader-based GC test; depends on JVM ClassLoader semantics)
@@ -335,11 +306,6 @@ serialize-stream.scala                      # jvm-concurrent-not-supported:seria
 t10232.scala                                # jvm-concurrent-not-supported:serialization (ObjectOutputStream/InputStream of lambda list)
 t5262.scala                                 # jvm-concurrent-not-supported:serialization (ObjectOutputStream/InputStream round-trip)
 
-# --- Wave 6 item 10 (notes/wave6-worklist/10-misc-longtail.md) ------------
-# Per-fixture longtail triage of the 9 fixtures still failing after items
-# 01a, 01b, 02–09 merged. Each entry below uses an existing reason tag
-# (no new tags introduced in this item). Re-derived from the post-Wave-6
-# sweep `testlogs/tests-2026-05-04/post-wave6-sweep.log`.
 i10846                                      # jvm-reflection-not-supported (Class.getClassLoader.loadClass(name + "$") + Class.getMethod / Method.getGenericReturnType on companion of value class) — dir-test entry: tests/run/i10846/ is a directory
 i22991                                      # jvm-reflection-not-supported (classOf[Bar].getMethod + Method.getParameterAnnotations; Foo.java is a sibling annotation source but the failure is the reflection call, raised before any java-source dependency would matter)
 i8531                                       # jvm-reflection-not-supported (classOf[Foo].getDeclaredConstructors + Constructor.getParameterAnnotations; Named.java is a sibling annotation source but the failure is the reflection call)
@@ -354,20 +320,13 @@ i18884                                      # separate-compilation-resolution (A
 # Missing-driver: dir-test produces multiple `.py` bundles, one per source
 # file. `PyRun.runPyCode` picks `pyFiles.head`, which is filesystem-listing
 # order. The bundle that actually contains the `@main`/`object Test` entry
-# is not always picked — e.g. `power_1.py` for `transparentPower`,
+# is not always picked, e.g. `power_1.py` for `transparentPower`,
 # `PullIteratees.py` for `t1987b`. Same shape as `t10889`/`t12753`/`t7374`/
 # `enum-java` already excluded. A structural fix would teach `PyRun` to
-# prefer `Test*.py` bundles, but that touches the harness-wide bundle
-# selection rule and is bigger than item 10's scope.
+# prefer `Test*.py` bundles. Left as TODO.
 decorators                                  # missing-driver (dir-test, `Test.py` is the bundle with main but `pyFiles.head` picks a non-main bundle; `Test.py` itself also imports `regex` via `@extern` which is not in the uv project)
 t1987b                                      # missing-driver (dir-test, only `a.py` has main but `pyFiles.head` picks `PullIteratees.py`/another bundle without main, producing empty output)
 transparentPower                            # missing-driver (dir-test with stage suffixes `_1`/`_2`; `Test_2.py` is the bundle with main but harness can pick `power_1.py` first depending on FS ordering)
 # Missing-driver:java-source: dir-test references symbols declared in a
-# sibling `.java` file. Same shape as item 04's block above. `t12290`'s
-# `Test.scala` references `TextBlocks.{aText,html1,query,...}` declared in
-# `TextBlocks.java`, plus separately exposes a pylib gap on
-# `java.nio.charset.StandardCharsets.{UTF_8,ISO_8859_1}` (fixed in this
-# item by switching `def` to `val` in the pylib `StandardCharsets`
-# object — JDK shape — but the test still cannot compile without
-# `TextBlocks.java`).
+# sibling `.java` file.
 t12290                                      # missing-driver:java-source (Test.scala -> TextBlocks.aText/html1/...; defined in TextBlocks.java)
