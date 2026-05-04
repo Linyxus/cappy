@@ -340,7 +340,7 @@ t5262.scala                                 # jvm-concurrent-not-supported:seria
 # 01a, 01b, 02–09 merged. Each entry below uses an existing reason tag
 # (no new tags introduced in this item). Re-derived from the post-Wave-6
 # sweep `testlogs/tests-2026-05-04/post-wave6-sweep.log`.
-i10846.scala                                # jvm-reflection-not-supported (Class.getClassLoader.loadClass(name + "$") + Class.getMethod / Method.getGenericReturnType on companion of value class)
+i10846                                      # jvm-reflection-not-supported (Class.getClassLoader.loadClass(name + "$") + Class.getMethod / Method.getGenericReturnType on companion of value class) — dir-test entry: tests/run/i10846/ is a directory
 i22991                                      # jvm-reflection-not-supported (classOf[Bar].getMethod + Method.getParameterAnnotations; Foo.java is a sibling annotation source but the failure is the reflection call, raised before any java-source dependency would matter)
 i8531                                       # jvm-reflection-not-supported (classOf[Foo].getDeclaredConstructors + Constructor.getParameterAnnotations; Named.java is a sibling annotation source but the failure is the reflection call)
 # Separate-compilation: stage 1 uses an older Scala compiler (Scala 2.13.x or
