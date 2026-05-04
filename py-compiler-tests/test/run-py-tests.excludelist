@@ -334,3 +334,40 @@ lambda-serialization-gc.scala               # jvm-concurrent-not-supported:seria
 serialize-stream.scala                      # jvm-concurrent-not-supported:serialization (ObjectOutputStream/InputStream over Stream/LazyList)
 t10232.scala                                # jvm-concurrent-not-supported:serialization (ObjectOutputStream/InputStream of lambda list)
 t5262.scala                                 # jvm-concurrent-not-supported:serialization (ObjectOutputStream/InputStream round-trip)
+
+# --- Wave 6 item 10 (notes/wave6-worklist/10-misc-longtail.md) ------------
+# Per-fixture longtail triage of the 9 fixtures still failing after items
+# 01a, 01b, 02–09 merged. Each entry below uses an existing reason tag
+# (no new tags introduced in this item). Re-derived from the post-Wave-6
+# sweep `testlogs/tests-2026-05-04/post-wave6-sweep.log`.
+i10846.scala                                # jvm-reflection-not-supported (Class.getClassLoader.loadClass(name + "$") + Class.getMethod / Method.getGenericReturnType on companion of value class)
+i22991                                      # jvm-reflection-not-supported (classOf[Bar].getMethod + Method.getParameterAnnotations; Foo.java is a sibling annotation source but the failure is the reflection call, raised before any java-source dependency would matter)
+i8531                                       # jvm-reflection-not-supported (classOf[Foo].getDeclaredConstructors + Constructor.getParameterAnnotations; Named.java is a sibling annotation source but the failure is the reflection call)
+# Separate-compilation: stage 1 uses an older Scala compiler (Scala 2.13.x or
+# Scala 3.0.x) that has no Python backend, so its compile produces no `.pyir`
+# in the staging output dir. Stage 2 (current scala-py compiler) cannot
+# resolve symbols declared in stage 1's `.scala` source — same shape as
+# `i4947b` and `toplevel-implicits` already excluded. The `c2.13.12` /
+# `c3.0.2` filename suffix is the Vulpix dir-test stage compiler version.
+backwardsCompat-implicitParens              # separate-compilation-resolution (A_1_c3.0.2.scala compiles with Scala 3.0.2 which has no Python backend; Test_2.scala then fails to resolve Bar/Bat/Bax/Baz)
+i18884                                      # separate-compilation-resolution (A_1_c2.13.12.scala compiles with Scala 2.13.12 which has no Python backend; B_2.scala then fails to resolve lib.Foo1/Foo2/Foo3/Foo4)
+# Missing-driver: dir-test produces multiple `.py` bundles, one per source
+# file. `PyRun.runPyCode` picks `pyFiles.head`, which is filesystem-listing
+# order. The bundle that actually contains the `@main`/`object Test` entry
+# is not always picked — e.g. `power_1.py` for `transparentPower`,
+# `PullIteratees.py` for `t1987b`. Same shape as `t10889`/`t12753`/`t7374`/
+# `enum-java` already excluded. A structural fix would teach `PyRun` to
+# prefer `Test*.py` bundles, but that touches the harness-wide bundle
+# selection rule and is bigger than item 10's scope.
+decorators                                  # missing-driver (dir-test, `Test.py` is the bundle with main but `pyFiles.head` picks a non-main bundle; `Test.py` itself also imports `regex` via `@extern` which is not in the uv project)
+t1987b                                      # missing-driver (dir-test, only `a.py` has main but `pyFiles.head` picks `PullIteratees.py`/another bundle without main, producing empty output)
+transparentPower                            # missing-driver (dir-test with stage suffixes `_1`/`_2`; `Test_2.py` is the bundle with main but harness can pick `power_1.py` first depending on FS ordering)
+# Missing-driver:java-source: dir-test references symbols declared in a
+# sibling `.java` file. Same shape as item 04's block above. `t12290`'s
+# `Test.scala` references `TextBlocks.{aText,html1,query,...}` declared in
+# `TextBlocks.java`, plus separately exposes a pylib gap on
+# `java.nio.charset.StandardCharsets.{UTF_8,ISO_8859_1}` (fixed in this
+# item by switching `def` to `val` in the pylib `StandardCharsets`
+# object — JDK shape — but the test still cannot compile without
+# `TextBlocks.java`).
+t12290                                      # missing-driver:java-source (Test.scala -> TextBlocks.aText/html1/...; defined in TextBlocks.java)
