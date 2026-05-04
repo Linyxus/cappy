@@ -1,7 +1,7 @@
 package java.io
 
 import java.nio.{ByteBuffer, CharBuffer}
-import java.nio.charset.Charset
+import java.nio.charset.{Charset, CharsetDecoder}
 import java.util.Arrays
 
 class InputStreamReader(private var in: InputStream | Null, charsetName: String | Null)
@@ -20,6 +20,12 @@ class InputStreamReader(private var in: InputStream | Null, charsetName: String 
 
   def this(in: InputStream) =
     this(in, null)
+
+  def this(in: InputStream, cs: Charset) =
+    this(in, cs.name())
+
+  def this(in: InputStream, dec: CharsetDecoder) =
+    this(in, dec.charset().name())
 
   def getEncoding(): String | Null =
     if closed then null else encoding

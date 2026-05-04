@@ -112,11 +112,24 @@ class CapturedVars extends MiniPhase with IdentityDenotTransformer:
    *  afterwards that the same rule must apply to.
    */
   override def transformAssign(tree: Assign)(using Context): Tree =
-    val unwrapped = tree.lhs match
-      case TypeApply(Select(qual@Select(_, nme.elem), nme.asInstanceOf_), _) => qual
-      case other => other
+    // Strip cast / 0-arg-Apply layers that Erasure may have wrapped
+    // around the underlying Select. `becomes` only knows how to handle
+    // an `Ident` or `Select` lhs. Apply recursively because casts can
+    // nest over getter calls (`(qual.elem.asInstanceOf[T]).asInstanceOf[U]`)
+    // or over post-Erasure Apply forms (`Apply(Select(_, elem), Nil)`).
+    def unwrap(t: Tree): Tree = t match
+      case TypeApply(Select(inner, nme.asInstanceOf_), _) => unwrap(inner)
+      case Apply(sel: Select, Nil)                       => unwrap(sel)
+      case other                                          => other
+    val unwrapped = unwrap(tree.lhs)
     val lsym = unwrapped.symbol
-    if lsym.exists && lsym.is(Method) then
+    // Guard on `setter.exists` rather than just `is(Method)`: arbitrary
+    // method-LHS shapes (e.g. cast-over-method, post-Erasure `Apply`
+    // around a non-getter call) shouldn't be rewritten — only `var x`
+    // getters whose paired setter actually exists. `becomes` would
+    // otherwise assert when handed a non-setter, non-getter method
+    // like `asInstanceOf`.
+    if lsym.exists && lsym.is(Method) && lsym.setter.exists then
       unwrapped.becomes(tree.rhs).withSpan(tree.span)
     else if unwrapped eq tree.lhs then tree
     else cpy.Assign(tree)(unwrapped, tree.rhs)
