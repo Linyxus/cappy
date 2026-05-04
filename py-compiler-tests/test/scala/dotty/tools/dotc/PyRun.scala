@@ -13,6 +13,24 @@ object PyRun:
 
   private final case class ProcessResult(exitCode: Int, output: String, timedOut: Boolean = false)
 
+  private lazy val resolvedProject: Either[String, File] =
+    val startDirOrFailure: Either[String, File] =
+      try Right(new File(System.getProperty("user.dir")).getCanonicalFile.nn)
+      catch case e: IOException =>
+        Left(s"Could not resolve user.dir to a canonical File: ${e.getMessage}")
+    startDirOrFailure.flatMap { startDir =>
+      findProjectRoot(startDir) match
+        case None =>
+          Left(
+            s"Unable to locate the ScalaPy uv project root from ${startDir.getAbsolutePath}\n" +
+            "Expected to find both `pyproject.toml` and `uv.lock` in an ancestor directory."
+          )
+        case Some(root) =>
+          ensureSyncedUvProject(root) match
+            case None          => Right(root)
+            case Some(failure) => Left(failure)
+    }
+
   def runPyCode(classPath: String, maxDuration: Duration = Duration.Inf): Status =
     // The classPath is a colon-separated list; the first entry is the output directory
     val outDir = new File(classPath.split(File.pathSeparator).nn.head.nn)
@@ -27,18 +45,10 @@ object PyRun:
     // Pick the bundled .py file (there should be exactly one after linking)
     val pyFile = pyFiles.head
 
-    val projectRoot =
-      findProjectRoot(outDir).getOrElse {
-        return Status.Failure(
-          s"Unable to locate the ScalaPy uv project root from output directory: ${outDir.getAbsolutePath}\n" +
-          "Expected to find both `pyproject.toml` and `uv.lock` in an ancestor directory."
-        )
-      }
-
-    ensureSyncedUvProject(projectRoot) match
-      case Some(failure) =>
+    resolvedProject match
+      case Left(failure) =>
         Status.Failure(failure)
-      case None =>
+      case Right(projectRoot) =>
         runProcess(
           List(
             "uv", "run",
