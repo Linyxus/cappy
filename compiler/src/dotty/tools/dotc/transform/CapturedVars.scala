@@ -102,13 +102,24 @@ class CapturedVars extends MiniPhase with IdentityDenotTransformer:
    *
    *  the lhs can be followed by a cast as an artifact of nested translation.
    *  In that case, drop the cast.
+   *
+   *  Then, when the LHS resolves to a method symbol — which happens when
+   *  the boxing Ref class is Scala-defined (`final class IntRef(var elem:
+   *  Int)`), so `elem` binds to the auto-generated getter rather than a
+   *  Java-style public field — rewrite to a setter call. This mirrors
+   *  `Getters.transformAssign`; that earlier phase only sees Assigns
+   *  present before Erasure, while CapturedVars synthesises new Assigns
+   *  afterwards that the same rule must apply to.
    */
   override def transformAssign(tree: Assign)(using Context): Tree =
-    tree.lhs match
-      case TypeApply(Select(qual@Select(_, nme.elem), nme.asInstanceOf_), _) =>
-        cpy.Assign(tree)(qual, tree.rhs)
-      case _ =>
-        tree
+    val unwrapped = tree.lhs match
+      case TypeApply(Select(qual@Select(_, nme.elem), nme.asInstanceOf_), _) => qual
+      case other => other
+    val lsym = unwrapped.symbol
+    if lsym.exists && lsym.is(Method) then
+      unwrapped.becomes(tree.rhs).withSpan(tree.span)
+    else if unwrapped eq tree.lhs then tree
+    else cpy.Assign(tree)(unwrapped, tree.rhs)
 
 object CapturedVars:
   val name: String = "capturedVars"

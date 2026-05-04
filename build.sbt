@@ -71,3 +71,20 @@ addCommandAlias(
   " ; scala3-compiler-bootstrapped/testOnly dotty.tools.backend.python.PyReachabilityTest dotty.tools.backend.python.PyLinkerTest dotty.tools.backend.python.ir.pyir.serialization.PyIRSerializationTests" +
   " ; pyCompilerTests/test"
 )
+
+// Same as `testPyCompilation` but skips the multi-hour stock-run sweep
+// (`PyStockRunTests`). Useful as a fast iteration loop when the change
+// can't possibly affect stock-run-only behaviour.
+addCommandAlias(
+  "testPyCompilationFast",
+  "; scala-pylib-py/Compile/packageBin" +
+  " ; scala-library-py/Compile/packageBin" +
+  " ; pyCompilerTests/Test/compile" +
+  " ; scala3-compiler-bootstrapped/testOnly dotty.tools.backend.python.PyReachabilityTest dotty.tools.backend.python.PyLinkerTest dotty.tools.backend.python.ir.pyir.serialization.PyIRSerializationTests" +
+  " ; pyCompilerTests/testOnly" +
+    " dotty.tools.dotc.ScalaPyCompilationTests" +
+    " dotty.tools.dotc.PylibTest" +
+    " dotty.tools.dotc.PyRunTest" +
+    " dotty.tools.dotc.ScalaPyDceTest" +
+    " dotty.tools.dotc.PyStockRunExcludelistTest"
+)

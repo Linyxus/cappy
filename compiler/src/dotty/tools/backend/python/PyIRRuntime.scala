@@ -66,28 +66,13 @@ object PyIRRuntime:
   private val MirrorSingletonClass = PyClassName("scala.deriving.Mirror_Singleton")
   private val MirrorSingletonProxyClass = PyClassName("scala.deriving.Mirror_SingletonProxy")
 
-  // Scala's by-ref closure-capture wrappers. The JVM lowers
-  // `var x = 0; ... = { () => x += 1 }` into `val x$1 = new IntRef(0)`
-  // plus `x$1.elem += 1`; we mirror that at Python runtime so the
-  // capture semantics match without needing a per-call-site facade.
-  private val IntRefClass       = PyClassName("scala.runtime.IntRef")
-  private val LongRefClass      = PyClassName("scala.runtime.LongRef")
-  private val DoubleRefClass    = PyClassName("scala.runtime.DoubleRef")
-  private val FloatRefClass     = PyClassName("scala.runtime.FloatRef")
-  private val BooleanRefClass   = PyClassName("scala.runtime.BooleanRef")
-  private val ByteRefClass      = PyClassName("scala.runtime.ByteRef")
-  private val CharRefClass      = PyClassName("scala.runtime.CharRef")
-  private val ShortRefClass     = PyClassName("scala.runtime.ShortRef")
-  private val ObjectRefClass    = PyClassName("scala.runtime.ObjectRef")
-  private val VolatileIntRefClass     = PyClassName("scala.runtime.VolatileIntRef")
-  private val VolatileLongRefClass    = PyClassName("scala.runtime.VolatileLongRef")
-  private val VolatileDoubleRefClass  = PyClassName("scala.runtime.VolatileDoubleRef")
-  private val VolatileFloatRefClass   = PyClassName("scala.runtime.VolatileFloatRef")
-  private val VolatileBooleanRefClass = PyClassName("scala.runtime.VolatileBooleanRef")
-  private val VolatileByteRefClass    = PyClassName("scala.runtime.VolatileByteRef")
-  private val VolatileCharRefClass    = PyClassName("scala.runtime.VolatileCharRef")
-  private val VolatileShortRefClass   = PyClassName("scala.runtime.VolatileShortRef")
-  private val VolatileObjectRefClass  = PyClassName("scala.runtime.VolatileObjectRef")
+  // Scala's by-ref closure-capture wrappers ship as `.pyir` from
+  // `library-py/src/scala/runtime/` (Category A migration of
+  // `notes/shrink-runtime.md`). BoxedUnit remains runtime-provided —
+  // the Scala port is blocked on `defn.BoxedUnit_UNIT`'s linkedClass
+  // resolver / @static interaction with the Python emitter's module
+  // access shape; deferred until the broader BoxedUnit_UNIT lookup
+  // path is taught to recognise @static-lifted module members.
   private val BoxedUnitClass = PyClassName("scala.runtime.BoxedUnit")
 
   // VarHandle / MethodHandles / MethodHandles$Lookup — referenced by
@@ -119,7 +104,10 @@ object PyIRRuntime:
   private val SpliteratorClass           = PyClassName("java.util.Spliterator")
   private val RefReferenceClass          = PyClassName("java.lang.ref.Reference")
   private val RefWeakReferenceClass      = PyClassName("java.lang.ref.WeakReference")
-  private val ScalaNumberClass           = PyClassName("scala.math.ScalaNumber")
+  // `scala.math.ScalaNumber` was previously a runtime-provided empty
+  // stub. Phase 4 of Category A migration moves it to
+  // `library-py/src/scala/math/ScalaNumber.scala` so the abstract
+  // `isWhole` / `underlying` methods actually exist on the class.
   private val PrimitiveIteratorClass     = PyClassName("java.util.PrimitiveIterator")
   private val PrimitiveIteratorOfIntClass    = PyClassName("java.util.PrimitiveIterator_OfInt")
   private val PrimitiveIteratorOfLongClass   = PyClassName("java.util.PrimitiveIterator_OfLong")
@@ -361,17 +349,6 @@ object PyIRRuntime:
         constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
         instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
       ),
-    ScalaNumberClass ->
-      // Java-defined in stdlib (`scala/math/ScalaNumber.java`) but our
-      // pylib pipeline doesn't compile .java files — so the linker would
-      // see it missing. Treat as javaProvided.
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.ObjectClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
-        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
-      ),
     PrimitiveIteratorClass ->
       ProvidedClass(
         kind = PyClassKind.Interface,
@@ -470,23 +447,7 @@ object PyIRRuntime:
         constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
         instanceMethods = MethodMatcher(simpleNamePrefixes = Set("fromProduct"))
       ),
-  ) ++ Seq(
-    IntRefClass, LongRefClass, DoubleRefClass, FloatRefClass,
-    BooleanRefClass, ByteRefClass, CharRefClass, ShortRefClass,
-    ObjectRefClass,
-    VolatileIntRefClass, VolatileLongRefClass, VolatileDoubleRefClass,
-    VolatileFloatRefClass, VolatileBooleanRefClass, VolatileByteRefClass,
-    VolatileCharRefClass, VolatileShortRefClass, VolatileObjectRefClass,
-  ).map { name =>
-    name -> ProvidedClass(
-      kind = PyClassKind.Class,
-      superClass = Some(PyClassName.ObjectClass),
-      javaProvided = true,
-      constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
-      staticMethods = MethodMatcher(simpleNamePrefixes = Set("create")),
-      fields = Set(PyFieldName(name, PySimpleFieldName("elem")))
-    )
-  }.toMap ++ FunctionClasses.map { name =>
+  ) ++ FunctionClasses.map { name =>
     // `scala.FunctionN` for `N = 0..22`. Stdlib classes like `Set`, `Map`
     // extend `Function1`, so each must exist as a nominal interface at
     // link time. Method names cover `apply`, the compose/curry/tupled
@@ -2048,7 +2009,6 @@ object PyIRRuntime:
        |    def clear__V(self):
        |        self._scpy_ref_referent = None
        |class WeakReference(Reference): pass
-       |class ScalaNumber(_scpy_Object): pass
        |class PrimitiveIterator(_scpy_Object): pass
        |class PrimitiveIterator_OfInt(PrimitiveIterator): pass
        |class PrimitiveIterator_OfLong(PrimitiveIterator): pass
@@ -2313,7 +2273,6 @@ object PyIRRuntime:
        |_scpy_register_class(Spliterator, "java.util.Spliterator", "interface", None)
        |_scpy_register_class(Reference, "java.lang.ref.Reference", "class", "java.lang.Object")
        |_scpy_register_class(WeakReference, "java.lang.ref.WeakReference", "class", "java.lang.ref.Reference")
-       |_scpy_register_class(ScalaNumber, "scala.math.ScalaNumber", "class", "java.lang.Object")
        |_scpy_register_class(PrimitiveIterator, "java.util.PrimitiveIterator", "interface", None)
        |_scpy_register_class(PrimitiveIterator_OfInt, "java.util.PrimitiveIterator_OfInt", "interface", None, ("java.util.PrimitiveIterator",))
        |_scpy_register_class(PrimitiveIterator_OfLong, "java.util.PrimitiveIterator_OfLong", "interface", None, ("java.util.PrimitiveIterator",))
@@ -2483,97 +2442,6 @@ object PyIRRuntime:
           |
           |""".stripMargin
     }.mkString +
-    """|# -- scala.runtime.*Ref --
-       |# By-ref capture wrappers. Scala's JVM target lowers mutable-var
-       |# closure captures into `new IntRef(0)` + `.elem` reads/writes.
-       |# Python's lexical closure doesn't need them, but PyIR still
-       |# emits the code that constructs them, so the names must resolve.
-       |def _scpy_mk_ref(default):
-       |    class _Ref(_scpy_Object):
-       |        def __init__(self, elem=default):
-       |            self.elem = elem
-       |        @staticmethod
-       |        def create__I__Lscala_druntime_dIntRef(v): return _Ref(v)
-       |        @staticmethod
-       |        def create__J__Lscala_druntime_dLongRef(v): return _Ref(v)
-       |        @staticmethod
-       |        def create__D__Lscala_druntime_dDoubleRef(v): return _Ref(v)
-       |        @staticmethod
-       |        def create__F__Lscala_druntime_dFloatRef(v): return _Ref(v)
-       |        @staticmethod
-       |        def create__Z__Lscala_druntime_dBooleanRef(v): return _Ref(v)
-       |        @staticmethod
-       |        def create__B__Lscala_druntime_dByteRef(v): return _Ref(v)
-       |        @staticmethod
-       |        def create__C__Lscala_druntime_dCharRef(v): return _Ref(v)
-       |        @staticmethod
-       |        def create__S__Lscala_druntime_dShortRef(v): return _Ref(v)
-       |        @staticmethod
-       |        def create__Ljava_dlang_dObject__Lscala_druntime_dObjectRef(v): return _Ref(v)
-       |    return _Ref
-       |IntRef = _scpy_mk_ref(0)
-       |LongRef = _scpy_mk_ref(0)
-       |DoubleRef = _scpy_mk_ref(0.0)
-       |FloatRef = _scpy_mk_ref(0.0)
-       |BooleanRef = _scpy_mk_ref(False)
-       |ByteRef = _scpy_mk_ref(0)
-       |CharRef = _scpy_mk_ref('\\x00')
-       |ShortRef = _scpy_mk_ref(0)
-       |ObjectRef = _scpy_mk_ref(None)
-       |# Module-object aliases. `IntRef.create(...)` in Scala lowers to
-       |# a static call `IntRef$.create(...)` which the Python backend
-       |# emits as `_scpy_mod_scala_runtime_IntRef_.create...(...)`.
-       |# Point those names at the class itself so the `@staticmethod`
-       |# factories resolve.
-       |_scpy_mod_scala_runtime_IntRef_     = IntRef
-       |_scpy_mod_scala_runtime_LongRef_    = LongRef
-       |_scpy_mod_scala_runtime_DoubleRef_  = DoubleRef
-       |_scpy_mod_scala_runtime_FloatRef_   = FloatRef
-       |_scpy_mod_scala_runtime_BooleanRef_ = BooleanRef
-       |_scpy_mod_scala_runtime_ByteRef_    = ByteRef
-       |_scpy_mod_scala_runtime_CharRef_    = CharRef
-       |_scpy_mod_scala_runtime_ShortRef_   = ShortRef
-       |_scpy_mod_scala_runtime_ObjectRef_  = ObjectRef
-       |_scpy_mod_scala_runtime_VolatileIntRef_     = IntRef
-       |_scpy_mod_scala_runtime_VolatileLongRef_    = LongRef
-       |_scpy_mod_scala_runtime_VolatileDoubleRef_  = DoubleRef
-       |_scpy_mod_scala_runtime_VolatileFloatRef_   = FloatRef
-       |_scpy_mod_scala_runtime_VolatileBooleanRef_ = BooleanRef
-       |_scpy_mod_scala_runtime_VolatileByteRef_    = ByteRef
-       |_scpy_mod_scala_runtime_VolatileCharRef_    = CharRef
-       |_scpy_mod_scala_runtime_VolatileShortRef_   = ShortRef
-       |_scpy_mod_scala_runtime_VolatileObjectRef_  = ObjectRef
-       |# Volatile variants collapse to the same class under single-threaded
-       |# Python; the distinction is only meaningful on the JVM.
-       |VolatileIntRef = IntRef
-       |VolatileLongRef = LongRef
-       |VolatileDoubleRef = DoubleRef
-       |VolatileFloatRef = FloatRef
-       |VolatileBooleanRef = BooleanRef
-       |VolatileByteRef = ByteRef
-       |VolatileCharRef = CharRef
-       |VolatileShortRef = ShortRef
-       |VolatileObjectRef = ObjectRef
-       |_scpy_register_class(IntRef, "scala.runtime.IntRef", "class", "java.lang.Object")
-       |_scpy_register_class(LongRef, "scala.runtime.LongRef", "class", "java.lang.Object")
-       |_scpy_register_class(DoubleRef, "scala.runtime.DoubleRef", "class", "java.lang.Object")
-       |_scpy_register_class(FloatRef, "scala.runtime.FloatRef", "class", "java.lang.Object")
-       |_scpy_register_class(BooleanRef, "scala.runtime.BooleanRef", "class", "java.lang.Object")
-       |_scpy_register_class(ByteRef, "scala.runtime.ByteRef", "class", "java.lang.Object")
-       |_scpy_register_class(CharRef, "scala.runtime.CharRef", "class", "java.lang.Object")
-       |_scpy_register_class(ShortRef, "scala.runtime.ShortRef", "class", "java.lang.Object")
-       |_scpy_register_class(ObjectRef, "scala.runtime.ObjectRef", "class", "java.lang.Object")
-       |_scpy_register_class(None, "scala.runtime.VolatileIntRef", "class", "java.lang.Object")
-       |_scpy_register_class(None, "scala.runtime.VolatileLongRef", "class", "java.lang.Object")
-       |_scpy_register_class(None, "scala.runtime.VolatileDoubleRef", "class", "java.lang.Object")
-       |_scpy_register_class(None, "scala.runtime.VolatileFloatRef", "class", "java.lang.Object")
-       |_scpy_register_class(None, "scala.runtime.VolatileBooleanRef", "class", "java.lang.Object")
-       |_scpy_register_class(None, "scala.runtime.VolatileByteRef", "class", "java.lang.Object")
-       |_scpy_register_class(None, "scala.runtime.VolatileCharRef", "class", "java.lang.Object")
-       |_scpy_register_class(None, "scala.runtime.VolatileShortRef", "class", "java.lang.Object")
-       |_scpy_register_class(None, "scala.runtime.VolatileObjectRef", "class", "java.lang.Object")
-       |
-       |""".stripMargin +
     """|# -- Compiler-invented: numeric wrapping (Scala overflow semantics) --
        |
        |def _scpy_i32(x):
