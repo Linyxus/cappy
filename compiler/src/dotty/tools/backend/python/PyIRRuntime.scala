@@ -735,7 +735,7 @@ object PyIRRuntime:
        |    return None
        |
        |class _scpy_Object:
-       |    def getClass__Ljava_dlang_dClass(self):
+       |    def ${m("getClass")(ClsRef)}(self):
        |        return _scpy_class_of_instance(self)
        |
        |    def ${m("toString")(StrRef)}(self):
@@ -744,7 +744,7 @@ object PyIRRuntime:
        |        # identity hash. Value classes and case classes override
        |        # `__hash__`, so this picks up their wrapped-value hash and
        |        # produces e.g. `L@0` instead of `L@<python id>`.
-       |        return self.getClass__Ljava_dlang_dClass().getName__Ljava_dlang_dString() + "@" + _builtins.format(self.__hash__() & 0xFFFFFFFF, "x")
+       |        return self.${m("getClass")(ClsRef)}().${m("getName")(StrRef)}() + "@" + _builtins.format(self.__hash__() & 0xFFFFFFFF, "x")
        |
        |    def __str__(self):
        |        return self.${m("toString")(StrRef)}()
@@ -843,7 +843,7 @@ object PyIRRuntime:
        |        # `_scpy_name`.
        |        self._scpy_jvm_name = jvm_name
        |
-       |    def getName__Ljava_dlang_dString(self):
+       |    def ${m("getName")(StrRef)}(self):
        |        # Prefer the JVM-shaped name when codegen recorded one so
        |        # `getClass.getName` matches what the JVM backend emits
        |        # (`Foo$$$$anon$$1`) instead of the Python-encoded form
@@ -853,12 +853,12 @@ object PyIRRuntime:
        |            return self._scpy_jvm_name
        |        return self._scpy_name
        |
-       |    def getSimpleName__Ljava_dlang_dString(self):
+       |    def ${m("getSimpleName")(StrRef)}(self):
        |        if self._scpy_kind == "array":
        |            comp = self._scpy_component_type
        |            if comp is None:
        |                return "[]"
-       |            return comp.getSimpleName__Ljava_dlang_dString() + "[]"
+       |            return comp.${m("getSimpleName")(StrRef)}() + "[]"
        |        # Prefer the JVM-shaped name when codegen recorded one:
        |        # parsing on the encoded form (`_scpy_name`) would split on
        |        # `_` boundaries that the encoder introduced for `$$`,
@@ -896,27 +896,27 @@ object PyIRRuntime:
        |            [_scpy_class_of_name(name) for name in names],
        |        )
        |
-       |    def getComponentType__Ljava_dlang_dClass(self):
+       |    def ${m("getComponentType")(ClsRef)}(self):
        |        if self._scpy_kind == "array":
        |            return self._scpy_component_type
        |        return None
        |
-       |    def isPrimitive__Z(self):
+       |    def ${m("isPrimitive")(Z)}(self):
        |        return self._scpy_kind == "primitive"
        |
-       |    def isInterface__Z(self):
+       |    def ${m("isInterface")(Z)}(self):
        |        return self._scpy_kind == "interface"
        |
-       |    def isArray__Z(self):
+       |    def ${m("isArray")(Z)}(self):
        |        return self._scpy_kind == "array"
        |
-       |    def isInstance__Ljava_dlang_dObject__Z(self, value):
+       |    def ${m("isInstance", ObjRef)(Z)}(self, value):
        |        return _scpy_is_instance(value, self)
        |
-       |    def isAssignableFrom__Ljava_dlang_dClass__Z(self, other):
+       |    def ${m("isAssignableFrom", ClsRef)(Z)}(self, other):
        |        return _scpy_is_assignable(self, other)
        |
-       |    def getClassLoader__Ljava_dlang_dClassLoader(self):
+       |    def ${m("getClassLoader")(PyClassRef(PyClassName("java.lang.ClassLoader")))}(self):
        |        if self._scpy_kind == "primitive":
        |            return None
        |        return _scpy_system_class_loader
@@ -1001,10 +1001,10 @@ object PyIRRuntime:
        |    def getEnclosingConstructor__Ljava_dlang_dreflect_dConstructor(self):
        |        raise _scpy_reflection_unsupported("getEnclosingConstructor")
        |
-       |    def getEnclosingClass__Ljava_dlang_dClass(self):
+       |    def ${m("getEnclosingClass")(ClsRef)}(self):
        |        raise _scpy_reflection_unsupported("getEnclosingClass")
        |
-       |    def getDeclaringClass__Ljava_dlang_dClass(self):
+       |    def ${m("getDeclaringClass")(ClsRef)}(self):
        |        raise _scpy_reflection_unsupported("getDeclaringClass")
        |
        |    def getEnumConstants__ALjava_dlang_dObject(self):
@@ -1013,7 +1013,7 @@ object PyIRRuntime:
        |    def getModifiers__I(self):
        |        return 0
        |
-       |    def getCanonicalName__Ljava_dlang_dString(self):
+       |    def ${m("getCanonicalName")(StrRef)}(self):
        |        # JVM canonical name elides `$$` separators and is undefined
        |        # for anonymous/local classes. Approximate with `getName()`
        |        # so codegen's recorded JVM name shows through.
@@ -1147,11 +1147,11 @@ object PyIRRuntime:
        |        # `getDeclaredField`, etc. The plural/singular pairs are
        |        # ordered so the plural matches first.
        |        if name.startswith("getSimpleName"):
-       |            return self.getSimpleName__Ljava_dlang_dString
+       |            return self.${m("getSimpleName")(StrRef)}
        |        if name.startswith("getName"):
-       |            return self.getName__Ljava_dlang_dString
+       |            return self.${m("getName")(StrRef)}
        |        if name.startswith("getCanonicalName"):
-       |            return self.getCanonicalName__Ljava_dlang_dString
+       |            return self.${m("getCanonicalName")(StrRef)}
        |        if name.startswith("getTypeName"):
        |            return self.getTypeName__Ljava_dlang_dString
        |        if name.startswith("getPackageName"):
@@ -1167,7 +1167,7 @@ object PyIRRuntime:
        |        if name.startswith("getInterfaces"):
        |            return self.getInterfaces__ALjava_dlang_dClass
        |        if name.startswith("getComponentType"):
-       |            return self.getComponentType__Ljava_dlang_dClass
+       |            return self.${m("getComponentType")(ClsRef)}
        |        if name.startswith("getTypeParameters"):
        |            return self.getTypeParameters__ALjava_dlang_dreflect_dTypeVariable
        |        if name.startswith("getDeclaredFields"):
@@ -1203,9 +1203,9 @@ object PyIRRuntime:
        |        if name.startswith("getEnclosingConstructor"):
        |            return self.getEnclosingConstructor__Ljava_dlang_dreflect_dConstructor
        |        if name.startswith("getEnclosingClass"):
-       |            return self.getEnclosingClass__Ljava_dlang_dClass
+       |            return self.${m("getEnclosingClass")(ClsRef)}
        |        if name.startswith("getDeclaringClass"):
-       |            return self.getDeclaringClass__Ljava_dlang_dClass
+       |            return self.${m("getDeclaringClass")(ClsRef)}
        |        if name.startswith("getEnumConstants"):
        |            return self.getEnumConstants__ALjava_dlang_dObject
        |        if name.startswith("getModifiers"):
@@ -1255,15 +1255,15 @@ object PyIRRuntime:
        |        if name.startswith("isSealed"):
        |            return self.isSealed__Z
        |        if name.startswith("isPrimitive"):
-       |            return self.isPrimitive__Z
+       |            return self.${m("isPrimitive")(Z)}
        |        if name.startswith("isInterface"):
-       |            return self.isInterface__Z
+       |            return self.${m("isInterface")(Z)}
        |        if name.startswith("isArray"):
-       |            return self.isArray__Z
+       |            return self.${m("isArray")(Z)}
        |        if name.startswith("isInstance"):
-       |            return self.isInstance__Ljava_dlang_dObject__Z
+       |            return self.${m("isInstance", ObjRef)(Z)}
        |        if name.startswith("isAssignableFrom"):
-       |            return self.isAssignableFrom__Ljava_dlang_dClass__Z
+       |            return self.${m("isAssignableFrom", ClsRef)(Z)}
        |        if name.startswith("desiredAssertionStatus"):
        |            return self.desiredAssertionStatus__Z
        |        if name.startswith("asSubclass"):
@@ -1273,7 +1273,7 @@ object PyIRRuntime:
        |        if name.startswith("newInstance"):
        |            return self.newInstance__Ljava_dlang_dObject
        |        if name.startswith("getClassLoader"):
-       |            return self.getClassLoader__Ljava_dlang_dClassLoader
+       |            return self.${m("getClassLoader")(PyClassRef(PyClassName("java.lang.ClassLoader")))}
        |        if name.startswith("getResourceAsStream"):
        |            return self.getResourceAsStream__Ljava_dlang_dString__Ljava_dio_dInputStream
        |        if name.startswith("getResource"):
@@ -1371,7 +1371,7 @@ object PyIRRuntime:
        |            return _scpy_Char(v)
        |        return v
        |
-       |    def getClass__Ljava_dlang_dClass(self):
+       |    def ${m("getClass")(ClsRef)}(self):
        |        return self._scpy_class
        |
        |    def clone__Ljava_dlang_dObject(self):
@@ -1797,7 +1797,7 @@ object PyIRRuntime:
        |    @staticmethod
        |    def isNative__I__Z(mod):       return (mod & Modifier.NATIVE) != 0
        |    @staticmethod
-       |    def isInterface__I__Z(mod):    return (mod & Modifier.INTERFACE) != 0
+       |    def ${m("isInterface", I)(Z)}(mod):    return (mod & Modifier.INTERFACE) != 0
        |    @staticmethod
        |    def isAbstract__I__Z(mod):     return (mod & Modifier.ABSTRACT) != 0
        |    @staticmethod
@@ -1817,7 +1817,7 @@ object PyIRRuntime:
        |        if name.startswith("isVolatile"):     return Modifier.isVolatile__I__Z
        |        if name.startswith("isTransient"):    return Modifier.isTransient__I__Z
        |        if name.startswith("isNative"):       return Modifier.isNative__I__Z
-       |        if name.startswith("isInterface"):    return Modifier.isInterface__I__Z
+       |        if name.startswith("isInterface"):    return Modifier.${m("isInterface", I)(Z)}
        |        if name.startswith("isAbstract"):     return Modifier.isAbstract__I__Z
        |        if name.startswith("isStrict"):       return Modifier.isStrict__I__Z
        |        if name.startswith("toString"):       return Modifier.toString__I__Ljava_dlang_dString
@@ -2008,7 +2008,7 @@ object PyIRRuntime:
        |    def hashCode__I(self):
        |        return int(self)
        |
-       |    def charValue__C(self):
+       |    def ${m("charValue")(C)}(self):
        |        return int(self)
        |
        |    def equals__Ljava_dlang_dObject__Z(self, other):
@@ -2837,7 +2837,7 @@ object PyIRRuntime:
        |# `java.lang.Number`/boxed-primitive static receiver. The runtime
        |# value may be a raw Python `float`/`int`/`bool` (boxing is identity
        |# on this backend — `boxToDouble` returns the same `float`), in which
-       |# case the encoded method name (`isNaN__Z`, `intValue__I`, ...) does
+       |# case the encoded method name (`isNaN__Z`, `${m("intValue")(I)}`, ...) does
        |# not resolve. Dispatch on `isinstance(...)` so calls on raw
        |# primitives produce JVM-faithful values, and fall through to the
        |# encoded method on real ported boxed instances (e.g. one minted
@@ -2866,14 +2866,14 @@ object PyIRRuntime:
        |        return 1.0 if x else 0.0
        |    if isinstance(x, (int, float)):
        |        return _builtins.float(x)
-       |    return x.doubleValue__D()
+       |    return x.${m("doubleValue")(D)}()
        |
        |def _scpy_Double_floatValue(x):
        |    if isinstance(x, bool):
        |        return 1.0 if x else 0.0
        |    if isinstance(x, (int, float)):
        |        return _scpy_f32(x)
-       |    return x.floatValue__F()
+       |    return x.${m("floatValue")(F)}()
        |
        |def _scpy_Double_intValue(x):
        |    if isinstance(x, bool):
@@ -2891,7 +2891,7 @@ object PyIRRuntime:
        |        return _builtins.int(x)
        |    if isinstance(x, int):
        |        return _scpy_i32(x)
-       |    return x.intValue__I()
+       |    return x.${m("intValue")(I)}()
        |
        |def _scpy_Double_longValue(x):
        |    if isinstance(x, bool):
@@ -2906,7 +2906,7 @@ object PyIRRuntime:
        |        return _scpy_i64(_builtins.int(x))
        |    if isinstance(x, int):
        |        return _scpy_i64(x)
-       |    return x.longValue__J()
+       |    return x.${m("longValue")(J)}()
        |
        |def _scpy_Double_byteValue(x):
        |    # `Number.byteValue() = (byte)intValue()`: signed-8-bit narrow.
@@ -2921,7 +2921,7 @@ object PyIRRuntime:
        |def _scpy_Boolean_booleanValue(x):
        |    if isinstance(x, bool):
        |        return x
-       |    return x.booleanValue__Z()
+       |    return x.${m("booleanValue")(Z)}()
        |
        |def _scpy_str_contains(s, t):
        |    return _scpy_str_required_text(t) in s
