@@ -35,55 +35,6 @@ object PyIREmitter:
   /** Reserved prefix for compiler-invented Python identifiers. */
   val Prefix: String = "_scpy_"
 
-  /** Scala FQCNs whose simple name collides with a Python builtin and
-   *  must be remapped at emission time (see `Emitter.classIdentifier`).
-   *
-   *  Only `java.lang.Exception` is problematic today: we emit
-   *  `class Throwable(Exception):` against Python's builtin, so the
-   *  Scala `class Exception(Throwable):` definition would rebind
-   *  `Exception` in module scope. Keep this narrow — a user-defined
-   *  Scala class named `Exception` in a different package stays free to
-   *  emit `class Exception(...)` normally. Other potential collisions
-   *  like `java.lang.Error` are not Python builtins, so they pass
-   *  through.
-   */
-  private val PythonReservedShortNames: Map[String, String] = Map(
-    "java.lang.Exception" -> "_scpy_java_Exception",
-    "java.lang.Object"    -> "_scpy_Object",
-    "java.lang.String"    -> "str",
-    "java.lang.Class"     -> "_scpy_Class",
-    // Pylib exception classes referenced by the runtime prelude (e.g.
-    // `_scpy_str_repeat` raises `IllegalArgumentException`). The prelude
-    // uses the simple name because it was hand-written; aliasing here
-    // makes the emitter's FQN-mangled identifier match those references
-    // when the class is defined downstream in the bundle.
-    "java.lang.NullPointerException"        -> "NullPointerException",
-    "java.lang.IllegalArgumentException"    -> "IllegalArgumentException",
-    "java.lang.IllegalStateException"       -> "IllegalStateException",
-    "java.lang.IndexOutOfBoundsException"   -> "IndexOutOfBoundsException",
-    "java.lang.ArrayIndexOutOfBoundsException" -> "ArrayIndexOutOfBoundsException",
-    "java.lang.ArithmeticException"         -> "ArithmeticException",
-    "java.lang.UnsupportedOperationException" -> "UnsupportedOperationException",
-    "java.lang.ClassCastException"          -> "ClassCastException",
-    "java.lang.NumberFormatException"       -> "NumberFormatException",
-    "java.lang.RuntimeException"            -> "RuntimeException",
-    "java.lang.Throwable"                   -> "_scpy_java_Throwable",
-    "java.lang.Error"                       -> "_scpy_java_Error",
-    "java.lang.AssertionError"              -> "AssertionError",
-    "java.lang.OutOfMemoryError"            -> "OutOfMemoryError",
-    "java.lang.StackOverflowError"          -> "StackOverflowError",
-    "java.lang.NoSuchFieldException"        -> "NoSuchFieldException",
-    "java.lang.NoSuchMethodException"       -> "NoSuchMethodException",
-    "java.lang.CloneNotSupportedException"  -> "CloneNotSupportedException",
-    "java.lang.IllegalAccessException"      -> "IllegalAccessException",
-    "java.lang.InterruptedException"        -> "InterruptedException",
-    "java.lang.SecurityException"           -> "SecurityException",
-    "java.lang.NegativeArraySizeException"  -> "NegativeArraySizeException",
-    "java.lang.StringIndexOutOfBoundsException" -> "StringIndexOutOfBoundsException",
-    "java.util.NoSuchElementException"      -> "NoSuchElementException",
-    "java.util.ConcurrentModificationException" -> "ConcurrentModificationException",
-  )
-
   /** Entry point for a "main" method: the class where it lives plus
    *  that class's kind (Class vs ModuleClass - determines whether the
    *  guard calls `Name.main(...)` or `_scpy_mod_Name.main(...)`). */
@@ -189,6 +140,8 @@ object PyIREmitter:
         emitClassRegistration(cls)
         emptyLine()
 
+      emitClosureCarriers()
+
       // Instantiate Scala `object`s only after every class body in the
       // bundle has been defined. Module constructors can reference
       // synthetic classes emitted later in the same bundle (e.g. Scala 3
@@ -268,6 +221,36 @@ object PyIREmitter:
         emptyLine()
 
       mainEntry.foreach(entry => emitMainGuard(entry, orderedClasses))
+
+    // -- Closure carriers ----------------------------------------
+
+    /** Emit the arity-specific `_scpy_FnN` closure-carrier classes
+     *  (N = 0..22). Each extends `_scpy_Fn` (the runtime-prelude base
+     *  carrying `__call__` + `__getattr__`) and the matching nominal
+     *  `scala.FunctionN` interface, so that
+     *  `_scpy_is_instance(closure, scala.FunctionN)` succeeds at
+     *  constructor-dispatch sites that take a `FunctionN` parameter.
+     *
+     *  Emitted AFTER class registrations rather than inline in the
+     *  prelude: when `scala.FunctionN` is in `providedClasses` the
+     *  parent identifier resolves to the simple-named runtime stub
+     *  (defined earlier in the prelude); when it is NOT — e.g. once
+     *  Phase 3b of `notes/shrink-runtime.md` drops the entries — the
+     *  parent identifier is the mangled FQN `scala_FunctionN` that
+     *  the linker emits as part of class definitions above. The
+     *  identifier shape is computed by `PyIRRuntime.classIdentifier`,
+     *  so the same emission code works in both states.
+     */
+    private def emitClosureCarriers(): Unit =
+      line("# -- closure carriers (_scpy_Fn0.._scpy_Fn22) --")
+      emptyLine()
+      for n <- 0 to 22 do
+        val parent = classIdentifier(PyClassName(s"scala.Function$n"))
+        line(s"class ${PyIREmitter.Prefix}Fn$n(${PyIREmitter.Prefix}Fn, $parent):")
+        indent()
+        line("__slots__ = ()")
+        dedent()
+        emptyLine()
 
     // -- Class definition ----------------------------------------
 
@@ -1869,23 +1852,7 @@ object PyIREmitter:
      *  `class Exception(...)`) to a mangled identifier.
      */
     private def classIdentifier(cn: PyClassName): String =
-      PyIREmitter.PythonReservedShortNames.get(cn.nameString) match
-        case Some(alias) => alias
-        case None =>
-          // Runtime-provided classes keep the simple name so they line
-          // up with hand-written declarations in the prelude
-          // (`class Function1`, `class Mirror`, etc.). User-emitted
-          // classes use the mangled FQN to avoid collisions when
-          // multiple packages export classes with the same simple name
-          // (e.g. `scala.collection.SortedSetOps` vs
-          // `scala.collection.mutable.SortedSetOps` vs
-          // `scala.collection.immutable.SortedSetOps` — all three would
-          // otherwise emit as `class SortedSetOps:` and shadow each
-          // other, breaking Python MRO).
-          if PyIRRuntime.providedClass(cn).isDefined then
-            sanitizeIdent(cn.simpleName)
-          else
-            cn.segments.map(sanitizeIdent).mkString("_")
+      PyIRRuntime.classIdentifier(cn)
 
     /** Python variable holding the singleton of a Scala `object`.
      *  Uses the full qualified path so two modules with the same
@@ -1977,11 +1944,8 @@ object PyIREmitter:
           }
         case _ => false
 
-    /** Replace `$` with `_`, escape Python keywords. */
     private def sanitizeIdent(s: String): String =
-      val cleaned = s.replace('$', '_')
-      if PyIRRuntime.PythonKeywords.contains(cleaned) then cleaned + "_"
-      else cleaned
+      PyIRRuntime.sanitizeIdent(s)
 
     // -- Block flattening ----------------------------------------
 

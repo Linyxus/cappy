@@ -524,6 +524,89 @@ object PyIRRuntime:
     "try", "while", "with", "yield"
   )
 
+  /** Scala FQCNs whose simple name collides with a Python builtin and
+   *  must be remapped at emission time (see [[classIdentifier]]).
+   *
+   *  Only `java.lang.Exception` is structurally problematic: we emit
+   *  `class Throwable(Exception):` against Python's builtin, so the
+   *  Scala `class Exception(Throwable):` definition would rebind
+   *  `Exception` in module scope. Keep this narrow — a user-defined
+   *  Scala class named `Exception` in a different package stays free
+   *  to emit `class Exception(...)` normally. Other potential
+   *  collisions like `java.lang.Error` are not Python builtins, so
+   *  they pass through.
+   */
+  val PythonReservedShortNames: Map[String, String] = Map(
+    "java.lang.Exception" -> "_scpy_java_Exception",
+    "java.lang.Object"    -> "_scpy_Object",
+    "java.lang.String"    -> "str",
+    "java.lang.Class"     -> "_scpy_Class",
+    // Pylib exception classes referenced by the runtime prelude (e.g.
+    // `_scpy_str_repeat` raises `IllegalArgumentException`). The prelude
+    // uses the simple name because it was hand-written; aliasing here
+    // makes the emitter's FQN-mangled identifier match those references
+    // when the class is defined downstream in the bundle.
+    "java.lang.NullPointerException"        -> "NullPointerException",
+    "java.lang.IllegalArgumentException"    -> "IllegalArgumentException",
+    "java.lang.IllegalStateException"       -> "IllegalStateException",
+    "java.lang.IndexOutOfBoundsException"   -> "IndexOutOfBoundsException",
+    "java.lang.ArrayIndexOutOfBoundsException" -> "ArrayIndexOutOfBoundsException",
+    "java.lang.ArithmeticException"         -> "ArithmeticException",
+    "java.lang.UnsupportedOperationException" -> "UnsupportedOperationException",
+    "java.lang.ClassCastException"          -> "ClassCastException",
+    "java.lang.NumberFormatException"       -> "NumberFormatException",
+    "java.lang.RuntimeException"            -> "RuntimeException",
+    "java.lang.Throwable"                   -> "_scpy_java_Throwable",
+    "java.lang.Error"                       -> "_scpy_java_Error",
+    "java.lang.AssertionError"              -> "AssertionError",
+    "java.lang.OutOfMemoryError"            -> "OutOfMemoryError",
+    "java.lang.StackOverflowError"          -> "StackOverflowError",
+    "java.lang.NoSuchFieldException"        -> "NoSuchFieldException",
+    "java.lang.NoSuchMethodException"       -> "NoSuchMethodException",
+    "java.lang.CloneNotSupportedException"  -> "CloneNotSupportedException",
+    "java.lang.IllegalAccessException"      -> "IllegalAccessException",
+    "java.lang.InterruptedException"        -> "InterruptedException",
+    "java.lang.SecurityException"           -> "SecurityException",
+    "java.lang.NegativeArraySizeException"  -> "NegativeArraySizeException",
+    "java.lang.StringIndexOutOfBoundsException" -> "StringIndexOutOfBoundsException",
+    "java.util.NoSuchElementException"      -> "NoSuchElementException",
+    "java.util.ConcurrentModificationException" -> "ConcurrentModificationException",
+  )
+
+  /** Replace `$` with `_`, escape Python keywords. Single source of
+   *  truth for both the runtime prelude (when it references a Scala
+   *  class by Python identifier) and `PyIREmitter` (when it picks the
+   *  emit-time identifier for a class def).
+   */
+  def sanitizeIdent(s: String): String =
+    val cleaned = s.replace('$', '_')
+    if PythonKeywords.contains(cleaned) then cleaned + "_"
+    else cleaned
+
+  /** Python identifier for a Scala class. Mirrors the rule the
+   *  emitter applies in `PyIREmitter`:
+   *
+   *  - Names in [[PythonReservedShortNames]] take their explicit alias.
+   *  - Classes in [[providedClasses]] keep their simple name so the
+   *    runtime prelude's hand-written declarations (`class Function1`,
+   *    `class _scpy_Object`, etc.) line up with downstream references
+   *    from the linker-emitted bundle.
+   *  - Everything else uses the mangled FQN
+   *    (`scala_collection_immutable_List`) to avoid simple-name
+   *    collisions across packages.
+   *
+   *  Co-located with [[providedClasses]] so the simple-vs-mangled
+   *  decision and the data driving it stay in one place — moving a
+   *  class into or out of [[providedClasses]] automatically flips the
+   *  identifier shape everywhere it's used.
+   */
+  def classIdentifier(name: PyClassName): String =
+    PythonReservedShortNames.get(name.nameString) match
+      case Some(alias) => alias
+      case None =>
+        if providedClass(name).isDefined then sanitizeIdent(name.simpleName)
+        else name.segments.map(sanitizeIdent).mkString("_")
+
   /** Runtime Python source prepended to every bundled output.
    *
    *  Defines numeric-wrapping helpers (`_scpy_i32`, `_scpy_i64`,
@@ -2326,15 +2409,15 @@ object PyIRRuntime:
        |    ctor(obj, *args)
        |    return obj
        |
-       |# Closure carriers. Lambdas emitted from Scala source reach here via
-       |# `_scpy_FnN(lambda ...)` for `N = 0..22`, with the arity-specific
-       |# subclass selected by the emitter from `PyClosure.params`. Each
-       |# subclass extends the matching nominal `FunctionN` base so that
-       |# `_scpy_is_instance(closure, scala.FunctionN)` succeeds at
-       |# constructor-dispatch sites that take a `FunctionN` parameter
-       |# (e.g. `IndexedSeqView.Map(self, f)`). `_scpy_Fn` is kept as a
-       |# fallback for any arity above 22 and as the shared implementation
-       |# of `__call__` / specialized-apply forwarding.
+       |# Closure carrier base. Lambdas emitted from Scala source reach
+       |# here via `_scpy_FnN(lambda ...)` for `N = 0..22`. The arity-
+       |# specific `_scpy_FnN` subclasses (which also extend the nominal
+       |# `scala.FunctionN`) are emitted by `PyIREmitter` AFTER class
+       |# registrations finish, so the parent identifier resolves
+       |# correctly whether the FunctionN nominal stub lives in the
+       |# runtime prelude (simple name) or in a downstream `.pyir`
+       |# (mangled FQN) — `PyIRRuntime.classIdentifier` flips the shape
+       |# based on `providedClasses`.
        |class _scpy_Fn(_scpy_Object):
        |    __slots__ = ("_fn",)
        |    def __init__(self, fn):
@@ -2346,14 +2429,7 @@ object PyIRRuntime:
        |            return object.__getattribute__(self, "_fn")
        |        raise AttributeError(name)
        |
-       |""".stripMargin +
-    (0 to 22).map { n =>
-      s"""|class _scpy_Fn$n(_scpy_Fn, Function$n):
-          |    __slots__ = ()
-          |
-          |""".stripMargin
-    }.mkString +
-    """|# -- Compiler-invented: numeric wrapping (Scala overflow semantics) --
+       |# -- Compiler-invented: numeric wrapping (Scala overflow semantics) --
        |
        |def _scpy_i32(x):
        |    return ((_builtins.int(x) + 0x80000000) & 0xFFFFFFFF) - 0x80000000
