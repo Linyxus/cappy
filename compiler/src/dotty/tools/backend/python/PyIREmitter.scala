@@ -226,8 +226,8 @@ object PyIREmitter:
 
     /** Emit the arity-specific `_scpy_FnN` closure-carrier classes
      *  (N = 0..22). Each extends `_scpy_Fn` (the runtime-prelude base
-     *  carrying `__call__` + `__getattr__`) and the matching nominal
-     *  `scala.FunctionN` interface, so that
+     *  carrying `__call__` + the `apply*` `__getattr__` fallback) and
+     *  the matching nominal `scala.FunctionN` interface, so that
      *  `_scpy_is_instance(closure, scala.FunctionN)` succeeds at
      *  constructor-dispatch sites that take a `FunctionN` parameter.
      *
@@ -236,19 +236,52 @@ object PyIREmitter:
      *  parent identifier resolves to the simple-named runtime stub
      *  (defined earlier in the prelude); when it is NOT — e.g. once
      *  Phase 3b of `notes/shrink-runtime.md` drops the entries — the
-     *  parent identifier is the mangled FQN `scala_FunctionN` that
-     *  the linker emits as part of class definitions above. The
-     *  identifier shape is computed by `PyIRRuntime.classIdentifier`,
-     *  so the same emission code works in both states.
+     *  parent identifier is the mangled FQN `scala_FunctionN` from
+     *  the linker-emitted class definitions above. The identifier
+     *  shape is computed by `PyIRRuntime.classIdentifier`, so the
+     *  same emission code works in both states.
+     *
+     *  Each carrier ALSO defines a concrete `apply__<sig>` forwarding
+     *  to `self._fn`. Required because `library-py`'s compiled
+     *  `scala.FunctionN.pyir` carries `apply` as an abstract slot
+     *  whose body is `raise NotImplementedError()` (the standard
+     *  emission for `body == None` in `emitMethodDef`). Python's
+     *  attribute lookup walks the MRO and finds that abstract body
+     *  before `_scpy_Fn`'s `__getattr__` fallback would fire — so
+     *  closures need a concrete override to bypass it. The encoded
+     *  name is computed via `PyMethodName` (single source of truth
+     *  for the encoding rule).
      */
     private def emitClosureCarriers(): Unit =
+      val objectRef = PyClassRef(PyClassName.ObjectClass)
+      val arities = (0 to 22).filter(n => knownClasses.contains(PyClassName(s"scala.Function$n")))
+      if arities.isEmpty then return
       line("# -- closure carriers (_scpy_Fn0.._scpy_Fn22) --")
       emptyLine()
-      for n <- 0 to 22 do
+      // Only emit a carrier when the corresponding `scala.FunctionN`
+      // class is in this bundle (either via `.pyir` or — pre-Phase 3b
+      // — via `providedClasses`). DCE may prune unused arities; emitting
+      // a carrier whose parent name is undefined would `NameError` at
+      // bundle load. The emitter for `PyClosure` (line 1612) selects
+      // the same `_scpy_FnN` shorthand from the closure's arity, so
+      // every arity that user code actually uses is reachable through
+      // the same set of nominal `FunctionN` references.
+      for n <- arities do
         val parent = classIdentifier(PyClassName(s"scala.Function$n"))
         line(s"class ${PyIREmitter.Prefix}Fn$n(${PyIREmitter.Prefix}Fn, $parent):")
         indent()
         line("__slots__ = ()")
+        val applyEncoded = PyMethodName(
+          PySimpleMethodName("apply"),
+          List.fill(n)(objectRef),
+          objectRef
+        ).encoded
+        val params = (1 to n).map(i => s"_scpy_a$i").mkString(", ")
+        val sep    = if params.isEmpty then "" else ", "
+        line(s"def $applyEncoded(self$sep$params):")
+        indent()
+        line(s"return self._fn($params)")
+        dedent()
         dedent()
         emptyLine()
 

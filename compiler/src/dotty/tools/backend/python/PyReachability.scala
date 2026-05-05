@@ -459,15 +459,15 @@ object PyReachability:
                 enqueue(Work.AnalyzeMethod(owner, method))
             }
         }
-      // The Python runtime's `_scpy_fn_specialized_forward` (in
-      // `PyIRRuntime.scala`) bridges between `apply_mc<X><Y>_sp__...`
-      // specialized shapes and the unspecialized boxed
-      // `apply__Ljava_lang_Object*__Ljava_lang_Object` form by walking
-      // the receiver's MRO. For that bridge to find a target, the
-      // unspecialized boxed `apply` must survive DCE — but no static
-      // call site references it directly when the user code only goes
-      // through the specialized form (e.g. `m(k)` on a primitive map).
-      // For every `apply*` virtual call we ALSO log the unspecialized
+      // The `library-py`-compiled `scala.FunctionN.pyir` emits each
+      // `apply_mc<X><Y>_sp__...` specialized variant as a body that
+      // calls `this.apply__Ljava_dlang_dObject*__Ljava_dlang_dObject`
+      // (boxed) and then unboxes the result via `_scpy_unbox_or_default`.
+      // For that body to reach a concrete target, the unspecialized
+      // boxed `apply` must survive DCE — but no static call site
+      // references it directly when the user code only goes through
+      // the specialized form (e.g. `m(k)` on a primitive map). For
+      // every `apply*` virtual call we ALSO log the unspecialized
       // boxed form on the same receiver so it stays reachable on the
       // class that ultimately resolves the dispatch.
       applyBoxedFallback(m).foreach { boxed =>

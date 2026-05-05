@@ -47,13 +47,6 @@ object PyIRRuntime:
   // Java-only class names. These have no Scala source and are backed by
   // Python builtins (object, str, type, annotation base classes).
   private val SerializableClass = PyClassName("java.io.Serializable")
-  /** `scala.FunctionN` for `N = 0..22`. The Python runtime declares a
-   *  matching nominal `FunctionN` base for each, so closures wrapped in
-   *  `_scpy_FnN` satisfy `_scpy_is_instance(closure, scala.FunctionN)`
-   *  at constructor-dispatch sites (e.g. `IndexedSeqView.Map(self, f)`).
-   */
-  private val FunctionClasses: IndexedSeq[PyClassName] =
-    (0 to 22).map(n => PyClassName(s"scala.Function$n"))
   private val ComparableClass = PyClassName("java.lang.Comparable")
   private val EnumClass = PyClassName("java.lang.Enum")
   private val ClassLoaderClass = PyClassName("java.lang.ClassLoader")
@@ -387,21 +380,7 @@ object PyIRRuntime:
           )
         )
       ),
-  ) ++ FunctionClasses.map { name =>
-    // `scala.FunctionN` for `N = 0..22`. Stdlib classes like `Set`, `Map`
-    // extend `Function1`, so each must exist as a nominal interface at
-    // link time. Method names cover `apply`, the compose/curry/tupled
-    // family, and `toString`/`__str__` — superset across arities is fine
-    // because `javaProvided = true` already accepts any signature.
-    name -> ProvidedClass(
-      kind = PyClassKind.Interface,
-      superClass = None,
-      javaProvided = true,
-      instanceMethods = MethodMatcher(
-        simpleNamePrefixes = Set("apply", "compose", "andThen", "curried", "tupled", "toString", "__str__")
-      )
-    )
-  }.toMap
+  )
 
   private[python] def providedClass(className: PyClassName): Option[ProvidedClass] =
     providedClasses.get(className)
@@ -588,7 +567,7 @@ object PyIRRuntime:
    *
    *  - Names in [[PythonReservedShortNames]] take their explicit alias.
    *  - Classes in [[providedClasses]] keep their simple name so the
-   *    runtime prelude's hand-written declarations (`class Function1`,
+   *    runtime prelude's hand-written declarations (`class Comparable`,
    *    `class _scpy_Object`, etc.) line up with downstream references
    *    from the linker-emitted bundle.
    *  - Everything else uses the mangled FQN
@@ -1666,224 +1645,7 @@ object PyIRRuntime:
        |
        |class Serializable(_scpy_Object):
        |    pass
-       |
-       |# Scala `FunctionN` interfaces (N = 0..22). Stdlib classes like `Set`,
-       |# `Map`, etc. extend `Function1` (e.g. `trait Set[A] extends ... with
-       |# (A => Boolean)`) — so Python must have a base class to inherit from
-       |# at class-definition time. Runtime dispatch goes through
-       |# `_scpy_Fn{0..22}` for closures; these declarations are nominal bases.
-       |#
-       |# Parse the arity (parameter count) of an encoded method name.
-       |# Encoding (see PyNames.scala): `<simple>__<param1>_<param2>_..._<paramN>__<result>`.
-       |# Each `<paramI>` starts with a single-letter type tag: `L`/`A` for
-       |# class/array references, `I`/`Z`/`B`/`S`/`C`/`J`/`F`/`D` for primitives,
-       |# `V`/`N`/`E` for void/null/nothing. A class ref `L<className>` may itself
-       |# contain `_` (substituted from `.`), so the param separator is "an
-       |# underscore followed by a type-tag letter". Returns -1 if the name
-       |# has no signature suffix or is malformed.
-       |_SCPY_PARAM_TAGS = frozenset("LAIZBSCJFDVNE")
-       |
-       |def _scpy_arity_of_method_name(name):
-       |    head = name.find("__")
-       |    if head < 0:
-       |        return -1
-       |    tail = name.rfind("__")
-       |    if tail <= head:
-       |        return 0
-       |    params = name[head + 2:tail]
-       |    if not params:
-       |        return 0
-       |    arity = 1
-       |    i = 0
-       |    while i < _scpy_len(params) - 1:
-       |        if params[i] == "_" and params[i + 1] in _SCPY_PARAM_TAGS:
-       |            arity += 1
-       |        i += 1
-       |    return arity
-       |
-       |# `__getattr__` provides default forwarders for any `apply*` method
-       |# missing on a Function-extending class. There are three shapes the
-       |# bridge has to handle:
-       |#
-       |#   1. `apply_mc<X><Y>_sp__...`   — Scala 2 primitive specialization.
-       |#       Scala 3's `SpecializeFunctions` rewrites primitive call sites
-       |#       to these names; on the JVM they are interface default methods
-       |#       that box / unbox into the unspecialized `apply`. In Python
-       |#       ints / floats / bools are unboxed values, so we just route
-       |#       to whichever unspecialized `apply__...` the subclass has.
-       |#
-       |#   2. `apply__Ljava_dlang_dObject*__Ljava_dlang_dObject` — the boxed
-       |#       erased form (`Function1[Any,Any]` post-erasure). When the
-       |#       receiver is a primitive-specialized container like
-       |#       `HashMap[Int, Int]` whose only `apply` shape is the
-       |#       specialized one, fall back to whatever specialized variant
-       |#       has the matching arity.
-       |#
-       |#   3. Other `apply<suffix>` shapes (e.g. mixed boxed-and-primitive
-       |#       parameter encodings). Same rule as #2: pick any apply with
-       |#       the same parameter arity.
-       |#
-       |# `PyReachability.scala` keeps both the boxed unspecialized form
-       |# and any specialized form alive on the resolved class so this
-       |# walk finds a target in practice; the runtime fallback is a
-       |# safety net for classes where only one shape survived (e.g.
-       |# hand-rolled `JFunction*` classes).
-       |def _scpy_is_sp_method_name(name):
-       |    head = name.find("__")
-       |    prefix = name if head < 0 else name[:head]
-       |    return prefix.startswith("apply_mc") and prefix.endswith("_sp")
-       |
-       |def _scpy_fn_specialized_forward(self, name):
-       |    if not name.startswith("apply"):
-       |        raise AttributeError(name)
-       |    arity = _scpy_arity_of_method_name(name)
-       |    if arity < 0:
-       |        raise AttributeError(name)
-       |    name_is_sp = _scpy_is_sp_method_name(name)
-       |    target = None
-       |    sp_fallback = None
-       |    for cls in type(self).__mro__:
-       |        for attr_name, attr_val in vars(cls).items():
-       |            if attr_name == name:
-       |                continue
-       |            if not attr_name.startswith("apply"):
-       |                continue
-       |            if not callable(attr_val):
-       |                continue
-       |            if _scpy_arity_of_method_name(attr_name) != arity:
-       |                continue
-       |            if _scpy_is_sp_method_name(attr_name):
-       |                # Sibling specialized stub. When the request itself
-       |                # is `_sp`, every same-arity sibling stub routes back
-       |                # through this dispatcher and would form a cycle, so
-       |                # reject. When the request is the boxed unspecialized
-       |                # form (case #2 above), accept as fallback only after
-       |                # we've confirmed no non-`_sp` shape exists in the MRO.
-       |                if not name_is_sp and sp_fallback is None:
-       |                    sp_fallback = attr_val
-       |                continue
-       |            target = attr_val
-       |            break
-       |        if target is not None:
-       |            break
-       |    if target is None:
-       |        target = sp_fallback
-       |    if target is None:
-       |        raise AttributeError(name)
-       |    return target.__get__(self, type(self))
-       |
-       |# Metaclass for the runtime `FunctionN` interfaces. Scala's
-       |# `SpecializeFunctions` phase emits synthetic forwarders that
-       |# delegate to interface default methods via static-class access
-       |# — e.g. `class HashMap` ends up with
-       |# `def apply_mcII_sp__I__I(self, x): return Function1.apply_mcII_sp__I__I(self, x)`.
-       |# On the JVM that lookup hits `Function1`'s default-method
-       |# implementation; in Python the runtime `Function1` class is
-       |# nominal-only (no method bodies). The metaclass `__getattr__`
-       |# below intercepts class-level `apply*` lookups and returns a
-       |# function that forwards to the instance's specialized-apply
-       |# dispatcher (`_scpy_fn_specialized_forward`).
-       |class _scpy_FnMeta(type):
-       |    def __getattr__(cls, name):
-       |        if name.startswith("apply"):
-       |            def _scpy_fn_static_forward(self, *args, **kwargs):
-       |                bound = _scpy_fn_specialized_forward(self, name)
-       |                return bound(*args, **kwargs)
-       |            return _scpy_fn_static_forward
-       |        raise AttributeError(name)
-       |
-       |# Helper for `FunctionN.{tupled,curried,andThen,compose}` runtime
-       |# implementations below. The Scala stdlib bodies are
-       |# `apply(x1, ...)` over the receiver; in Python we route through
-       |# `__call__` (which `_scpy_Fn` defines) for closures, and fall
-       |# back to scanning `apply*` methods for non-`_scpy_Fn` Function-
-       |# extending classes that statically dispatch through here.
-       |def _scpy_fn_call(receiver, *args):
-       |    cls = type(receiver)
-       |    has_call = False
-       |    for b in cls.__mro__:
-       |        if b is object:
-       |            break
-       |        if "__call__" in vars(b):
-       |            has_call = True
-       |            break
-       |    if has_call:
-       |        return receiver(*args)
-       |    arity = _scpy_len(args)
-       |    target = None
-       |    sp_fallback = None
-       |    for cls_in_mro in cls.__mro__:
-       |        for attr_name, attr_val in vars(cls_in_mro).items():
-       |            if not attr_name.startswith("apply"):
-       |                continue
-       |            if not callable(attr_val):
-       |                continue
-       |            if _scpy_arity_of_method_name(attr_name) != arity:
-       |                continue
-       |            if _scpy_is_sp_method_name(attr_name):
-       |                if sp_fallback is None:
-       |                    sp_fallback = attr_val
-       |                continue
-       |            target = attr_val
-       |            break
-       |        if target is not None:
-       |            break
-       |    if target is None:
-       |        target = sp_fallback
-       |    if target is None:
-       |        raise AttributeError("apply" + "_" * (arity > 0))
-       |    return target.__get__(receiver, cls)(*args)
-       |
-       |# Single source of truth for class-level + instance-level
-       |# specialized-apply dispatch. Each `FunctionN` runtime stub
-       |# inherits the metaclass + `__getattr__` from this mixin so the
-       |# pair lives in one place rather than being repeated 23 times.
-       |class _scpy_FunctionMixin(_scpy_Object, metaclass=_scpy_FnMeta):
-       |    def __getattr__(self, name):
-       |        return _scpy_fn_specialized_forward(self, name)
-       |
        |""".stripMargin +
-    (0 to 22).map { n =>
-      val tupledMethod =
-        if n >= 2 then
-          val tupleParams = (1 to n).map(i => s"_scpy_t._$i").mkString(", ")
-          s"""|    def tupled__Lscala_dFunction1(self):
-              |        _scpy_self_ref = self
-              |        return _scpy_Fn1(lambda _scpy_t: _scpy_fn_call(_scpy_self_ref, $tupleParams))
-              |""".stripMargin
-        else ""
-      val curriedMethod =
-        if n >= 2 then
-          // Scala curried produces nested Function1s. Build by reducing.
-          val argsList = (1 to n).map(i => s"_scpy_a$i").mkString(", ")
-          // Innermost lambda captures all args and applies. Build from inside out.
-          val curriedLambda =
-            (n to 1 by -1).foldLeft(s"_scpy_fn_call(_scpy_self_ref, $argsList)") { (body, i) =>
-              s"_scpy_Fn1(lambda _scpy_a$i: $body)"
-            }
-          s"""|    def curried__Lscala_dFunction1(self):
-              |        _scpy_self_ref = self
-              |        return $curriedLambda
-              |""".stripMargin
-        else ""
-      val andThenCompose =
-        if n == 1 then
-          """|    def andThen__Lscala_dFunction1__Lscala_dFunction1(self, _scpy_g):
-             |        _scpy_self_ref = self
-             |        _scpy_g_ref = _scpy_g
-             |        return _scpy_Fn1(lambda _scpy_x: _scpy_fn_call(_scpy_g_ref, _scpy_fn_call(_scpy_self_ref, _scpy_x)))
-             |    def compose__Lscala_dFunction1__Lscala_dFunction1(self, _scpy_g):
-             |        _scpy_self_ref = self
-             |        _scpy_g_ref = _scpy_g
-             |        return _scpy_Fn1(lambda _scpy_x: _scpy_fn_call(_scpy_self_ref, _scpy_fn_call(_scpy_g_ref, _scpy_x)))
-             |""".stripMargin
-        else ""
-      val body = tupledMethod + andThenCompose + curriedMethod
-      val classBody = if body.isEmpty then "    pass\n" else body
-      s"""|class Function$n(_scpy_FunctionMixin):
-          |$classBody
-          |""".stripMargin
-    }.mkString +
     """|# Linker-only nominal stubs. Stdlib references them by name (some as
        |# bases — Stepper/Spliterator path), so Python must have a class to
        |# inherit from. Empty bodies — runtime never executes their methods.
@@ -2247,18 +2009,13 @@ object PyIRRuntime:
        |_scpy_mod_java_lang_Class_  = _scpy_ClassModule()
        |_scpy_mod_java_lang_Class__ = _scpy_mod_java_lang_Class_
        |_scpy_system_class_loader = ClassLoader()
-       |
-       |_scpy_register_class(object, "java.lang.Object", "class", None)
+       |""".stripMargin +
+    """|_scpy_register_class(object, "java.lang.Object", "class", None)
        |_scpy_register_class(str, "java.lang.String", "class", "java.lang.Object", ("java.lang.CharSequence", "java.lang.Comparable", "java.io.Serializable"))
        |_scpy_register_class(_scpy_Class, "java.lang.Class", "class", "java.lang.Object")
        |_scpy_register_class(ClassLoader, "java.lang.ClassLoader", "class", "java.lang.Object")
        |_scpy_register_class(ClassValue, "java.lang.ClassValue", "class", "java.lang.Object")
-""".stripMargin +
-    (0 to 22).map { n =>
-      s"""|_scpy_register_class(Function$n, "scala.Function$n", "interface", None)
-          |""".stripMargin
-    }.mkString +
-    """|_scpy_register_class(VarHandle, "java.lang.invoke.VarHandle", "class", "java.lang.Object")
+       |_scpy_register_class(VarHandle, "java.lang.invoke.VarHandle", "class", "java.lang.Object")
        |_scpy_register_class(MethodHandles, "java.lang.invoke.MethodHandles", "class", "java.lang.Object")
        |_scpy_register_class(MethodHandles_Lookup, "java.lang.invoke.MethodHandles_Lookup", "class", "java.lang.Object")
        |_scpy_register_class(AbstractStringBuilder, "java.lang.AbstractStringBuilder", "class", "java.lang.Object")
