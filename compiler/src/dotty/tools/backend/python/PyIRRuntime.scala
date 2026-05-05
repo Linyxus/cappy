@@ -716,7 +716,7 @@ object PyIRRuntime:
        |        # `requireNonNull`). Raising the class by bare Python
        |        # name here would hit `NameError` in tests that don't
        |        # otherwise reference `IllegalMonitorStateException`.
-       |        _scpy_mod_java_lang_ThrowablesSupport__.throwIllegalMonitorState__V()
+       |        ${mod(PyClassName("java.lang.ThrowablesSupport$"))}.throwIllegalMonitorState__V()
        |    return monitor
        |
        |def _scpy_object_wait(obj, timeout_seconds=None):
@@ -1290,10 +1290,10 @@ object PyIRRuntime:
        |    # Stand-in for `java.lang.Class$$` (the static-method receiver
        |    # for `Class.forName`). The Scala backend lowers
        |    # `Class.forName(name)` to a static call whose Python target is
-       |    # `_scpy_mod_java_lang_Class_.forName__...(name)`. There is no
+       |    # `${mod(PyClassName("java.lang.Class"))}.forName__...(name)`. There is no
        |    # Scala companion source for `java.lang.Class`, so without this
        |    # the bundle would reference an undefined module variable.
-       |    # Aliased below as `_scpy_mod_java_lang_Class_` (and the
+       |    # Aliased below as `${mod(PyClassName("java.lang.Class"))}` (and the
        |    # double-underscore companion form for safety).
        |    #
        |    # Semantics: always raise `ClassNotFoundException`. The Python
@@ -1807,7 +1807,7 @@ object PyIRRuntime:
        |        return ""
        |    def __getattr__(self, name):
        |        # Static-style dispatch for module-call shape
-       |        # `_scpy_mod_java_lang_reflect_Modifier_.isPublic__I__Z`.
+       |        # `${mod(PyClassName("java.lang.reflect.Modifier"))}.isPublic__I__Z`.
        |        if name.startswith("isPublic"):       return Modifier.isPublic__I__Z
        |        if name.startswith("isPrivate"):      return Modifier.isPrivate__I__Z
        |        if name.startswith("isProtected"):    return Modifier.isProtected__I__Z
@@ -1823,8 +1823,8 @@ object PyIRRuntime:
        |        if name.startswith("toString"):       return Modifier.toString__I__Ljava_dlang_dString
        |        raise AttributeError(name)
        |# Module singleton for `Modifier` so static-style emission resolves.
-       |_scpy_mod_java_lang_reflect_Modifier_  = Modifier()
-       |_scpy_mod_java_lang_reflect_Modifier__ = _scpy_mod_java_lang_reflect_Modifier_
+       |${mod(PyClassName("java.lang.reflect.Modifier"))}  = Modifier()
+       |${mod(PyClassName("java.lang.reflect.Modifier$"))} = ${mod(PyClassName("java.lang.reflect.Modifier"))}
        |class InvocationTargetException(Exception):
        |    # Pylib's `java.lang.reflect.InvocationTargetException` extends
        |    # ReflectiveOperationException. The runtime never raises it
@@ -1955,8 +1955,8 @@ object PyIRRuntime:
        |# (LoadModule, ApplyStatic) hit it.
        |BoxedUnit.UNIT = BoxedUnit()
        |BoxedUnit.TYPE = _scpy_primitive_void
-       |_scpy_mod_scala_runtime_BoxedUnit_ = BoxedUnit
-       |_scpy_mod_scala_runtime_BoxedUnit__ = BoxedUnit
+       |${mod(PyClassName("scala.runtime.BoxedUnit"))} = BoxedUnit
+       |${mod(PyClassName("scala.runtime.BoxedUnit$"))} = BoxedUnit
        |
        |class _scpy_Char(int):
        |    # Boxed Char wrapper. Subclasses Python's `int` so existing
@@ -2040,15 +2040,15 @@ object PyIRRuntime:
        |# linker like every other `scala.Long_` / `scala.Float_` / etc.
        |# Earlier hand-written `_scpy_IntModule` / `_scpy_CharModule` stubs
        |# shadowed those compiled defs, so calls such as
-       |# `_scpy_mod_scala_Int__.int2double__I__D(i)` raised AttributeError.
+       |# `${mod(PyClassName("scala.Int$"))}.int2double__I__D(i)` raised AttributeError.
        |# `Class.forName(...)` is a static call on the JDK-provided
        |# `java.lang.Class`. The backend lowers it to
-       |# `_scpy_mod_java_lang_Class_.forName__...(...)`. Bind the module
+       |# `${mod(PyClassName("java.lang.Class"))}.forName__...(...)`. Bind the module
        |# variable to a singleton of `_scpy_ClassModule` so the call
        |# resolves; cover the `Class$$` companion form too in case any
        |# emitted code carries the trailing-dollar variant.
-       |_scpy_mod_java_lang_Class_  = _scpy_ClassModule()
-       |_scpy_mod_java_lang_Class__ = _scpy_mod_java_lang_Class_
+       |${mod(PyClassName("java.lang.Class"))}  = _scpy_ClassModule()
+       |${mod(PyClassName("java.lang.Class$"))} = ${mod(PyClassName("java.lang.Class"))}
        |_scpy_system_class_loader = ClassLoader()
        |""".stripMargin +
     raw"""|_scpy_register_class(object, "java.lang.Object", "class", None)
