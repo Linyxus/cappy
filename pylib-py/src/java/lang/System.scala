@@ -35,8 +35,11 @@ object System:
       get(key) != null
 
   private var inRef: InputStream | Null = null
-  private var outRef = PrintStream.stdout()
-  private var errRef = PrintStream.stderr()
+  // out/err refs are nullable: JDK `System.setOut(null)` / `setErr(null)`
+  // is permitted (only subsequent USE then NPEs). Tests like
+  // `tests/run/i2772.scala` depend on the set itself not throwing.
+  private var outRef: PrintStream | Null = PrintStream.stdout()
+  private var errRef: PrintStream | Null = PrintStream.stderr()
   private val propertiesView = new _SystemProperties()
   private val envView = new _SystemEnv()
 
@@ -54,18 +57,23 @@ object System:
   // the current mutable backing ref after `setOut`/`setErr`/`setIn`.
   def in: InputStream | Null = inRef
 
-  def out: PrintStream = outRef
+  // Getter signature matches the JDK: a non-null `PrintStream`. If the
+  // ref was set to null via `setOut`/`setErr`, the unchecked widening
+  // mirrors the JVM's behaviour where reading the static `out`/`err`
+  // field hands a null reference back to the caller, who NPEs on first
+  // use rather than at the read.
+  def out: PrintStream = outRef.asInstanceOf[PrintStream]
 
-  def err: PrintStream = errRef
+  def err: PrintStream = errRef.asInstanceOf[PrintStream]
 
   def setIn(in: InputStream | Null): Unit =
     inRef = in
 
   def setOut(out: PrintStream): Unit =
-    outRef = ThrowablesSupport.requireNonNull(out)
+    outRef = out
 
   def setErr(err: PrintStream): Unit =
-    errRef = ThrowablesSupport.requireNonNull(err)
+    errRef = err
 
   def currentTimeMillis(): scala.Long =
     PyTime.time_ns() / 1000000L
