@@ -35,39 +35,44 @@ import scala.util.hashing.Hashing
   *  Atomicity is trivially provided by single-threaded execution: every
   *  operation on the underlying `mutable.HashMap` runs to completion before
   *  the next one starts.
+  *
+  *  Custom `Hashing` / `Equiv` (the `(hashf, ef)` ctor) is honoured at
+  *  lookup time by wrapping every key in a `KeyBox` whose `hashCode` /
+  *  `equals` route through the user-supplied functions. The default no-arg
+  *  ctor passes `Hashing.default` / `Equiv.universal`, which round-trip
+  *  through `K###` and `K#==` — preserving the original semantics of the
+  *  thin-wrapper version.
   */
 @SerialVersionUID(1L)
-final class TrieMap[K, V] private (private val underlying: mutable.HashMap[K, V])
+final class TrieMap[K, V] private (
+    private val hashf: Hashing[K],
+    private val ef: Equiv[K],
+    private val underlying: mutable.HashMap[TrieMap.KeyBox[K], V]
+)
   extends scala.collection.mutable.AbstractMap[K, V]
     with scala.collection.concurrent.Map[K, V]
     with scala.collection.mutable.MapOps[K, V, TrieMap, TrieMap[K, V]]
     with scala.collection.MapFactoryDefaults[K, V, TrieMap, mutable.Iterable]
     with DefaultSerializable {
 
-  def this() = this(new mutable.HashMap[K, V])
+  def this() =
+    this(Hashing.default[K], Equiv.universal[K], new mutable.HashMap[TrieMap.KeyBox[K], V])
 
-  /** JDK-shape ctor accepting custom `Hashing` and `Equiv`. The
-   *  upstream `TrieMap` honours these per-key when bucketing nodes;
-   *  this single-threaded shim defers to `mutable.HashMap`, which
-   *  uses the runtime `##` and `==` of the keys directly. The
-   *  arguments are accepted for API compatibility (so stdlib code
-   *  and user fixtures that construct `new TrieMap(hashf, ef)` link
-   *  cleanly), but they are NOT consulted at lookup/equality time.
-   *  Code that depends on custom `Hashing`/`Equiv` semantics needs
-   *  to use `mutable.HashMap` with a wrapping key type instead.
-   */
   def this(hashf: Hashing[K], ef: Equiv[K]) =
-    this(new mutable.HashMap[K, V])
+    this(hashf, ef, new mutable.HashMap[TrieMap.KeyBox[K], V])
 
   override def mapFactory: MapFactory[TrieMap] = TrieMap
 
   override protected def className: String = "TrieMap"
 
+  private def box(k: K): TrieMap.KeyBox[K] = new TrieMap.KeyBox(k, hashf, ef)
+
   // --- core mutable.Map API ---------------------------------------------
 
-  override def get(key: K): Option[V] = underlying.get(key)
+  override def get(key: K): Option[V] = underlying.get(box(key))
 
-  override def iterator: Iterator[(K, V)] = underlying.iterator
+  override def iterator: Iterator[(K, V)] =
+    underlying.iterator.map { case (kb, v) => (kb.key, v) }
 
   override def size: Int = underlying.size
 
@@ -75,58 +80,70 @@ final class TrieMap[K, V] private (private val underlying: mutable.HashMap[K, V]
 
   override def isEmpty: Boolean = underlying.isEmpty
 
-  override def contains(key: K): Boolean = underlying.contains(key)
+  override def contains(key: K): Boolean = underlying.contains(box(key))
 
-  override def apply(key: K): V = underlying.apply(key)
+  override def apply(key: K): V = underlying.apply(box(key))
 
-  override def put(key: K, value: V): Option[V] = underlying.put(key, value)
+  override def put(key: K, value: V): Option[V] = underlying.put(box(key), value)
 
-  override def update(key: K, value: V): Unit = underlying.update(key, value)
+  override def update(key: K, value: V): Unit = underlying.update(box(key), value)
 
-  override def remove(key: K): Option[V] = underlying.remove(key)
+  override def remove(key: K): Option[V] = underlying.remove(box(key))
 
   def addOne(kv: (K, V)): this.type = {
-    underlying.addOne(kv)
+    underlying.update(box(kv._1), kv._2)
     this
   }
 
   def subtractOne(key: K): this.type = {
-    underlying.subtractOne(key)
+    underlying.remove(box(key))
     this
   }
 
   override def clear(): Unit = underlying.clear()
 
-  override def clone(): TrieMap[K, V] = new TrieMap(underlying.clone())
+  override def clone(): TrieMap[K, V] = new TrieMap(hashf, ef, underlying.clone())
 
   // --- concurrent.Map API -----------------------------------------------
 
-  def putIfAbsent(key: K, value: V): Option[V] = underlying.get(key) match {
-    case some @ Some(_) => some
-    case None =>
-      underlying.update(key, value)
-      None
+  def putIfAbsent(key: K, value: V): Option[V] = {
+    val b = box(key)
+    underlying.get(b) match {
+      case some @ Some(_) => some
+      case None =>
+        underlying.update(b, value)
+        None
+    }
   }
 
-  def remove(key: K, value: V): Boolean = underlying.get(key) match {
-    case Some(v) if v == value =>
-      underlying.remove(key)
-      true
-    case _ => false
+  def remove(key: K, value: V): Boolean = {
+    val b = box(key)
+    underlying.get(b) match {
+      case Some(v) if v == value =>
+        underlying.remove(b)
+        true
+      case _ => false
+    }
   }
 
-  def replace(key: K, oldValue: V, newValue: V): Boolean = underlying.get(key) match {
-    case Some(v) if v == oldValue =>
-      underlying.update(key, newValue)
-      true
-    case _ => false
+  def replace(key: K, oldValue: V, newValue: V): Boolean = {
+    val b = box(key)
+    underlying.get(b) match {
+      case Some(v) if v == oldValue =>
+        underlying.update(b, newValue)
+        true
+      case _ => false
+    }
   }
 
-  def replace(key: K, value: V): Option[V] = underlying.get(key) match {
-    case some @ Some(_) =>
-      underlying.update(key, value)
-      some
-    case None => None
+  def replace(key: K, value: V): Option[V] = {
+    val b = box(key)
+    underlying.get(b) match {
+      case some @ Some(_) =>
+        underlying.update(b, value)
+        some
+      case None => None
+    }
   }
 
   // --- snapshot helpers (single-threaded: just return clones) -----------
@@ -134,10 +151,17 @@ final class TrieMap[K, V] private (private val underlying: mutable.HashMap[K, V]
   /** Returns an independent (cloned) copy of this map, since the Python
     *  backend is single-threaded and no concurrent rewriting is needed.
     */
-  def snapshot(): TrieMap[K, V] = new TrieMap(underlying.clone())
+  def snapshot(): TrieMap[K, V] = new TrieMap(hashf, ef, underlying.clone())
 
-  /** Returns a read-only view of a snapshot of this map. */
-  def readOnlySnapshot(): scala.collection.Map[K, V] = underlying.clone()
+  /** Returns a read-only view of a snapshot of this map. The view is a
+   *  plain `HashMap[K, V]` keyed by raw `K` (Hashing/Equiv are baked into
+   *  the box; once unwrapped, raw `==` semantics apply).
+   */
+  def readOnlySnapshot(): scala.collection.Map[K, V] = {
+    val snap = scala.collection.mutable.HashMap.empty[K, V]
+    iterator.foreach { case (k, v) => snap += k -> v }
+    snap
+  }
 
   def isReadOnly: Boolean = false
 
@@ -157,4 +181,22 @@ object TrieMap extends MapFactory[TrieMap] {
 
   def newBuilder[K, V]: mutable.GrowableBuilder[(K, V), TrieMap[K, V]] =
     new GrowableBuilder(empty[K, V])
+
+  /** Wraps a key so the underlying `mutable.HashMap` routes
+   *  `hashCode` / `equals` through the user-supplied `Hashing` /
+   *  `Equiv`. The default ctor uses `Hashing.default` / `Equiv.universal`,
+   *  which round-trip through `K###` / `K#==`, matching the original
+   *  thin-wrapper semantics.
+   */
+  private[concurrent] final class KeyBox[K](
+      val key: K,
+      private val hashf: Hashing[K],
+      private val ef: Equiv[K]
+  ) {
+    override def hashCode(): Int = hashf.hash(key)
+    override def equals(that: Any): Boolean = that match {
+      case other: KeyBox[?] => ef.equiv(key, other.key.asInstanceOf[K])
+      case _                => false
+    }
+  }
 }
