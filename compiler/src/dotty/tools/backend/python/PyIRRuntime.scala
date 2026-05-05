@@ -716,7 +716,7 @@ object PyIRRuntime:
        |        # `requireNonNull`). Raising the class by bare Python
        |        # name here would hit `NameError` in tests that don't
        |        # otherwise reference `IllegalMonitorStateException`.
-       |        ${mod(PyClassName("java.lang.ThrowablesSupport$"))}.throwIllegalMonitorState__V()
+       |        ${mod(PyClassName("java.lang.ThrowablesSupport$"))}.${m("throwIllegalMonitorState")(V)}()
        |    return monitor
        |
        |def _scpy_object_wait(obj, timeout_seconds=None):
@@ -749,22 +749,22 @@ object PyIRRuntime:
        |    def __str__(self):
        |        return self.${m("toString")(StrRef)}()
        |
-       |    def wait__V(self):
+       |    def ${m("wait")(V)}(self):
        |        return _scpy_object_wait(self)
        |
-       |    def wait__J__V(self, millis):
+       |    def ${m("wait", J)(V)}(self, millis):
        |        timeout = None if millis == 0 else millis / 1000.0
        |        return _scpy_object_wait(self, timeout)
        |
-       |    def wait__J_I__V(self, millis, nanos):
+       |    def ${m("wait", J, I)(V)}(self, millis, nanos):
        |        total_nanos = millis * 1000000 + nanos
        |        timeout = None if total_nanos == 0 else total_nanos / 1000000000.0
        |        return _scpy_object_wait(self, timeout)
        |
-       |    def notify__V(self):
+       |    def ${m("notify")(V)}(self):
        |        return _scpy_object_notify(self)
        |
-       |    def notifyAll__V(self):
+       |    def ${m("notifyAll")(V)}(self):
        |        return _scpy_object_notify_all(self)
        |
        |_scpy_class_registry = {}
@@ -875,7 +875,7 @@ object PyIRRuntime:
        |                name = name[dot + 1:]
        |        return name
        |
-       |    def getSuperclass__Ljava_dlang_dClass(self):
+       |    def ${m("getSuperclass")(ClsRef)}(self):
        |        if self._scpy_kind == "primitive" or self._scpy_kind == "interface":
        |            return None
        |        if self._scpy_kind == "array":
@@ -886,7 +886,7 @@ object PyIRRuntime:
        |            return _scpy_class_of_name("java.lang.Object")
        |        return _scpy_class_of_name(self._scpy_superclass_name)
        |
-       |    def getInterfaces__ALjava_dlang_dClass(self):
+       |    def ${m("getInterfaces")(PyArrayRef(ClsRef, 1))}(self):
        |        if self._scpy_kind == "array":
        |            names = ("java.lang.Cloneable", "java.io.Serializable")
        |        else:
@@ -926,10 +926,10 @@ object PyIRRuntime:
        |    # the path most callers (e.g. `scala.util.Properties.scalaProps`
        |    # via `getResourceAsStream("/library.properties")`) already
        |    # handle by falling through to defaults.
-       |    def getResourceAsStream__Ljava_dlang_dString__Ljava_dio_dInputStream(self, name):
+       |    def ${m("getResourceAsStream", StrRef)(PyClassRef(PyClassName("java.io.InputStream")))}(self, name):
        |        return None
        |
-       |    def getResource__Ljava_dlang_dString__Ljava_dnet_dURL(self, name):
+       |    def ${m("getResource", StrRef)(PyClassRef(PyClassName("java.net.URL")))}(self, name):
        |        return None
        |
        |    # --- Reflection stubs ---
@@ -944,61 +944,61 @@ object PyIRRuntime:
        |    # `AssertionError`s in user code that consumed the result).
        |    # Cheap intrinsic ops above (`getName`, `getSimpleName`,
        |    # `isArray`, `getSuperclass`, etc.) remain supported.
-       |    def getDeclaredFields__ALjava_dlang_dreflect_dField(self):
+       |    def ${m("getDeclaredFields")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.Field")), 1))}(self):
        |        raise _scpy_reflection_unsupported("getDeclaredFields")
        |
-       |    def getFields__ALjava_dlang_dreflect_dField(self):
+       |    def ${m("getFields")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.Field")), 1))}(self):
        |        raise _scpy_reflection_unsupported("getFields")
        |
-       |    def getDeclaredMethods__ALjava_dlang_dreflect_dMethod(self):
+       |    def ${m("getDeclaredMethods")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.Method")), 1))}(self):
        |        raise _scpy_reflection_unsupported("getDeclaredMethods")
        |
-       |    def getMethods__ALjava_dlang_dreflect_dMethod(self):
+       |    def ${m("getMethods")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.Method")), 1))}(self):
        |        raise _scpy_reflection_unsupported("getMethods")
        |
-       |    def getDeclaredConstructors__ALjava_dlang_dreflect_dConstructor(self):
+       |    def ${m("getDeclaredConstructors")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.Constructor")), 1))}(self):
        |        raise _scpy_reflection_unsupported("getDeclaredConstructors")
        |
-       |    def getConstructors__ALjava_dlang_dreflect_dConstructor(self):
+       |    def ${m("getConstructors")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.Constructor")), 1))}(self):
        |        raise _scpy_reflection_unsupported("getConstructors")
        |
-       |    def getDeclaredClasses__ALjava_dlang_dClass(self):
+       |    def ${m("getDeclaredClasses")(PyArrayRef(ClsRef, 1))}(self):
        |        raise _scpy_reflection_unsupported("getDeclaredClasses")
        |
-       |    def getClasses__ALjava_dlang_dClass(self):
+       |    def ${m("getClasses")(PyArrayRef(ClsRef, 1))}(self):
        |        raise _scpy_reflection_unsupported("getClasses")
        |
-       |    def getGenericInterfaces__ALjava_dlang_dreflect_dType(self):
+       |    def ${m("getGenericInterfaces")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.Type")), 1))}(self):
        |        raise _scpy_reflection_unsupported("getGenericInterfaces")
        |
-       |    def getGenericSuperclass__Ljava_dlang_dreflect_dType(self):
+       |    def ${m("getGenericSuperclass")(PyClassRef(PyClassName("java.lang.reflect.Type")))}(self):
        |        raise _scpy_reflection_unsupported("getGenericSuperclass")
        |
-       |    def getTypeParameters__ALjava_dlang_dreflect_dTypeVariable(self):
+       |    def ${m("getTypeParameters")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.TypeVariable")), 1))}(self):
        |        raise _scpy_reflection_unsupported("getTypeParameters")
        |
-       |    def getDeclaredField__Ljava_dlang_dString__Ljava_dlang_dreflect_dField(self, name):
+       |    def ${m("getDeclaredField", StrRef)(PyClassRef(PyClassName("java.lang.reflect.Field")))}(self, name):
        |        raise _scpy_reflection_unsupported("getDeclaredField")
        |
-       |    def getField__Ljava_dlang_dString__Ljava_dlang_dreflect_dField(self, name):
+       |    def ${m("getField", StrRef)(PyClassRef(PyClassName("java.lang.reflect.Field")))}(self, name):
        |        raise _scpy_reflection_unsupported("getField")
        |
-       |    def getDeclaredMethod__Ljava_dlang_dString_ALjava_dlang_dClass__Ljava_dlang_dreflect_dMethod(self, name, *_args):
+       |    def ${m("getDeclaredMethod", StrRef, PyArrayRef(ClsRef, 1))(PyClassRef(PyClassName("java.lang.reflect.Method")))}(self, name, *_args):
        |        raise _scpy_reflection_unsupported("getDeclaredMethod")
        |
-       |    def getMethod__Ljava_dlang_dString_ALjava_dlang_dClass__Ljava_dlang_dreflect_dMethod(self, name, *_args):
+       |    def ${m("getMethod", StrRef, PyArrayRef(ClsRef, 1))(PyClassRef(PyClassName("java.lang.reflect.Method")))}(self, name, *_args):
        |        raise _scpy_reflection_unsupported("getMethod")
        |
-       |    def getDeclaredConstructor__ALjava_dlang_dClass__Ljava_dlang_dreflect_dConstructor(self, *_args):
+       |    def ${m("getDeclaredConstructor", PyArrayRef(ClsRef, 1))(PyClassRef(PyClassName("java.lang.reflect.Constructor")))}(self, *_args):
        |        raise _scpy_reflection_unsupported("getDeclaredConstructor")
        |
-       |    def getConstructor__ALjava_dlang_dClass__Ljava_dlang_dreflect_dConstructor(self, *_args):
+       |    def ${m("getConstructor", PyArrayRef(ClsRef, 1))(PyClassRef(PyClassName("java.lang.reflect.Constructor")))}(self, *_args):
        |        raise _scpy_reflection_unsupported("getConstructor")
        |
-       |    def getEnclosingMethod__Ljava_dlang_dreflect_dMethod(self):
+       |    def ${m("getEnclosingMethod")(PyClassRef(PyClassName("java.lang.reflect.Method")))}(self):
        |        raise _scpy_reflection_unsupported("getEnclosingMethod")
        |
-       |    def getEnclosingConstructor__Ljava_dlang_dreflect_dConstructor(self):
+       |    def ${m("getEnclosingConstructor")(PyClassRef(PyClassName("java.lang.reflect.Constructor")))}(self):
        |        raise _scpy_reflection_unsupported("getEnclosingConstructor")
        |
        |    def ${m("getEnclosingClass")(ClsRef)}(self):
@@ -1007,10 +1007,10 @@ object PyIRRuntime:
        |    def ${m("getDeclaringClass")(ClsRef)}(self):
        |        raise _scpy_reflection_unsupported("getDeclaringClass")
        |
-       |    def getEnumConstants__ALjava_dlang_dObject(self):
+       |    def ${m("getEnumConstants")(PyArrayRef(ObjRef, 1))}(self):
        |        raise _scpy_reflection_unsupported("getEnumConstants")
        |
-       |    def getModifiers__I(self):
+       |    def ${m("getModifiers")(I)}(self):
        |        return 0
        |
        |    def ${m("getCanonicalName")(StrRef)}(self):
@@ -1021,12 +1021,12 @@ object PyIRRuntime:
        |            return self._scpy_jvm_name
        |        return self._scpy_name
        |
-       |    def getTypeName__Ljava_dlang_dString(self):
+       |    def ${m("getTypeName")(StrRef)}(self):
        |        if self._scpy_jvm_name is not None:
        |            return self._scpy_jvm_name
        |        return self._scpy_name
        |
-       |    def getPackageName__Ljava_dlang_dString(self):
+       |    def ${m("getPackageName")(StrRef)}(self):
        |        # Use the JVM-shaped name when present so the package
        |        # qualifier is split at the right `.` boundary; the
        |        # encoded `_scpy_name` shares the same package prefix
@@ -1036,94 +1036,94 @@ object PyIRRuntime:
        |        dot = name.rfind(".")
        |        return name[:dot] if dot >= 0 else ""
        |
-       |    def getPackage__Ljava_dlang_dPackage(self):
+       |    def ${m("getPackage")(PyClassRef(PyClassName("java.lang.Package")))}(self):
        |        return None
        |
-       |    def getSigners__ALjava_dlang_dObject(self):
+       |    def ${m("getSigners")(PyArrayRef(ObjRef, 1))}(self):
        |        return None
        |
-       |    def getNestHost__Ljava_dlang_dClass(self):
+       |    def ${m("getNestHost")(ClsRef)}(self):
        |        return self
        |
-       |    def getNestMembers__ALjava_dlang_dClass(self):
+       |    def ${m("getNestMembers")(PyArrayRef(ClsRef, 1))}(self):
        |        return _scpy_array_value(_scpy_class_of_name("java.lang.Class"), [self])
        |
-       |    def getPermittedSubclasses__ALjava_dlang_dClass(self):
+       |    def ${m("getPermittedSubclasses")(PyArrayRef(ClsRef, 1))}(self):
        |        return None
        |
-       |    def getRecordComponents__ALjava_dlang_dreflect_dRecordComponent(self):
+       |    def ${m("getRecordComponents")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.RecordComponent")), 1))}(self):
        |        return None
        |
-       |    def getProtectionDomain__Ljava_dsecurity_dProtectionDomain(self):
+       |    def ${m("getProtectionDomain")(PyClassRef(PyClassName("java.security.ProtectionDomain")))}(self):
        |        return None
        |
        |    # Annotation reflection: per the Wave 5 policy, all of these
        |    # raise UnsupportedOperationException too. The runtime cannot
        |    # reconstruct annotation instances from PyIR.
-       |    def getAnnotation__Ljava_dlang_dClass__Ljava_dlang_dannotation_dAnnotation(self, ann_class):
+       |    def ${m("getAnnotation", ClsRef)(PyClassRef(PyClassName("java.lang.annotation.Annotation")))}(self, ann_class):
        |        raise _scpy_reflection_unsupported("getAnnotation")
        |
-       |    def getAnnotationsByType__Ljava_dlang_dClass__ALjava_dlang_dannotation_dAnnotation(self, ann_class):
+       |    def ${m("getAnnotationsByType", ClsRef)(PyArrayRef(PyClassRef(PyClassName("java.lang.annotation.Annotation")), 1))}(self, ann_class):
        |        raise _scpy_reflection_unsupported("getAnnotationsByType")
        |
-       |    def getAnnotations__ALjava_dlang_dannotation_dAnnotation(self):
+       |    def ${m("getAnnotations")(PyArrayRef(PyClassRef(PyClassName("java.lang.annotation.Annotation")), 1))}(self):
        |        raise _scpy_reflection_unsupported("getAnnotations")
        |
-       |    def getDeclaredAnnotations__ALjava_dlang_dannotation_dAnnotation(self):
+       |    def ${m("getDeclaredAnnotations")(PyArrayRef(PyClassRef(PyClassName("java.lang.annotation.Annotation")), 1))}(self):
        |        raise _scpy_reflection_unsupported("getDeclaredAnnotations")
        |
-       |    def getDeclaredAnnotation__Ljava_dlang_dClass__Ljava_dlang_dannotation_dAnnotation(self, ann_class):
+       |    def ${m("getDeclaredAnnotation", ClsRef)(PyClassRef(PyClassName("java.lang.annotation.Annotation")))}(self, ann_class):
        |        raise _scpy_reflection_unsupported("getDeclaredAnnotation")
        |
-       |    def getDeclaredAnnotationsByType__Ljava_dlang_dClass__ALjava_dlang_dannotation_dAnnotation(self, ann_class):
+       |    def ${m("getDeclaredAnnotationsByType", ClsRef)(PyArrayRef(PyClassRef(PyClassName("java.lang.annotation.Annotation")), 1))}(self, ann_class):
        |        raise _scpy_reflection_unsupported("getDeclaredAnnotationsByType")
        |
-       |    def isAnnotationPresent__Ljava_dlang_dClass__Z(self, ann_class):
+       |    def ${m("isAnnotationPresent", ClsRef)(Z)}(self, ann_class):
        |        raise _scpy_reflection_unsupported("isAnnotationPresent")
        |
-       |    def isAnonymousClass__Z(self):
+       |    def ${m("isAnonymousClass")(Z)}(self):
        |        return False
        |
-       |    def isLocalClass__Z(self):
+       |    def ${m("isLocalClass")(Z)}(self):
        |        return False
        |
-       |    def isMemberClass__Z(self):
+       |    def ${m("isMemberClass")(Z)}(self):
        |        return False
        |
-       |    def isSynthetic__Z(self):
+       |    def ${m("isSynthetic")(Z)}(self):
        |        return False
        |
-       |    def isEnum__Z(self):
+       |    def ${m("isEnum")(Z)}(self):
        |        return False
        |
-       |    def isAnnotation__Z(self):
+       |    def ${m("isAnnotation")(Z)}(self):
        |        return False
        |
-       |    def isRecord__Z(self):
+       |    def ${m("isRecord")(Z)}(self):
        |        return False
        |
-       |    def isHidden__Z(self):
+       |    def ${m("isHidden")(Z)}(self):
        |        return False
        |
-       |    def isSealed__Z(self):
+       |    def ${m("isSealed")(Z)}(self):
        |        return False
        |
-       |    def desiredAssertionStatus__Z(self):
+       |    def ${m("desiredAssertionStatus")(Z)}(self):
        |        return False
        |
-       |    def asSubclass__Ljava_dlang_dClass__Ljava_dlang_dClass(self, other):
+       |    def ${m("asSubclass", ClsRef)(ClsRef)}(self, other):
        |        return self
        |
-       |    def cast__Ljava_dlang_dObject__Ljava_dlang_dObject(self, value):
+       |    def ${m("cast", ObjRef)(ObjRef)}(self, value):
        |        return value
        |
-       |    def newInstance__Ljava_dlang_dObject(self):
+       |    def ${m("newInstance")(ObjRef)}(self):
        |        # `Class.newInstance()` is part of the JVM-reflection
        |        # surface; the Python backend does not support it (see
        |        # notes/wave5-worklist/01-reflection-unsupported-and-blacklist.md).
        |        raise _scpy_reflection_unsupported("newInstance")
        |
-       |    def toGenericString__Ljava_dlang_dString(self):
+       |    def ${m("toGenericString")(StrRef)}(self):
        |        return self.${m("toString")(StrRef)}()
        |
        |    def ${m("toString")(StrRef)}(self):
@@ -1153,107 +1153,107 @@ object PyIRRuntime:
        |        if name.startswith("getCanonicalName"):
        |            return self.${m("getCanonicalName")(StrRef)}
        |        if name.startswith("getTypeName"):
-       |            return self.getTypeName__Ljava_dlang_dString
+       |            return self.${m("getTypeName")(StrRef)}
        |        if name.startswith("getPackageName"):
-       |            return self.getPackageName__Ljava_dlang_dString
+       |            return self.${m("getPackageName")(StrRef)}
        |        if name.startswith("getPackage"):
-       |            return self.getPackage__Ljava_dlang_dPackage
+       |            return self.${m("getPackage")(PyClassRef(PyClassName("java.lang.Package")))}
        |        if name.startswith("getSuperclass"):
-       |            return self.getSuperclass__Ljava_dlang_dClass
+       |            return self.${m("getSuperclass")(ClsRef)}
        |        if name.startswith("getGenericSuperclass"):
-       |            return self.getGenericSuperclass__Ljava_dlang_dreflect_dType
+       |            return self.${m("getGenericSuperclass")(PyClassRef(PyClassName("java.lang.reflect.Type")))}
        |        if name.startswith("getGenericInterfaces"):
-       |            return self.getGenericInterfaces__ALjava_dlang_dreflect_dType
+       |            return self.${m("getGenericInterfaces")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.Type")), 1))}
        |        if name.startswith("getInterfaces"):
-       |            return self.getInterfaces__ALjava_dlang_dClass
+       |            return self.${m("getInterfaces")(PyArrayRef(ClsRef, 1))}
        |        if name.startswith("getComponentType"):
        |            return self.${m("getComponentType")(ClsRef)}
        |        if name.startswith("getTypeParameters"):
-       |            return self.getTypeParameters__ALjava_dlang_dreflect_dTypeVariable
+       |            return self.${m("getTypeParameters")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.TypeVariable")), 1))}
        |        if name.startswith("getDeclaredFields"):
-       |            return self.getDeclaredFields__ALjava_dlang_dreflect_dField
+       |            return self.${m("getDeclaredFields")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.Field")), 1))}
        |        if name.startswith("getDeclaredField"):
-       |            return self.getDeclaredField__Ljava_dlang_dString__Ljava_dlang_dreflect_dField
+       |            return self.${m("getDeclaredField", StrRef)(PyClassRef(PyClassName("java.lang.reflect.Field")))}
        |        if name.startswith("getFields"):
-       |            return self.getFields__ALjava_dlang_dreflect_dField
+       |            return self.${m("getFields")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.Field")), 1))}
        |        if name.startswith("getField"):
-       |            return self.getField__Ljava_dlang_dString__Ljava_dlang_dreflect_dField
+       |            return self.${m("getField", StrRef)(PyClassRef(PyClassName("java.lang.reflect.Field")))}
        |        if name.startswith("getDeclaredMethods"):
-       |            return self.getDeclaredMethods__ALjava_dlang_dreflect_dMethod
+       |            return self.${m("getDeclaredMethods")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.Method")), 1))}
        |        if name.startswith("getDeclaredMethod"):
-       |            return self.getDeclaredMethod__Ljava_dlang_dString_ALjava_dlang_dClass__Ljava_dlang_dreflect_dMethod
+       |            return self.${m("getDeclaredMethod", StrRef, PyArrayRef(ClsRef, 1))(PyClassRef(PyClassName("java.lang.reflect.Method")))}
        |        if name.startswith("getMethods"):
-       |            return self.getMethods__ALjava_dlang_dreflect_dMethod
+       |            return self.${m("getMethods")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.Method")), 1))}
        |        if name.startswith("getMethod"):
-       |            return self.getMethod__Ljava_dlang_dString_ALjava_dlang_dClass__Ljava_dlang_dreflect_dMethod
+       |            return self.${m("getMethod", StrRef, PyArrayRef(ClsRef, 1))(PyClassRef(PyClassName("java.lang.reflect.Method")))}
        |        if name.startswith("getDeclaredConstructors"):
-       |            return self.getDeclaredConstructors__ALjava_dlang_dreflect_dConstructor
+       |            return self.${m("getDeclaredConstructors")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.Constructor")), 1))}
        |        if name.startswith("getDeclaredConstructor"):
-       |            return self.getDeclaredConstructor__ALjava_dlang_dClass__Ljava_dlang_dreflect_dConstructor
+       |            return self.${m("getDeclaredConstructor", PyArrayRef(ClsRef, 1))(PyClassRef(PyClassName("java.lang.reflect.Constructor")))}
        |        if name.startswith("getConstructors"):
-       |            return self.getConstructors__ALjava_dlang_dreflect_dConstructor
+       |            return self.${m("getConstructors")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.Constructor")), 1))}
        |        if name.startswith("getConstructor"):
-       |            return self.getConstructor__ALjava_dlang_dClass__Ljava_dlang_dreflect_dConstructor
+       |            return self.${m("getConstructor", PyArrayRef(ClsRef, 1))(PyClassRef(PyClassName("java.lang.reflect.Constructor")))}
        |        if name.startswith("getDeclaredClasses"):
-       |            return self.getDeclaredClasses__ALjava_dlang_dClass
+       |            return self.${m("getDeclaredClasses")(PyArrayRef(ClsRef, 1))}
        |        if name.startswith("getClasses"):
-       |            return self.getClasses__ALjava_dlang_dClass
+       |            return self.${m("getClasses")(PyArrayRef(ClsRef, 1))}
        |        if name.startswith("getEnclosingMethod"):
-       |            return self.getEnclosingMethod__Ljava_dlang_dreflect_dMethod
+       |            return self.${m("getEnclosingMethod")(PyClassRef(PyClassName("java.lang.reflect.Method")))}
        |        if name.startswith("getEnclosingConstructor"):
-       |            return self.getEnclosingConstructor__Ljava_dlang_dreflect_dConstructor
+       |            return self.${m("getEnclosingConstructor")(PyClassRef(PyClassName("java.lang.reflect.Constructor")))}
        |        if name.startswith("getEnclosingClass"):
        |            return self.${m("getEnclosingClass")(ClsRef)}
        |        if name.startswith("getDeclaringClass"):
        |            return self.${m("getDeclaringClass")(ClsRef)}
        |        if name.startswith("getEnumConstants"):
-       |            return self.getEnumConstants__ALjava_dlang_dObject
+       |            return self.${m("getEnumConstants")(PyArrayRef(ObjRef, 1))}
        |        if name.startswith("getModifiers"):
-       |            return self.getModifiers__I
+       |            return self.${m("getModifiers")(I)}
        |        if name.startswith("getNestHost"):
-       |            return self.getNestHost__Ljava_dlang_dClass
+       |            return self.${m("getNestHost")(ClsRef)}
        |        if name.startswith("getNestMembers"):
-       |            return self.getNestMembers__ALjava_dlang_dClass
+       |            return self.${m("getNestMembers")(PyArrayRef(ClsRef, 1))}
        |        if name.startswith("getPermittedSubclasses"):
-       |            return self.getPermittedSubclasses__ALjava_dlang_dClass
+       |            return self.${m("getPermittedSubclasses")(PyArrayRef(ClsRef, 1))}
        |        if name.startswith("getRecordComponents"):
-       |            return self.getRecordComponents__ALjava_dlang_dreflect_dRecordComponent
+       |            return self.${m("getRecordComponents")(PyArrayRef(PyClassRef(PyClassName("java.lang.reflect.RecordComponent")), 1))}
        |        if name.startswith("getProtectionDomain"):
-       |            return self.getProtectionDomain__Ljava_dsecurity_dProtectionDomain
+       |            return self.${m("getProtectionDomain")(PyClassRef(PyClassName("java.security.ProtectionDomain")))}
        |        if name.startswith("getSigners"):
-       |            return self.getSigners__ALjava_dlang_dObject
+       |            return self.${m("getSigners")(PyArrayRef(ObjRef, 1))}
        |        if name.startswith("getDeclaredAnnotations"):
-       |            return self.getDeclaredAnnotations__ALjava_dlang_dannotation_dAnnotation
+       |            return self.${m("getDeclaredAnnotations")(PyArrayRef(PyClassRef(PyClassName("java.lang.annotation.Annotation")), 1))}
        |        if name.startswith("getDeclaredAnnotationsByType"):
-       |            return self.getDeclaredAnnotationsByType__Ljava_dlang_dClass__ALjava_dlang_dannotation_dAnnotation
+       |            return self.${m("getDeclaredAnnotationsByType", ClsRef)(PyArrayRef(PyClassRef(PyClassName("java.lang.annotation.Annotation")), 1))}
        |        if name.startswith("getDeclaredAnnotation"):
-       |            return self.getDeclaredAnnotation__Ljava_dlang_dClass__Ljava_dlang_dannotation_dAnnotation
+       |            return self.${m("getDeclaredAnnotation", ClsRef)(PyClassRef(PyClassName("java.lang.annotation.Annotation")))}
        |        if name.startswith("getAnnotationsByType"):
-       |            return self.getAnnotationsByType__Ljava_dlang_dClass__ALjava_dlang_dannotation_dAnnotation
+       |            return self.${m("getAnnotationsByType", ClsRef)(PyArrayRef(PyClassRef(PyClassName("java.lang.annotation.Annotation")), 1))}
        |        if name.startswith("getAnnotations"):
-       |            return self.getAnnotations__ALjava_dlang_dannotation_dAnnotation
+       |            return self.${m("getAnnotations")(PyArrayRef(PyClassRef(PyClassName("java.lang.annotation.Annotation")), 1))}
        |        if name.startswith("getAnnotation"):
-       |            return self.getAnnotation__Ljava_dlang_dClass__Ljava_dlang_dannotation_dAnnotation
+       |            return self.${m("getAnnotation", ClsRef)(PyClassRef(PyClassName("java.lang.annotation.Annotation")))}
        |        if name.startswith("isAnnotationPresent"):
-       |            return self.isAnnotationPresent__Ljava_dlang_dClass__Z
+       |            return self.${m("isAnnotationPresent", ClsRef)(Z)}
        |        if name.startswith("isAnnotation"):
-       |            return self.isAnnotation__Z
+       |            return self.${m("isAnnotation")(Z)}
        |        if name.startswith("isAnonymousClass"):
-       |            return self.isAnonymousClass__Z
+       |            return self.${m("isAnonymousClass")(Z)}
        |        if name.startswith("isLocalClass"):
-       |            return self.isLocalClass__Z
+       |            return self.${m("isLocalClass")(Z)}
        |        if name.startswith("isMemberClass"):
-       |            return self.isMemberClass__Z
+       |            return self.${m("isMemberClass")(Z)}
        |        if name.startswith("isSynthetic"):
-       |            return self.isSynthetic__Z
+       |            return self.${m("isSynthetic")(Z)}
        |        if name.startswith("isEnum"):
-       |            return self.isEnum__Z
+       |            return self.${m("isEnum")(Z)}
        |        if name.startswith("isRecord"):
-       |            return self.isRecord__Z
+       |            return self.${m("isRecord")(Z)}
        |        if name.startswith("isHidden"):
-       |            return self.isHidden__Z
+       |            return self.${m("isHidden")(Z)}
        |        if name.startswith("isSealed"):
-       |            return self.isSealed__Z
+       |            return self.${m("isSealed")(Z)}
        |        if name.startswith("isPrimitive"):
        |            return self.${m("isPrimitive")(Z)}
        |        if name.startswith("isInterface"):
@@ -1265,21 +1265,21 @@ object PyIRRuntime:
        |        if name.startswith("isAssignableFrom"):
        |            return self.${m("isAssignableFrom", ClsRef)(Z)}
        |        if name.startswith("desiredAssertionStatus"):
-       |            return self.desiredAssertionStatus__Z
+       |            return self.${m("desiredAssertionStatus")(Z)}
        |        if name.startswith("asSubclass"):
-       |            return self.asSubclass__Ljava_dlang_dClass__Ljava_dlang_dClass
+       |            return self.${m("asSubclass", ClsRef)(ClsRef)}
        |        if name.startswith("cast"):
-       |            return self.cast__Ljava_dlang_dObject__Ljava_dlang_dObject
+       |            return self.${m("cast", ObjRef)(ObjRef)}
        |        if name.startswith("newInstance"):
-       |            return self.newInstance__Ljava_dlang_dObject
+       |            return self.${m("newInstance")(ObjRef)}
        |        if name.startswith("getClassLoader"):
        |            return self.${m("getClassLoader")(PyClassRef(PyClassName("java.lang.ClassLoader")))}
        |        if name.startswith("getResourceAsStream"):
-       |            return self.getResourceAsStream__Ljava_dlang_dString__Ljava_dio_dInputStream
+       |            return self.${m("getResourceAsStream", StrRef)(PyClassRef(PyClassName("java.io.InputStream")))}
        |        if name.startswith("getResource"):
-       |            return self.getResource__Ljava_dlang_dString__Ljava_dnet_dURL
+       |            return self.${m("getResource", StrRef)(PyClassRef(PyClassName("java.net.URL")))}
        |        if name.startswith("toGenericString"):
-       |            return self.toGenericString__Ljava_dlang_dString
+       |            return self.${m("toGenericString")(StrRef)}
        |        if name.startswith("toString"):
        |            return self.${m("toString")(StrRef)}
        |        raise AttributeError(name)
@@ -1328,13 +1328,13 @@ object PyIRRuntime:
        |        # has been DCE'd out of the bundle.
        |        raise Exception("ClassNotFoundException: " + str(name))
        |
-       |    def forName__Ljava_dlang_dString__Ljava_dlang_dClass(self, name):
+       |    def ${m("forName", StrRef)(ClsRef)}(self, name):
        |        return _scpy_ClassModule._scpy_resolve(name)
        |
-       |    def forName__Ljava_dlang_dString_Z_Ljava_dlang_dClassLoader__Ljava_dlang_dClass(self, name, initialize, loader):
+       |    def ${m("forName", StrRef, Z, PyClassRef(PyClassName("java.lang.ClassLoader")))(ClsRef)}(self, name, initialize, loader):
        |        return _scpy_ClassModule._scpy_resolve(name)
        |
-       |    def forName__Ljava_dlang_dString_Ljava_dlang_dModule__Ljava_dlang_dClass(self, name, module):
+       |    def ${m("forName", StrRef, PyClassRef(PyClassName("java.lang.Module")))(ClsRef)}(self, name, module):
        |        return _scpy_ClassModule._scpy_resolve(name)
        |
        |    def __getattr__(self, name):
@@ -1374,7 +1374,7 @@ object PyIRRuntime:
        |    def ${m("getClass")(ClsRef)}(self):
        |        return self._scpy_class
        |
-       |    def clone__Ljava_dlang_dObject(self):
+       |    def ${m("clone")(ObjRef)}(self):
        |        return _scpy_Array(self, self._scpy_class)
        |
        |    def ${m("toString")(StrRef)}(self):
@@ -1394,7 +1394,7 @@ object PyIRRuntime:
        |        return _scpy_descriptor_for_class(self._scpy_class) + "@" + _builtins.format(_builtins.id(self) & 0xFFFFFFFF, "x")
        |
        |    # JVM `Object.hashCode` and `Object.equals` are exposed under
-       |    # both their mangled (`hashCode__I` / `equals__Ljava_dlang_dObject__Z`)
+       |    # both their mangled (`${m("hashCode")(I)}` / `${m("equals", ObjRef)(Z)}`)
        |    # and Python-dunder (`__hash__` / `__eq__`) shapes. The encoder
        |    # rewrites Scala-source `arr.hashCode` to `arr.__hash__()` and
        |    # `arr.equals(x)` to `arr.__eq__(x)` (see `PyEncoding.specialMethodNameOf`),
@@ -1416,7 +1416,7 @@ object PyIRRuntime:
        |            h -= 0x100000000
        |        return h
        |
-       |    def hashCode__I(self):
+       |    def ${m("hashCode")(I)}(self):
        |        return self.__hash__()
        |
        |    def __eq__(self, other):
@@ -1429,7 +1429,7 @@ object PyIRRuntime:
        |    def __ne__(self, other):
        |        return self is not other
        |
-       |    def equals__Ljava_dlang_dObject__Z(self, other):
+       |    def ${m("equals", ObjRef)(Z)}(self, other):
        |        return self is other
        |
        |def _scpy_class_of_name(name, kind="class"):
@@ -1704,7 +1704,7 @@ object PyIRRuntime:
        |class VarHandle(_scpy_Object):
        |    def __init__(self, field_name=None):
        |        self._scpy_field_name = field_name
-       |    def compareAndSet__Ljava_dlang_dObject_Ljava_dlang_dObject_Ljava_dlang_dObject__Z(self, target, expected, replacement):
+       |    def ${m("compareAndSet", ObjRef, ObjRef, ObjRef)(Z)}(self, target, expected, replacement):
        |        current = _builtins.getattr(target, self._scpy_field_name, None)
        |        if current is expected:
        |            _builtins.setattr(target, self._scpy_field_name, replacement)
@@ -1723,9 +1723,9 @@ object PyIRRuntime:
        |    # have a registered component class to point at.
        |    def __init__(self, *_args, **_kw):
        |        pass
-       |    def setAccessible__Z__V(self, flag):
+       |    def ${m("setAccessible", Z)(V)}(self, flag):
        |        pass
-       |    def isAccessible__Z(self):
+       |    def ${m("isAccessible")(Z)}(self):
        |        return False
        |    def __getattr__(self, name):
        |        # Permissive fallback so unforeseen reflective probes
@@ -1779,48 +1779,48 @@ object PyIRRuntime:
        |    ABSTRACT     = 0x00000400
        |    STRICT       = 0x00000800
        |    @staticmethod
-       |    def isPublic__I__Z(mod):       return (mod & Modifier.PUBLIC) != 0
+       |    def ${m("isPublic", I)(Z)}(mod):       return (mod & Modifier.PUBLIC) != 0
        |    @staticmethod
-       |    def isPrivate__I__Z(mod):      return (mod & Modifier.PRIVATE) != 0
+       |    def ${m("isPrivate", I)(Z)}(mod):      return (mod & Modifier.PRIVATE) != 0
        |    @staticmethod
-       |    def isProtected__I__Z(mod):    return (mod & Modifier.PROTECTED) != 0
+       |    def ${m("isProtected", I)(Z)}(mod):    return (mod & Modifier.PROTECTED) != 0
        |    @staticmethod
-       |    def isStatic__I__Z(mod):       return (mod & Modifier.STATIC) != 0
+       |    def ${m("isStatic", I)(Z)}(mod):       return (mod & Modifier.STATIC) != 0
        |    @staticmethod
-       |    def isFinal__I__Z(mod):        return (mod & Modifier.FINAL) != 0
+       |    def ${m("isFinal", I)(Z)}(mod):        return (mod & Modifier.FINAL) != 0
        |    @staticmethod
-       |    def isSynchronized__I__Z(mod): return (mod & Modifier.SYNCHRONIZED) != 0
+       |    def ${m("isSynchronized", I)(Z)}(mod): return (mod & Modifier.SYNCHRONIZED) != 0
        |    @staticmethod
-       |    def isVolatile__I__Z(mod):     return (mod & Modifier.VOLATILE) != 0
+       |    def ${m("isVolatile", I)(Z)}(mod):     return (mod & Modifier.VOLATILE) != 0
        |    @staticmethod
-       |    def isTransient__I__Z(mod):    return (mod & Modifier.TRANSIENT) != 0
+       |    def ${m("isTransient", I)(Z)}(mod):    return (mod & Modifier.TRANSIENT) != 0
        |    @staticmethod
-       |    def isNative__I__Z(mod):       return (mod & Modifier.NATIVE) != 0
+       |    def ${m("isNative", I)(Z)}(mod):       return (mod & Modifier.NATIVE) != 0
        |    @staticmethod
        |    def ${m("isInterface", I)(Z)}(mod):    return (mod & Modifier.INTERFACE) != 0
        |    @staticmethod
-       |    def isAbstract__I__Z(mod):     return (mod & Modifier.ABSTRACT) != 0
+       |    def ${m("isAbstract", I)(Z)}(mod):     return (mod & Modifier.ABSTRACT) != 0
        |    @staticmethod
-       |    def isStrict__I__Z(mod):       return (mod & Modifier.STRICT) != 0
+       |    def ${m("isStrict", I)(Z)}(mod):       return (mod & Modifier.STRICT) != 0
        |    @staticmethod
-       |    def toString__I__Ljava_dlang_dString(mod):
+       |    def ${m("toString", I)(StrRef)}(mod):
        |        return ""
        |    def __getattr__(self, name):
        |        # Static-style dispatch for module-call shape
-       |        # `${mod(PyClassName("java.lang.reflect.Modifier"))}.isPublic__I__Z`.
-       |        if name.startswith("isPublic"):       return Modifier.isPublic__I__Z
-       |        if name.startswith("isPrivate"):      return Modifier.isPrivate__I__Z
-       |        if name.startswith("isProtected"):    return Modifier.isProtected__I__Z
-       |        if name.startswith("isStatic"):       return Modifier.isStatic__I__Z
-       |        if name.startswith("isFinal"):        return Modifier.isFinal__I__Z
-       |        if name.startswith("isSynchronized"): return Modifier.isSynchronized__I__Z
-       |        if name.startswith("isVolatile"):     return Modifier.isVolatile__I__Z
-       |        if name.startswith("isTransient"):    return Modifier.isTransient__I__Z
-       |        if name.startswith("isNative"):       return Modifier.isNative__I__Z
+       |        # `${mod(PyClassName("java.lang.reflect.Modifier"))}.${m("isPublic", I)(Z)}`.
+       |        if name.startswith("isPublic"):       return Modifier.${m("isPublic", I)(Z)}
+       |        if name.startswith("isPrivate"):      return Modifier.${m("isPrivate", I)(Z)}
+       |        if name.startswith("isProtected"):    return Modifier.${m("isProtected", I)(Z)}
+       |        if name.startswith("isStatic"):       return Modifier.${m("isStatic", I)(Z)}
+       |        if name.startswith("isFinal"):        return Modifier.${m("isFinal", I)(Z)}
+       |        if name.startswith("isSynchronized"): return Modifier.${m("isSynchronized", I)(Z)}
+       |        if name.startswith("isVolatile"):     return Modifier.${m("isVolatile", I)(Z)}
+       |        if name.startswith("isTransient"):    return Modifier.${m("isTransient", I)(Z)}
+       |        if name.startswith("isNative"):       return Modifier.${m("isNative", I)(Z)}
        |        if name.startswith("isInterface"):    return Modifier.${m("isInterface", I)(Z)}
-       |        if name.startswith("isAbstract"):     return Modifier.isAbstract__I__Z
-       |        if name.startswith("isStrict"):       return Modifier.isStrict__I__Z
-       |        if name.startswith("toString"):       return Modifier.toString__I__Ljava_dlang_dString
+       |        if name.startswith("isAbstract"):     return Modifier.${m("isAbstract", I)(Z)}
+       |        if name.startswith("isStrict"):       return Modifier.${m("isStrict", I)(Z)}
+       |        if name.startswith("toString"):       return Modifier.${m("toString", I)(StrRef)}
        |        raise AttributeError(name)
        |# Module singleton for `Modifier` so static-style emission resolves.
        |${mod(PyClassName("java.lang.reflect.Modifier"))}  = Modifier()
@@ -1833,17 +1833,17 @@ object PyIRRuntime:
        |    def __init__(self, cause=None, message=None, *_args):
        |        super().__init__(message if message is not None else (str(cause) if cause is not None else ""))
        |        self._scpy_cause = cause
-       |    def getCause__Ljava_dlang_dThrowable(self):
+       |    def ${m("getCause")(PyClassRef(PyClassName("java.lang.Throwable")))}(self):
        |        return self._scpy_cause
-       |    def getTargetException__Ljava_dlang_dThrowable(self):
+       |    def ${m("getTargetException")(PyClassRef(PyClassName("java.lang.Throwable")))}(self):
        |        return self._scpy_cause
        |class Spliterator(_scpy_Object): pass
        |class Reference(_scpy_Object):
        |    def __init__(self, referent=None, *_args):
        |        self._scpy_ref_referent = referent
-       |    def get__Ljava_dlang_dObject(self):
+       |    def ${m("get")(ObjRef)}(self):
        |        return self._scpy_ref_referent
-       |    def clear__V(self):
+       |    def ${m("clear")(V)}(self):
        |        self._scpy_ref_referent = None
        |class WeakReference(Reference): pass
        |class PrimitiveIterator(_scpy_Object): pass
@@ -1856,25 +1856,25 @@ object PyIRRuntime:
        |        self._scpy_enum_name = name
        |        self._scpy_enum_ordinal = ordinal
        |
-       |    def name__Ljava_dlang_dString(self):
+       |    def ${m("name")(StrRef)}(self):
        |        return self._scpy_enum_name
        |
-       |    def ordinal__I(self):
+       |    def ${m("ordinal")(I)}(self):
        |        return self._scpy_enum_ordinal
        |
        |    def ${m("toString")(StrRef)}(self):
        |        return self._scpy_enum_name
        |
-       |    def compareTo__Ljava_dlang_dEnum__I(self, other):
-       |        return self._scpy_enum_ordinal - other.ordinal__I()
+       |    def ${m("compareTo", PyClassRef(PyClassName("java.lang.Enum")))(I)}(self, other):
+       |        return self._scpy_enum_ordinal - other.${m("ordinal")(I)}()
        |
-       |    def compareTo__Ljava_dlang_dObject__I(self, other):
-       |        return self.compareTo__Ljava_dlang_dEnum__I(other)
+       |    def ${m("compareTo", ObjRef)(I)}(self, other):
+       |        return self.${m("compareTo", PyClassRef(PyClassName("java.lang.Enum")))(I)}(other)
        |
-       |    def clone__Ljava_dlang_dObject(self):
+       |    def ${m("clone")(ObjRef)}(self):
        |        raise CloneNotSupportedException("Enums are not cloneable", None)
        |
-       |    def finalize__V(self):
+       |    def ${m("finalize")(V)}(self):
        |        return None
        |
        |    def __str__(self):
@@ -1884,10 +1884,10 @@ object PyIRRuntime:
        |    def __init__(self, parent=None):
        |        self._scpy_parent = parent
        |
-       |    def getParent__Ljava_dlang_dClassLoader(self):
+       |    def ${m("getParent")(PyClassRef(PyClassName("java.lang.ClassLoader")))}(self):
        |        return self._scpy_parent
        |
-       |    def loadClass__Ljava_dlang_dString__Ljava_dlang_dClass(self, name):
+       |    def ${m("loadClass", StrRef)(ClsRef)}(self, name):
        |        # Walk the runtime class registry. If the class isn't
        |        # registered we mirror `Class.forName`'s behavior.
        |        clazz = _scpy_class_registry.get(name)
@@ -1895,35 +1895,35 @@ object PyIRRuntime:
        |            return clazz
        |        return _scpy_ClassModule._scpy_resolve(name)
        |
-       |    def loadClass__Ljava_dlang_dString_Z__Ljava_dlang_dClass(self, name, resolve):
-       |        return self.loadClass__Ljava_dlang_dString__Ljava_dlang_dClass(name)
+       |    def ${m("loadClass", StrRef, Z)(ClsRef)}(self, name, resolve):
+       |        return self.${m("loadClass", StrRef)(ClsRef)}(name)
        |
        |    def __getattr__(self, name):
        |        if name.startswith("loadClass"):
-       |            return self.loadClass__Ljava_dlang_dString__Ljava_dlang_dClass
+       |            return self.${m("loadClass", StrRef)(ClsRef)}
        |        if name.startswith("getResourceAsStream"):
        |            return lambda *args, **kw: None
        |        if name.startswith("getResource"):
        |            return lambda *args, **kw: None
        |        if name.startswith("getParent"):
-       |            return self.getParent__Ljava_dlang_dClassLoader
+       |            return self.${m("getParent")(PyClassRef(PyClassName("java.lang.ClassLoader")))}
        |        raise AttributeError(name)
        |
        |class ClassValue(_scpy_Object):
        |    def __init__(self):
        |        self._scpy_values = {}
        |
-       |    def computeValue__Ljava_dlang_dClass__Ljava_dlang_dObject(self, clazz):
+       |    def ${m("computeValue", ClsRef)(ObjRef)}(self, clazz):
        |        return None
        |
-       |    def get__Ljava_dlang_dClass__Ljava_dlang_dObject(self, clazz):
+       |    def ${m("get", ClsRef)(ObjRef)}(self, clazz):
        |        if clazz is None:
        |            raise NullPointerException()
        |        if clazz not in self._scpy_values:
-       |            self._scpy_values[clazz] = self.computeValue__Ljava_dlang_dClass__Ljava_dlang_dObject(clazz)
+       |            self._scpy_values[clazz] = self.${m("computeValue", ClsRef)(ObjRef)}(clazz)
        |        return self._scpy_values[clazz]
        |
-       |    def remove__Ljava_dlang_dClass__V(self, clazz):
+       |    def ${m("remove", ClsRef)(V)}(self, clazz):
        |        if clazz is None:
        |            raise NullPointerException()
        |        self._scpy_values.pop(clazz, None)
@@ -2005,19 +2005,19 @@ object PyIRRuntime:
        |    def ${m("toString")(StrRef)}(self):
        |        return _builtins.chr(int(self))
        |
-       |    def hashCode__I(self):
+       |    def ${m("hashCode")(I)}(self):
        |        return int(self)
        |
        |    def ${m("charValue")(C)}(self):
        |        return int(self)
        |
-       |    def equals__Ljava_dlang_dObject__Z(self, other):
+       |    def ${m("equals", ObjRef)(Z)}(self, other):
        |        return isinstance(other, _scpy_Char) and int(other) == int(self)
        |
-       |    def compareTo__Ljava_dlang_dCharacter__I(self, other):
+       |    def ${m("compareTo", PyClassRef(PyClassName("java.lang.Character")))(I)}(self, other):
        |        return int(self) - int(other)
        |
-       |    def compareTo__Ljava_dlang_dObject__I(self, other):
+       |    def ${m("compareTo", ObjRef)(I)}(self, other):
        |        return int(self) - int(other)
        |
        |def _scpy_box_char(value):
@@ -2040,7 +2040,7 @@ object PyIRRuntime:
        |# linker like every other `scala.Long_` / `scala.Float_` / etc.
        |# Earlier hand-written `_scpy_IntModule` / `_scpy_CharModule` stubs
        |# shadowed those compiled defs, so calls such as
-       |# `${mod(PyClassName("scala.Int$"))}.int2double__I__D(i)` raised AttributeError.
+       |# `${mod(PyClassName("scala.Int$"))}.${m("int2double", I)(D)}(i)` raised AttributeError.
        |# `Class.forName(...)` is a static call on the JDK-provided
        |# `java.lang.Class`. The backend lowers it to
        |# `${mod(PyClassName("java.lang.Class"))}.forName__...(...)`. Bind the module
@@ -2136,7 +2136,7 @@ object PyIRRuntime:
        |                _scpy_init = _scpy_klass.__dict__.get("__init__")
        |                if _scpy_init is not None:
        |                    _scpy_init(inst)
-       |            no_arg_helper = "_scpy_ctor_" + cls.__name__ + "__void__V"
+       |            no_arg_helper = "_scpy_ctor_" + cls.__name__ + "__${m("void")(V)}"
        |            ctor = getattr(cls, no_arg_helper, None)
        |            if ctor is not None:
        |                ctor(inst)
@@ -2810,22 +2810,22 @@ object PyIRRuntime:
        |def _scpy_charseq_length(s):
        |    if isinstance(s, str):
        |        return len(s)
-       |    return s.length__I()
+       |    return s.${m("length")(I)}()
        |
        |def _scpy_charseq_char_at(s, index):
        |    if isinstance(s, str):
        |        return _scpy_str_char_at(s, index)
-       |    return s.charAt__I__C(index)
+       |    return s.${m("charAt", I)(C)}(index)
        |
        |def _scpy_charseq_sub_sequence(s, begin, end):
        |    if isinstance(s, str):
        |        return _scpy_str_substring(s, begin, end)
-       |    return s.subSequence__I_I__Ljava_dlang_dCharSequence(begin, end)
+       |    return s.${m("subSequence", I, I)(PyClassRef(PyClassName("java.lang.CharSequence")))}(begin, end)
        |
        |def _scpy_charseq_is_empty(s):
        |    if isinstance(s, str):
        |        return len(s) == 0
-       |    return s.isEmpty__Z()
+       |    return s.${m("isEmpty")(Z)}()
        |
        |def _scpy_charseq_to_string(s):
        |    if isinstance(s, str):
@@ -2837,7 +2837,7 @@ object PyIRRuntime:
        |# `java.lang.Number`/boxed-primitive static receiver. The runtime
        |# value may be a raw Python `float`/`int`/`bool` (boxing is identity
        |# on this backend — `boxToDouble` returns the same `float`), in which
-       |# case the encoded method name (`isNaN__Z`, `${m("intValue")(I)}`, ...) does
+       |# case the encoded method name (`${m("isNaN")(Z)}`, `${m("intValue")(I)}`, ...) does
        |# not resolve. Dispatch on `isinstance(...)` so calls on raw
        |# primitives produce JVM-faithful values, and fall through to the
        |# encoded method on real ported boxed instances (e.g. one minted
@@ -2852,14 +2852,14 @@ object PyIRRuntime:
        |        return False
        |    if isinstance(x, (int, float)):
        |        return _scpy_math.isnan(x) if isinstance(x, float) else False
-       |    return x.isNaN__Z()
+       |    return x.${m("isNaN")(Z)}()
        |
        |def _scpy_Double_isInfinite(x):
        |    if isinstance(x, bool):
        |        return False
        |    if isinstance(x, (int, float)):
        |        return _scpy_math.isinf(x) if isinstance(x, float) else False
-       |    return x.isInfinite__Z()
+       |    return x.${m("isInfinite")(Z)}()
        |
        |def _scpy_Double_doubleValue(x):
        |    if isinstance(x, bool):
@@ -3080,13 +3080,13 @@ object PyIRRuntime:
        |    # and no-arg overloads stay on the direct `str.encode`
        |    # fast path.
        |    if encoding and encoding[0] is not None and (
-       |            hasattr(encoding[0], 'encode__Ljava_dlang_dString__Ljava_dnio_dByteBuffer')
+       |            hasattr(encoding[0], '${m("encode", StrRef)(PyClassRef(PyClassName("java.nio.ByteBuffer")))}')
        |    ):
-       |        bb = encoding[0].encode__Ljava_dlang_dString__Ljava_dnio_dByteBuffer(s)
-       |        remaining = bb.remaining__I()
+       |        bb = encoding[0].${m("encode", StrRef)(PyClassRef(PyClassName("java.nio.ByteBuffer")))}(s)
+       |        remaining = bb.${m("remaining")(I)}()
        |        out = _scpy_new_array(_scpy_primitive_byte, remaining, 0)
        |        if remaining > 0:
-       |            bb.get__AB__Ljava_dnio_dByteBuffer(out)
+       |            bb.${m("get", PyArrayRef(B, 1))(PyClassRef(PyClassName("java.nio.ByteBuffer")))}(out)
        |        return out
        |    errors = 'strict'
        |    if not encoding:
@@ -3097,8 +3097,8 @@ object PyIRRuntime:
        |            enc = candidate
        |        elif candidate is None:
        |            raise NullPointerException()
-       |        elif hasattr(candidate, 'name__Ljava_dlang_dString'):
-       |            enc = candidate.name__Ljava_dlang_dString()
+       |        elif hasattr(candidate, '${m("name")(StrRef)}'):
+       |            enc = candidate.${m("name")(StrRef)}()
        |            errors = 'replace'
        |        elif hasattr(candidate, 'name'):
        |            enc = candidate.name()
