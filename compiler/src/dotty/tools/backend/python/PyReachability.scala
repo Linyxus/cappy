@@ -789,6 +789,20 @@ object PyReachability:
         // and explicitly seed Instantiate for every ModuleClass referenced
         // through the same `_scpy_mod_*_` routing the emitter uses.
         seedModuleAccessorsInClosure(t.body)
+        // The closure renders as `_scpy_FnN(lambda ...)`; the carrier
+        // class `_scpy_FnN` extends `scala.FunctionN` (the nominal
+        // interface). After Phase 3b of `notes/shrink-runtime.md`,
+        // `scala.FunctionN` is supplied by `library-py`'s `.pyir`
+        // rather than the runtime prelude, so the carrier-emit step
+        // (`PyIREmitter.emitClosureCarriers`) only generates the
+        // arity-N carrier when `scala.FunctionN` is in `knownClasses`.
+        // Seed the nominal class explicitly so it survives DCE and
+        // the carrier's parent reference resolves at bundle load.
+        // Above-22 arities use the bare `_scpy_Fn` carrier, which has
+        // no FunctionN parent.
+        val arity = t.params.length
+        if 0 <= arity && arity <= 22 then
+          enqueue(Work.ReachClass(PyClassName(s"scala.Function$arity")))
 
       case t: PyClassOf =>
         fromTypeRef(t.typeRef)
