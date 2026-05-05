@@ -19,6 +19,7 @@ import language.experimental.captureChecking
 
 import scala.collection.generic.DefaultSerializable
 import scala.collection.mutable.GrowableBuilder
+import scala.util.hashing.Hashing
 
 /** A `TrieMap` override for the Python backend (`-scalapy`).
   *
@@ -44,6 +45,19 @@ final class TrieMap[K, V] private (private val underlying: mutable.HashMap[K, V]
     with DefaultSerializable {
 
   def this() = this(new mutable.HashMap[K, V])
+
+  /** JDK-shape ctor accepting custom `Hashing` and `Equiv`. The
+   *  upstream `TrieMap` honours these per-key when bucketing nodes;
+   *  this single-threaded shim defers to `mutable.HashMap`, which
+   *  uses the runtime `##` and `==` of the keys directly. The
+   *  arguments are accepted for API compatibility (so stdlib code
+   *  and user fixtures that construct `new TrieMap(hashf, ef)` link
+   *  cleanly), but they are NOT consulted at lookup/equality time.
+   *  Code that depends on custom `Hashing`/`Equiv` semantics needs
+   *  to use `mutable.HashMap` with a wrapping key type instead.
+   */
+  def this(hashf: Hashing[K], ef: Equiv[K]) =
+    this(new mutable.HashMap[K, V])
 
   override def mapFactory: MapFactory[TrieMap] = TrieMap
 

@@ -13,7 +13,11 @@ class ExecutionException(primary: Any = null, cause: Throwable | Null = null)
 
 class CancellationException(message: String | Null = null) extends IllegalStateException(message)
 
-class TimeoutException(message: String | Null = null) extends Exception(message)
+class TimeoutException(message: String | Null = null) extends Exception(message):
+  // JDK-shaped ctor overloads. Java's `TimeoutException` exposes `()`
+  // and `(String)`; the default-arg primary alone doesn't produce a
+  // PyIR `<init>():V` signature.
+  def this() = this(null)
 
 class BrokenBarrierException(message: String | Null = null) extends Exception(message)
 
