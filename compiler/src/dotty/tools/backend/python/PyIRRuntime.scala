@@ -738,7 +738,7 @@ object PyIRRuntime:
        |    def getClass__Ljava_dlang_dClass(self):
        |        return _scpy_class_of_instance(self)
        |
-       |    def toString__Ljava_dlang_dString(self):
+       |    def ${m("toString")(StrRef)}(self):
        |        # Mirror `Object.toString` JVM semantics: virtual dispatch
        |        # through `hashCode()` (encoded as `__hash__` here), not the
        |        # identity hash. Value classes and case classes override
@@ -747,7 +747,7 @@ object PyIRRuntime:
        |        return self.getClass__Ljava_dlang_dClass().getName__Ljava_dlang_dString() + "@" + _builtins.format(self.__hash__() & 0xFFFFFFFF, "x")
        |
        |    def __str__(self):
-       |        return self.toString__Ljava_dlang_dString()
+       |        return self.${m("toString")(StrRef)}()
        |
        |    def wait__V(self):
        |        return _scpy_object_wait(self)
@@ -1124,9 +1124,9 @@ object PyIRRuntime:
        |        raise _scpy_reflection_unsupported("newInstance")
        |
        |    def toGenericString__Ljava_dlang_dString(self):
-       |        return self.toString__Ljava_dlang_dString()
+       |        return self.${m("toString")(StrRef)}()
        |
-       |    def toString__Ljava_dlang_dString(self):
+       |    def ${m("toString")(StrRef)}(self):
        |        # `Class.toString` reports the user-visible name (JVM-shaped
        |        # when codegen recorded one), not the encoded `_scpy_name`.
        |        # Mirrors `getName()` so `println(getClass)` prints e.g.
@@ -1139,7 +1139,7 @@ object PyIRRuntime:
        |        return "class " + display_name
        |
        |    def __str__(self):
-       |        return self.toString__Ljava_dlang_dString()
+       |        return self.${m("toString")(StrRef)}()
        |
        |    def __getattr__(self, name):
        |        # NOTE: prefix-based dispatch — longer prefixes MUST be
@@ -1281,7 +1281,7 @@ object PyIRRuntime:
        |        if name.startswith("toGenericString"):
        |            return self.toGenericString__Ljava_dlang_dString
        |        if name.startswith("toString"):
-       |            return self.toString__Ljava_dlang_dString
+       |            return self.${m("toString")(StrRef)}
        |        raise AttributeError(name)
        |
        |Class = _scpy_Class
@@ -1377,7 +1377,7 @@ object PyIRRuntime:
        |    def clone__Ljava_dlang_dObject(self):
        |        return _scpy_Array(self, self._scpy_class)
        |
-       |    def toString__Ljava_dlang_dString(self):
+       |    def ${m("toString")(StrRef)}(self):
        |        # Mirror JVM `Object.toString` on an array: descriptor
        |        # of the runtime class joined with `@<lower-hex identity hash>`.
        |        # For an `Array[Unit]` whose element class is
@@ -1862,7 +1862,7 @@ object PyIRRuntime:
        |    def ordinal__I(self):
        |        return self._scpy_enum_ordinal
        |
-       |    def toString__Ljava_dlang_dString(self):
+       |    def ${m("toString")(StrRef)}(self):
        |        return self._scpy_enum_name
        |
        |    def compareTo__Ljava_dlang_dEnum__I(self, other):
@@ -1939,11 +1939,11 @@ object PyIRRuntime:
        |    def __str__(self):
        |        return "()"
        |
-       |    def toString__Ljava_dlang_dString(self):
+       |    def ${m("toString")(StrRef)}(self):
        |        # JVM `BoxedUnit.toString()` returns `"()"` (see
        |        # `library/src/scala/runtime/BoxedUnit.java`). Without an
        |        # explicit override, `_scpy_to_str` would walk up to
-       |        # `_scpy_Object.toString__Ljava_dlang_dString` and produce
+       |        # `_scpy_Object.${m("toString")(StrRef)}` and produce
        |        # `scala.runtime.BoxedUnit@0` — observed in `tests/run/t5680.scala`
        |        # after fixing the `_scpy_Array.toString` cluster.
        |        return "()"
@@ -1967,7 +1967,7 @@ object PyIRRuntime:
        |    # The wrapper is what Scala emits when a `Char` is widened to
        |    # `Any`/`Object` (via `Char$$.box` or `BoxesRunTime.boxToCharacter`).
        |    # Without it, `_scpy_to_str(120)` would render as `"120"` instead
-       |    # of `"x"`. The `toString__Ljava_dlang_dString` method below is the
+       |    # of `"x"`. The `${m("toString")(StrRef)}` method below is the
        |    # hook that `_scpy_to_str` discovers via `getattr`.
        |    __slots__ = ()
        |
@@ -2002,7 +2002,7 @@ object PyIRRuntime:
        |        # Match `java.lang.Character.hashCode()`: the codepoint.
        |        return int(self)
        |
-       |    def toString__Ljava_dlang_dString(self):
+       |    def ${m("toString")(StrRef)}(self):
        |        return _builtins.chr(int(self))
        |
        |    def hashCode__I(self):
@@ -2338,7 +2338,7 @@ object PyIRRuntime:
        |        return "true"
        |    if x is False:
        |        return "false"
-       |    to_string = getattr(x, "toString__Ljava_dlang_dString", None)
+       |    to_string = getattr(x, "${m("toString")(StrRef)}", None)
        |    if to_string is not None:
        |        return to_string()
        |    # Boxed Doubles arrive here as plain Python floats. Java's
@@ -2830,7 +2830,7 @@ object PyIRRuntime:
        |def _scpy_charseq_to_string(s):
        |    if isinstance(s, str):
        |        return s
-       |    return s.toString__Ljava_dlang_dString()
+       |    return s.${m("toString")(StrRef)}()
        |
        |# Polymorphic helpers for `java.lang.Double`/`Float`/`Long`/`Integer`/
        |# `Boolean` instance methods invoked through an `Object`/`AnyRef`/
