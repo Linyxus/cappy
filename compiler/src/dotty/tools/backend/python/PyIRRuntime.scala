@@ -54,17 +54,10 @@ object PyIRRuntime:
    */
   private val FunctionClasses: IndexedSeq[PyClassName] =
     (0 to 22).map(n => PyClassName(s"scala.Function$n"))
-  private val AnnotationClass = PyClassName("scala.annotation.Annotation")
-  private val StaticAnnotationClass = PyClassName("scala.annotation.StaticAnnotation")
   private val ComparableClass = PyClassName("java.lang.Comparable")
   private val EnumClass = PyClassName("java.lang.Enum")
   private val ClassLoaderClass = PyClassName("java.lang.ClassLoader")
   private val ClassValueClass = PyClassName("java.lang.ClassValue")
-  private val MirrorClass = PyClassName("scala.deriving.Mirror")
-  private val MirrorProductClass = PyClassName("scala.deriving.Mirror_Product")
-  private val MirrorSumClass = PyClassName("scala.deriving.Mirror_Sum")
-  private val MirrorSingletonClass = PyClassName("scala.deriving.Mirror_Singleton")
-  private val MirrorSingletonProxyClass = PyClassName("scala.deriving.Mirror_SingletonProxy")
 
   // Scala's by-ref closure-capture wrappers ship as `.pyir` from
   // `library-py/src/scala/runtime/` (Category A migration of
@@ -191,13 +184,6 @@ object PyIRRuntime:
         superClass = None,
         javaProvided = true
       ),
-    AnnotationClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.ObjectClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
-      ),
     BoxedUnitClass ->
       ProvidedClass(
         kind = PyClassKind.ModuleClass,
@@ -208,13 +194,6 @@ object PyIRRuntime:
           PyFieldName(BoxedUnitClass, PySimpleFieldName("UNIT")),
           PyFieldName(BoxedUnitClass, PySimpleFieldName("TYPE"))
         )
-      ),
-    StaticAnnotationClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(AnnotationClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>"))
       ),
     VarHandleClass ->
       // Stdlib's atomic specializations reference VarHandle for
@@ -407,45 +386,6 @@ object PyIRRuntime:
             "compareTo", "clone", "finalize"
           )
         )
-      ),
-    MirrorClass ->
-      ProvidedClass(
-        kind = PyClassKind.Interface,
-        superClass = None,
-        javaProvided = true
-      ),
-    MirrorProductClass ->
-      ProvidedClass(
-        kind = PyClassKind.Interface,
-        superClass = None,
-        interfaces = List(MirrorClass),
-        javaProvided = true,
-        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("fromProduct"))
-      ),
-    MirrorSumClass ->
-      ProvidedClass(
-        kind = PyClassKind.Interface,
-        superClass = None,
-        interfaces = List(MirrorClass),
-        javaProvided = true,
-        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("ordinal"))
-      ),
-    MirrorSingletonClass ->
-      ProvidedClass(
-        kind = PyClassKind.Interface,
-        superClass = None,
-        interfaces = List(MirrorProductClass),
-        javaProvided = true,
-        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("fromProduct"))
-      ),
-    MirrorSingletonProxyClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.ObjectClass),
-        interfaces = List(MirrorProductClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
-        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("fromProduct"))
       ),
   ) ++ FunctionClasses.map { name =>
     // `scala.FunctionN` for `N = 0..22`. Stdlib classes like `Set`, `Map`
@@ -1638,12 +1578,6 @@ object PyIRRuntime:
        |_scpy_primitive_float = _scpy_register_class(None, "float", "primitive")
        |_scpy_primitive_double = _scpy_register_class(None, "double", "primitive")
        |
-       |class Annotation(_scpy_Object):
-       |    pass
-       |
-       |class StaticAnnotation(Annotation):
-       |    pass
-       |
        |class Comparable(_scpy_Object):
        |    pass
        |
@@ -2023,39 +1957,6 @@ object PyIRRuntime:
        |class PrimitiveIterator_OfLong(PrimitiveIterator): pass
        |class PrimitiveIterator_OfDouble(PrimitiveIterator): pass
        |
-       |class Mirror(_scpy_Object):
-       |    pass
-       |
-       |# `Mirror.Product.fromProduct(p): MirroredMonoType` and
-       |# `Mirror.Sum.ordinal(value): Int` reference the abstract type
-       |# member `MirroredMonoType` in their signatures. Erasure rewrites
-       |# that to `java.lang.Object`, so the encoded method name carries
-       |# `Ljava_dlang_dObject` for both the parameter and the result
-       |# type. User-derived case-class mirrors (e.g. `JsonNumber`) emit
-       |# both a typed override (`fromProduct__Lscala_dProduct__LJsonNumber`)
-       |# AND a bridge with the erased shape (`fromProduct__Lscala_dProduct__Ljava_dlang_dObject`)
-       |# that forwards to the typed body. SingletonProxy doesn't need a
-       |# typed override since `MirroredMonoType` is just the singleton's
-       |# type, but it MUST match the erased call-site shape.
-       |class Mirror_Product(Mirror):
-       |    def fromProduct__Lscala_dProduct__Ljava_dlang_dObject(self, product):
-       |        return None
-       |
-       |class Mirror_Sum(Mirror):
-       |    def ordinal__Ljava_dlang_dObject__I(self, value):
-       |        return 0
-       |
-       |class Mirror_Singleton(Mirror_Product):
-       |    def fromProduct__Lscala_dProduct__Lscala_dderiving_dMirror_uSingleton(self, product):
-       |        return self
-       |
-       |class Mirror_SingletonProxy(Mirror_Product):
-       |    def __init__(self, value):
-       |        self.value = value
-       |
-       |    def fromProduct__Lscala_dProduct__Ljava_dlang_dObject(self, product):
-       |        return self.value
-       |
        |class Enum(Comparable, Serializable):
        |    def __init__(self, name, ordinal):
        |        self._scpy_enum_name = name
@@ -2286,15 +2187,8 @@ object PyIRRuntime:
        |_scpy_register_class(PrimitiveIterator_OfInt, "java.util.PrimitiveIterator_OfInt", "interface", None, ("java.util.PrimitiveIterator",))
        |_scpy_register_class(PrimitiveIterator_OfLong, "java.util.PrimitiveIterator_OfLong", "interface", None, ("java.util.PrimitiveIterator",))
        |_scpy_register_class(PrimitiveIterator_OfDouble, "java.util.PrimitiveIterator_OfDouble", "interface", None, ("java.util.PrimitiveIterator",))
-       |_scpy_register_class(Annotation, "scala.annotation.Annotation", "class", "java.lang.Object")
-       |_scpy_register_class(StaticAnnotation, "scala.annotation.StaticAnnotation", "class", "scala.annotation.Annotation")
        |_scpy_register_class(Comparable, "java.lang.Comparable", "interface", None)
        |_scpy_register_class(Serializable, "java.io.Serializable", "interface", None)
-       |_scpy_register_class(Mirror, "scala.deriving.Mirror", "interface", None)
-       |_scpy_register_class(Mirror_Product, "scala.deriving.Mirror_Product", "interface", None, ("scala.deriving.Mirror",))
-       |_scpy_register_class(Mirror_Sum, "scala.deriving.Mirror_Sum", "interface", None, ("scala.deriving.Mirror",))
-       |_scpy_register_class(Mirror_Singleton, "scala.deriving.Mirror_Singleton", "interface", None, ("scala.deriving.Mirror_Product",))
-       |_scpy_register_class(Mirror_SingletonProxy, "scala.deriving.Mirror_SingletonProxy", "class", "java.lang.Object", ("scala.deriving.Mirror_Product",))
        |_scpy_register_class(Enum, "java.lang.Enum", "class", "java.lang.Object", ("java.lang.Comparable", "java.io.Serializable"))
        |_scpy_register_class(BoxedUnit, "scala.runtime.BoxedUnit", "class", "java.lang.Object")
        |_scpy_register_class(None, "java.lang.Cloneable", "interface", None)
