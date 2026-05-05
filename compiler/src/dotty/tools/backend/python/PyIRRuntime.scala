@@ -1751,6 +1751,14 @@ object PyIRRuntime:
        |        raise AttributeError("apply" + "_" * (arity > 0))
        |    return target.__get__(receiver, cls)(*args)
        |
+       |# Single source of truth for class-level + instance-level
+       |# specialized-apply dispatch. Each `FunctionN` runtime stub
+       |# inherits the metaclass + `__getattr__` from this mixin so the
+       |# pair lives in one place rather than being repeated 23 times.
+       |class _scpy_FunctionMixin(_scpy_Object, metaclass=_scpy_FnMeta):
+       |    def __getattr__(self, name):
+       |        return _scpy_fn_specialized_forward(self, name)
+       |
        |""".stripMargin +
     (0 to 22).map { n =>
       val tupledMethod =
@@ -1787,10 +1795,10 @@ object PyIRRuntime:
              |        return _scpy_Fn1(lambda _scpy_x: _scpy_fn_call(_scpy_self_ref, _scpy_fn_call(_scpy_g_ref, _scpy_x)))
              |""".stripMargin
         else ""
-      s"""|class Function$n(_scpy_Object, metaclass=_scpy_FnMeta):
-          |    def __getattr__(self, name):
-          |        return _scpy_fn_specialized_forward(self, name)
-          |$tupledMethod$andThenCompose$curriedMethod
+      val body = tupledMethod + andThenCompose + curriedMethod
+      val classBody = if body.isEmpty then "    pass\n" else body
+      s"""|class Function$n(_scpy_FunctionMixin):
+          |$classBody
           |""".stripMargin
     }.mkString +
     """|# Linker-only nominal stubs. Stdlib references them by name (some as
