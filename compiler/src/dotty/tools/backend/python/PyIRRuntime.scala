@@ -1554,6 +1554,15 @@ object PyIRRuntime:
        |        return True
        |    if target._scpy_kind == "primitive" or source._scpy_kind == "primitive":
        |        return False
+       |    # Every non-primitive reference type is implicitly assignable to
+       |    # `java.lang.Object`. Interfaces are registered with
+       |    # `_scpy_superclass_name = None` (the JVM bakes the
+       |    # `interface <: Object` edge into the type system rather than the
+       |    # interface table), so the walk path below would otherwise miss
+       |    # it — e.g. `Array[java.io.Serializable]` would not match
+       |    # `case x: Array[AnyRef]` in `ArraySeq.unsafeWrapArray`.
+       |    if target._scpy_name == "java.lang.Object":
+       |        return True
        |    if source._scpy_kind == "array":
        |        if target._scpy_kind == "array":
        |            if target._scpy_component_type is None or source._scpy_component_type is None:
