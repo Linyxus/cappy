@@ -107,25 +107,24 @@ class PyEncoding(using Context):
   // can't collide.
 
   def encodeMethodName(sym: Symbol): PyMethodName =
-    if sym.isClassConstructor then
-      // dotc reports a constructor's `info.resultType` as the enclosing
-      // class, not Unit. Patch to VoidRef so the method identity is
-      // consistent with sjsir and so the encoded name collapses to `__init__`.
-      PyMethodName(
-        PySimpleMethodName.Constructor,
-        paramTypeRefsOf(sym),
-        PyPrimRef.VoidRef
-      )
-    else
-      val rawName = sym.name.mangledString
-      val mapped =
-        specialMethodNameOf(sym, rawName)
-          .getOrElse(sanitizeName(rawName))
-      PyMethodName(
-        PySimpleMethodName(mapped),
-        paramTypeRefsOf(sym),
-        encodeTypeRef(sym.info.finalResultType)
-      )
+    val simpleName =
+      if sym.isClassConstructor then PySimpleMethodName.Constructor
+      else
+        val rawName = sym.name.mangledString
+        PySimpleMethodName(
+          specialMethodNameOf(sym, rawName).getOrElse(sanitizeName(rawName))
+        )
+    // dotc reports the `info.resultType` of a constructor (class `<init>`
+    // or trait `$init$`, post-`Mixin`) as the enclosing class, even
+    // though bodies and call sites act as if it were Unit. Patch to
+    // VoidRef so the encoded signature is stable across def site and
+    // call site (mirrors SJS's `patchedResultType` in
+    // `JSEncoding.scala`). Use the broad `isConstructor` test, which
+    // returns true for both `CONSTRUCTOR` and `TRAIT_CONSTRUCTOR`.
+    val resultRef =
+      if sym.isConstructor then PyPrimRef.VoidRef
+      else encodeTypeRef(sym.info.finalResultType)
+    PyMethodName(simpleName, paramTypeRefsOf(sym), resultRef)
 
   private def specialMethodNameOf(sym: Symbol, rawName: String): Option[String] =
     rawName match
