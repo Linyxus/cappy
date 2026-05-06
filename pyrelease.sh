@@ -32,7 +32,7 @@ PROJECTS_AND_MODULES=(
   "scala3-compiler-bootstrapped|scala3-compiler-py_3"
   "scala-pylib-py|scala-pylib-py_3"
   "scala-library-py|scala-library-py_3"
-  "scala3-compiler-py-bootstrapped|scpyc_3"
+  "scala3-compiler-py-bootstrapped|spc_3"
 )
 
 die() { echo "pyrelease.sh: $*" >&2; exit 1; }
@@ -112,13 +112,13 @@ mkdir -p "${GHPAGES_MAVEN}/${GROUP_PATH}"
 rsync -a "${STAGING}/${GROUP_PATH}/" "${GHPAGES_MAVEN}/${GROUP_PATH}/"
 
 # --- Regenerate apps/scpyc.json --------------------------------------------
-cat > "${GHPAGES_APPS}/scpyc.json" <<JSON
+cat > "${GHPAGES_APPS}/spc.json" <<JSON
 {
-  "scpyc": {
-    "name": "scpyc",
+  "spc": {
+    "name": "spc",
     "mainClass": "dotty.tools.dotc.PyMain",
     "dependencies": [
-      "io.github.linyxus.scalapy:scpyc_3:${FULL_VERSION}"
+      "io.github.linyxus.scalapy:spc_3:${FULL_VERSION}"
     ],
     "repositories": [
       "central",
@@ -131,10 +131,10 @@ cat > "${GHPAGES_APPS}/scpyc.json" <<JSON
 }
 JSON
 # scala-library-py and scala-pylib-py are intentionally NOT listed as
-# transitive deps of scpyc_3: their classes overlap with scala-stdlib-py
+# transitive deps of spc_3: their classes overlap with scala-stdlib-py
 # (the JVM runtime stdlib), so putting them on JVM cp causes runtime
-# conflicts. They are bundled inside scpyc_3.jar as /scpy/*.jar resources
-# and PyMain extracts them into ~/.cache/scpyc/<version>/ on first run,
+# conflicts. They are bundled inside spc_3.jar as /scpy/*.jar resources
+# and PyMain extracts them into ~/.cache/spc/<version>/ on first run,
 # placing them on the *compile* classpath only.
 
 # --- Commit ----------------------------------------------------------------

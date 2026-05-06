@@ -93,7 +93,7 @@ object Build {
    *  each release is a reviewable commit. Combined with `baseVersion` to form
    *  `dottyVersion` when `PYBUILD=yes`, e.g. `3.9.0-RC1-PY0.1.0`.
    */
-  val pyVersion = "0.1.2"
+  val pyVersion = "0.1.3"
 
   /** Final version of Scala compiler, controlled by environment variables.
    *
@@ -2828,7 +2828,7 @@ object Build {
         Seq(pylibOut, libpyOut)
       }.taskValue,
     )
-    .settings(pyPublishSettings("scpyc"))
+    .settings(pyPublishSettings("spc"))
 
   //lazy val `scala3-bench` = project.in(file("bench")).asDottyBench(NonBootstrapped)
   //lazy val `scala3-bench-bootstrapped` = project.in(file("bench")).asDottyBench(Bootstrapped)

@@ -7,12 +7,12 @@ import scala.collection.mutable
 
 /** Launcher for the Python-backend compiler.
  *
- *  Wraps `dotty.tools.dotc.Main` so that `cs launch scpyc` (or any direct
+ *  Wraps `dotty.tools.dotc.Main` so that `cs launch spc` (or any direct
  *  invocation) automatically:
  *
  *    1. extracts the support jars (`scala-library-py`, `scala-pylib-py`),
  *       which are bundled inside this jar under `/scpy/`, into
- *       `~/.cache/scpyc/<version>/`,
+ *       `~/.cache/spc/<version>/`,
  *    2. prepends them to the user-supplied `-classpath` (or adds a
  *       `-classpath` arg if none was given),
  *    3. injects `-scalapy` so the backend is enabled.
@@ -42,7 +42,7 @@ object PyMain:
   end main
 
   private def extractSupportJars(version: String): Seq[Path] =
-    val cacheDir = Paths.get(sys.props("user.home"), ".cache", "scpyc", version)
+    val cacheDir = Paths.get(sys.props("user.home"), ".cache", "spc", version)
     Files.createDirectories(cacheDir)
     supportJars.map { (name, resource) =>
       val target = cacheDir.resolve(s"$name-$version.jar")
