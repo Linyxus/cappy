@@ -35,6 +35,9 @@ import org.portablescala.sbtplatformdeps.PlatformDepsPlugin.autoImport._
 
 import sbt.dsl.LinterLevel.Ignore
 
+import pl.project13.scala.sbt.JmhPlugin
+import pl.project13.scala.sbt.JmhPlugin.JmhKeys.Jmh
+
 object Build {
   import ScaladocConfigs._
 
