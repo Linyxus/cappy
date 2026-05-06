@@ -1,10 +1,8 @@
 {
   "name": "scpyc",
-  "main-class": "dotty.tools.dotc.Main",
+  "main-class": "dotty.tools.dotc.PyMain",
   "dependencies": [
-    "io.github.linyxus.scalapy::scala3-compiler-py:3.9.0-RC1-PY0.1.0",
-    "io.github.linyxus.scalapy::scala-pylib-py:3.9.0-RC1-PY0.1.0",
-    "io.github.linyxus.scalapy::scala-library-py:3.9.0-RC1-PY0.1.0"
+    "io.github.linyxus.scalapy::scala3-compiler-py:3.9.0-RC1-PY0.1.1"
   ],
   "repositories": [
     "central",
