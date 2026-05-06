@@ -1,14 +1,16 @@
 {
-  "name": "scpyc",
-  "main-class": "dotty.tools.dotc.PyMain",
-  "dependencies": [
-    "io.github.linyxus.scalapy::scala3-compiler-py:3.9.0-RC1-PY0.1.1"
-  ],
-  "repositories": [
-    "central",
-    "https://linyxus.github.io/scala3-py/maven"
-  ],
-  "java-options": [
-    "-Dscala.usejavacp=true"
-  ]
+  "scpyc": {
+    "name": "scpyc",
+    "main-class": "dotty.tools.dotc.PyMain",
+    "dependencies": [
+      "io.github.linyxus.scalapy::scala3-compiler-py:3.9.0-RC1-PY0.1.1"
+    ],
+    "repositories": [
+      "central",
+      "https://linyxus.github.io/scala3-py/maven"
+    ],
+    "java-options": [
+      "-Dscala.usejavacp=true"
+    ]
+  }
 }
