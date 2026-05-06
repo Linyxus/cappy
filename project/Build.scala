@@ -89,9 +89,21 @@ object Build {
   val expectedTastyVersion = "28.9-experimental-1"
   checkReleasedTastyVersion()
 
-  /** Final version of Scala compiler, controlled by environment variables. */
+  /** Python-backend release version. Bumped per release; lives in source so
+   *  each release is a reviewable commit. Combined with `baseVersion` to form
+   *  `dottyVersion` when `PYBUILD=yes`, e.g. `3.9.0-RC1-PY0.1.0`.
+   */
+  val pyVersion = "0.1.0"
+
+  /** Final version of Scala compiler, controlled by environment variables.
+   *
+   *  `PYBUILD=yes` is checked first, so a Python-backend release dominates any
+   *  other mode flag — `PYBUILD=yes RELEASEBUILD=yes` still produces a PY
+   *  version, not a stripped `baseVersion`.
+   */
   val dottyVersion = {
-    if (isRelease) baseVersion
+    if (isPyBuild) s"${baseVersion}-PY${pyVersion}"
+    else if (isRelease) baseVersion
     else if (isNightly) {
       val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd")
       val currentDate =
@@ -102,6 +114,7 @@ object Build {
     }
     else s"${baseVersion}-bin-SNAPSHOT"
   }
+  def isPyBuild = sys.env.get("PYBUILD").contains("yes")
   def isRelease = sys.env.get("RELEASEBUILD").contains("yes")
   def isNightly = sys.env.get("NIGHTLYBUILD").contains("yes")
   def isBenchmark = sys.env.get("BENCHMARKBUILD").contains("yes")
@@ -548,6 +561,7 @@ object Build {
       mimaBackwardIssueFilters := MiMaFilters.Interfaces.BackwardsBreakingChanges,
       customMimaReportBinaryIssues("MiMaFilters.Interfaces"),
     )
+    .settings(pyPublishSettings("scala3-interfaces-py"))
 
   /** Find an artifact with the given `name` in `classpath` */
   def findArtifact(classpath: Def.Classpath, name: String): File = classpath
@@ -1311,6 +1325,7 @@ object Build {
         }).transform(node).head
       },
     )
+    .settings(pyPublishSettings("scala-stdlib-py"))
 
   /* Configuration of the org.scala-lang:scala3-library_3:*.**.**-bootstrapped project */
   lazy val `scala3-library-bootstrapped` = project.in(file("library"))
@@ -1339,6 +1354,7 @@ object Build {
       bspEnabled := enableBspAllProjects,
       Compile / mainClass := None,
     )
+    .settings(pyPublishSettings("scala3-library-py"))
 
   /* Configuration of the org.scala-js:scalajs-scalalib_2.13:*.**.**-bootstrapped project */
   lazy val `scala-library-sjs` = project.in(file("library-js"))
@@ -1558,6 +1574,7 @@ object Build {
       customMimaReportBinaryIssues("MiMaFilters.TastyCore"),
       bspEnabled := false,
     )
+    .settings(pyPublishSettings("tasty-core-py"))
 
   // ==============================================================================================
   // ======================================= SCALA COMPILER =======================================
@@ -1825,6 +1842,7 @@ object Build {
       },
       bspEnabled := enableBspAllProjects,
     )
+    .settings(pyPublishSettings("scala3-compiler-py"))
 
   // ==============================================================================================
   // ========================================== SCALADOC ==========================================
@@ -2650,8 +2668,11 @@ object Build {
    */
   lazy val `scala-pylib-py` = project.in(file("pylib-py"))
     .dependsOn(`scala3-library-bootstrapped`)
+    .settings(publishSettings)
     .settings(
       name         := "scala-pylib-py",
+      version      := dottyVersion,
+      crossPaths   := true,
       scalaVersion := dottyNonBootstrappedVersion,
       Compile / unmanagedSourceDirectories := Seq(baseDirectory.value / "src"),
       Compile / scalacOptions ++= Seq("-scalapy", "-scpy-ir-only"),
@@ -2672,6 +2693,7 @@ object Build {
       publish / skip := true,
       bspEnabled := false,
     )
+    .settings(pyPublishSettings("scala-pylib-py"))
 
   /** Scala standard library compiled for the Python backend.
    *
@@ -2699,8 +2721,11 @@ object Build {
    */
   lazy val `scala-library-py` = project.in(file("library-py"))
     .dependsOn(`scala3-library-bootstrapped`)
+    .settings(publishSettings)
     .settings(
       name          := "scala-library-py",
+      version       := dottyVersion,
+      crossPaths    := true,
       scalaVersion  := dottyNonBootstrappedVersion,
       // We can't use `dependsOn(scala-pylib-py)` because that would put pylib's
       // unpacked classes dir on the classpath (with all .class/.tasty for
@@ -2750,6 +2775,7 @@ object Build {
       publish / skip := true,
       bspEnabled := false,
     )
+    .settings(pyPublishSettings("scala-library-py"))
 
   //lazy val `scala3-bench` = project.in(file("bench")).asDottyBench(NonBootstrapped)
   //lazy val `scala3-bench-bootstrapped` = project.in(file("bench")).asDottyBench(Bootstrapped)
@@ -2933,11 +2959,46 @@ object Build {
       }
     )
 
+  /** Maven coordinate group used for Python-backend artifacts published to
+   *  the gh-pages Maven repo. Distinct from `org.scala-lang` so coursier never
+   *  resolves these from Central, and so users of the upstream Scala 3 toolchain
+   *  cannot accidentally pull a forked compiler.
+   */
+  lazy val pyOrganization = "io.github.linyxus.scalapy"
+  lazy val pyHomepage = url("https://github.com/linyxus/scala3-py")
+  lazy val pyScmInfo = ScmInfo(pyHomepage, "scm:git:git@github.com:linyxus/scala3-py.git")
+  lazy val pyDeveloper = Developer(
+    id = "linyxus",
+    name = "Yichen Xu",
+    email = "",
+    url = url("https://github.com/linyxus")
+  )
+
+  /** Per-project overrides for a Python-backend release.
+   *
+   *  Applied on top of `publishSettings` (or in place of it for the two pylib
+   *  projects). All overrides are gated on `isPyBuild` so non-PYBUILD builds
+   *  retain upstream behavior exactly.
+   */
+  def pyPublishSettings(pyModuleName: String): Seq[Setting[?]] = Seq(
+    organization := (if (isPyBuild) pyOrganization else organization.value),
+    moduleName   := (if (isPyBuild) pyModuleName else moduleName.value),
+    homepage     := (if (isPyBuild) Some(pyHomepage) else homepage.value),
+    scmInfo      := (if (isPyBuild) Some(pyScmInfo) else scmInfo.value),
+    developers   := (if (isPyBuild) List(pyDeveloper) else developers.value),
+    publish / skip := (if (isPyBuild) false else (publish / skip).value),
+  )
+
   lazy val publishSettings = Seq(
     publishMavenStyle := true,
     isSnapshot := version.value.contains("SNAPSHOT"),
     publishTo := {
-      if (sys.env.get("NEWNIGHTLY").contains("yes")) {
+      if (isPyBuild) {
+        val stagingDir = sys.env.get("PY_STAGING_DIR")
+          .map(file(_))
+          .getOrElse(target.value / "py-staging")
+        Some(Resolver.file("py-staging", stagingDir)(Resolver.mavenStylePatterns))
+      } else if (sys.env.get("NEWNIGHTLY").contains("yes")) {
         Some(sys.env("MAVEN_REPOSITORY_REALM") at sys.env("MAVEN_REPOSITORY_URL"))
       } else if (isSnapshot.value) {
         Some("central-snapshots" at "https://central.sonatype.com/repository/maven-snapshots/")
