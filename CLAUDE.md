@@ -10,42 +10,44 @@ The current backend is no longer a direct "typed tree to one Python file" experi
 
 ## Commands
 
+Hint: avoid using the client mode of `sbt` (`sbt --client`) since it is buggy right now.
+
 ```bash
 # Build the Python support libraries, compiler-side tests, and all py tests.
-sbt --client "testPyCompilation"
+sbt "testPyCompilation"
 
 # Run only the Python test harness. Requires support jars to already be built.
-sbt --client "pyCompilerTests/test"
+sbt "pyCompilerTests/test"
 
 # Rebuild support jars explicitly.
-sbt --client "scala-pylib-py/Compile/packageBin"
-sbt --client "scala-library-py/Compile/packageBin"
+sbt "scala-pylib-py/Compile/packageBin"
+sbt "scala-library-py/Compile/packageBin"
 
 # Force support jars to be regenerated after backend/runtime changes.
-sbt --client "scala-pylib-py/clean; scala-pylib-py/Compile/packageBin; scala-library-py/clean; scala-library-py/Compile/packageBin"
+sbt "scala-pylib-py/clean; scala-pylib-py/Compile/packageBin; scala-library-py/clean; scala-library-py/Compile/packageBin"
 
 # Run py compiler harness suites.
-sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests"
-sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests -- --tests=runScalaPy"
-sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests -- --tests=negScalaPy"
-sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PylibTest"
-sbt --client "pyCompilerTests/testOnly dotty.tools.dotc.PyRunTest"
+sbt "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests"
+sbt "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests -- --tests=runScalaPy"
+sbt "pyCompilerTests/testOnly dotty.tools.dotc.ScalaPyCompilationTests -- --tests=negScalaPy"
+sbt "pyCompilerTests/testOnly dotty.tools.dotc.PylibTest"
+sbt "pyCompilerTests/testOnly dotty.tools.dotc.PyRunTest"
 
 # Compiler-side Python backend unit tests.
-sbt --client "scala3-compiler-bootstrapped/testOnly dotty.tools.backend.python.PyLinkerTest dotty.tools.backend.python.PyReachabilityTest dotty.tools.backend.python.ir.pyir.serialization.PyIRSerializationTests"
+sbt "scala3-compiler-bootstrapped/testOnly dotty.tools.backend.python.PyLinkerTest dotty.tools.backend.python.PyReachabilityTest dotty.tools.backend.python.ir.pyir.serialization.PyIRSerializationTests"
 
 # Ad hoc: compile a source to .pyir + bundled .py.
-sbt --client "scala3-compiler-bootstrapped/runMain dotty.tools.dotc.Main -scalapy -d /tmp/out foo.scala"
+sbt "scala3-compiler-bootstrapped/runMain dotty.tools.dotc.Main -scalapy -d /tmp/out foo.scala"
 
 # Ad hoc: emit .pyir only, useful for support-library style debugging.
-sbt --client "scala3-compiler-bootstrapped/runMain dotty.tools.dotc.Main -scalapy -scpy-ir-only -d /tmp/out foo.scala"
+sbt "scala3-compiler-bootstrapped/runMain dotty.tools.dotc.Main -scalapy -scpy-ir-only -d /tmp/out foo.scala"
 
 # Execute generated Python through the repo's pinned uv project.
 uv sync --frozen
 uv run --project . --no-sync python /tmp/out/foo.py
 
 # Stdlib benchmark suite (Python backend, pyperf-driven).
-sbt --client "stdlib-bench-py/runBench"
+sbt "stdlib-bench-py/runBench"
 ```
 
 The Python-side bench harness is `pyperf` running through
