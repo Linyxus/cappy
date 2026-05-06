@@ -56,6 +56,7 @@ inScope(Global)(Build.globalSettings)
 val pyCompilerTests = Build.pyCompilerTests
 val `scala-pylib-py` = Build.`scala-pylib-py`
 val `scala-library-py` = Build.`scala-library-py`
+val `scala3-compiler-py-bootstrapped` = Build.`scala3-compiler-py-bootstrapped`
 
 // Stdlib benchmarks (JVM backend, JMH)
 val `stdlib-bench` = Build.`stdlib-bench`

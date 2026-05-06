@@ -1,8 +1,7 @@
 package dotty.tools
 package dotc
 
-import java.io.{File, IOException}
-import java.net.{URI, URL}
+import java.io.{File, InputStream}
 import java.nio.file.{Files, Path, Paths, StandardCopyOption}
 import scala.collection.mutable
 
@@ -11,66 +10,62 @@ import scala.collection.mutable
  *  Wraps `dotty.tools.dotc.Main` so that `cs launch scpyc` (or any direct
  *  invocation) automatically:
  *
- *    1. fetches the support jars (`scala-library-py`, `scala-pylib-py`) into
- *       `~/.cache/scpyc/<version>/` from the gh-pages Maven repo,
+ *    1. extracts the support jars (`scala-library-py`, `scala-pylib-py`),
+ *       which are bundled inside this jar under `/scpy/`, into
+ *       `~/.cache/scpyc/<version>/`,
  *    2. prepends them to the user-supplied `-classpath` (or adds a
  *       `-classpath` arg if none was given),
  *    3. injects `-scalapy` so the backend is enabled.
  *
- *  Why the support jars are downloaded out-of-band rather than declared as
- *  app-descriptor dependencies: their classes overlap with `scala-stdlib-py`
- *  (the JVM-runtime stdlib the compiler itself uses). Putting both on the
- *  JVM classpath causes runtime conflicts (e.g. mutual recursion between two
+ *  Why the support jars are bundled inside this launcher rather than declared
+ *  as app-descriptor dependencies: their classes overlap with `scala-stdlib-py`
+ *  (the JVM-runtime stdlib the compiler itself uses). Putting both on the JVM
+ *  classpath causes runtime conflicts (mutual recursion between two
  *  `scala.runtime.BoxesRunTime` versions). They must live on the *compile*
- *  classpath only.
+ *  classpath only — never on JVM cp.
  */
 object PyMain:
 
-  private val baseUrl =
-    "https://linyxus.github.io/scala3-py/maven/io/github/linyxus/scalapy"
-
-  /** Module names of the support jars to fetch, in the order they should
-   *  appear on the compile classpath.
-   */
-  private val supportArtifactIds = Seq("scala-library-py_3", "scala-pylib-py_3")
+  /** (cache-friendly artifact name, jar resource path inside this launcher). */
+  private val supportJars = Seq(
+    "scala-library-py" -> "/scpy/scala-library-py.jar",
+    "scala-pylib-py"   -> "/scpy/scala-pylib-py.jar",
+  )
 
   def main(args: Array[String]): Unit =
     val version = config.Properties.versionNumberString
     if version.isEmpty then
-      throw new RuntimeException("PyMain: cannot determine compiler version from compiler.properties")
-    val supportJars = ensureSupportJars(version)
-    Main.main(rewriteArgs(args, supportJars))
+      throw new RuntimeException(
+        "PyMain: cannot determine compiler version from compiler.properties")
+    val supportPaths = extractSupportJars(version)
+    Main.main(rewriteArgs(args, supportPaths))
   end main
 
-  private def ensureSupportJars(version: String): Seq[Path] =
+  private def extractSupportJars(version: String): Seq[Path] =
     val cacheDir = Paths.get(sys.props("user.home"), ".cache", "scpyc", version)
     Files.createDirectories(cacheDir)
-    supportArtifactIds.map { artifactId =>
-      val jarName = s"$artifactId-$version.jar"
-      val target = cacheDir.resolve(jarName)
-      if !Files.exists(target) then
-        val url = URI.create(s"$baseUrl/$artifactId/$version/$jarName").toURL
-        System.err.println(s"PyMain: fetching $jarName ...")
-        downloadTo(url, target)
+    supportJars.map { (name, resource) =>
+      val target = cacheDir.resolve(s"$name-$version.jar")
+      if !Files.exists(target) then extractTo(resource, target)
       target
     }
-  end ensureSupportJars
+  end extractSupportJars
 
-  private def downloadTo(url: URL, target: Path): Unit =
-    val tmp = Files.createTempFile(target.getParent, ".download-", ".tmp")
+  private def extractTo(resource: String, target: Path): Unit =
+    val in = getClass.getResourceAsStream(resource)
+    if in == null then
+      throw new RuntimeException(
+        s"PyMain: bundled resource $resource missing from this launcher jar")
+    val tmp = Files.createTempFile(target.getParent, ".extract-", ".tmp")
     try
-      val conn = url.openConnection()
-      conn.setConnectTimeout(15_000)
-      conn.setReadTimeout(120_000)
-      val in = conn.getInputStream
       try Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING)
       finally in.close()
       Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
     catch
-      case e: IOException =>
+      case e: Throwable =>
         Files.deleteIfExists(tmp)
-        throw new RuntimeException(s"PyMain: failed to download $url", e)
-  end downloadTo
+        throw e
+  end extractTo
 
   private def rewriteArgs(args: Array[String], supportJars: Seq[Path]): Array[String] =
     val supportCp = supportJars.map(_.toAbsolutePath.toString).mkString(File.pathSeparator)

@@ -32,6 +32,7 @@ PROJECTS_AND_MODULES=(
   "scala3-compiler-bootstrapped|scala3-compiler-py_3"
   "scala-pylib-py|scala-pylib-py_3"
   "scala-library-py|scala-library-py_3"
+  "scala3-compiler-py-bootstrapped|scpyc_3"
 )
 
 die() { echo "pyrelease.sh: $*" >&2; exit 1; }
@@ -117,7 +118,7 @@ cat > "${GHPAGES_APPS}/scpyc.json" <<JSON
     "name": "scpyc",
     "mainClass": "dotty.tools.dotc.PyMain",
     "dependencies": [
-      "io.github.linyxus.scalapy:scala3-compiler-py_3:${FULL_VERSION}"
+      "io.github.linyxus.scalapy:scpyc_3:${FULL_VERSION}"
     ],
     "repositories": [
       "central",
@@ -129,10 +130,12 @@ cat > "${GHPAGES_APPS}/scpyc.json" <<JSON
   }
 }
 JSON
-# scala-library-py and scala-pylib-py are intentionally NOT listed as deps:
-# their classes overlap with scala-stdlib-py (the JVM runtime stdlib), so
-# putting them on JVM cp causes runtime conflicts. PyMain fetches them into
-# ~/.cache/scpyc/<version>/ at startup and adds them to the compile cp only.
+# scala-library-py and scala-pylib-py are intentionally NOT listed as
+# transitive deps of scpyc_3: their classes overlap with scala-stdlib-py
+# (the JVM runtime stdlib), so putting them on JVM cp causes runtime
+# conflicts. They are bundled inside scpyc_3.jar as /scpy/*.jar resources
+# and PyMain extracts them into ~/.cache/scpyc/<version>/ on first run,
+# placing them on the *compile* classpath only.
 
 # --- Commit ----------------------------------------------------------------
 git -C "$GHPAGES_WORKTREE" add -A

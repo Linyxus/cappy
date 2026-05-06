@@ -93,7 +93,7 @@ object Build {
    *  each release is a reviewable commit. Combined with `baseVersion` to form
    *  `dottyVersion` when `PYBUILD=yes`, e.g. `3.9.0-RC1-PY0.1.0`.
    */
-  val pyVersion = "0.1.1"
+  val pyVersion = "0.1.2"
 
   /** Final version of Scala compiler, controlled by environment variables.
    *
@@ -680,6 +680,7 @@ object Build {
     pyCompilerTests,
     `scala-pylib-py`,
     `scala-library-py`,
+    `scala3-compiler-py-bootstrapped`,
     `community-build`,
     dist,
     `dist-mac-x86_64`,
@@ -2776,6 +2777,58 @@ object Build {
       bspEnabled := false,
     )
     .settings(pyPublishSettings("scala-library-py"))
+
+  /** Self-contained launcher artifact for the Python-backend compiler.
+   *
+   *  Published as `scpyc_3` under PYBUILD. Sole source is `PyMain.scala`,
+   *  which wraps `dotty.tools.dotc.Main` and:
+   *    - extracts the bundled support jars (`scala-library-py`, `scala-pylib-py`,
+   *      embedded under `/scpy/` as resources) into `~/.cache/scpyc/<version>/`,
+   *    - splices them onto the user's `-classpath`,
+   *    - injects `-scalapy`.
+   *
+   *  Why bundling: the support jars contain Scala stdlib classes that conflict
+   *  with `scala-stdlib-py` (the JVM-runtime stdlib) if both are on the JVM
+   *  classpath. By embedding them as plain JAR-file resources here and only
+   *  ever placing them on the *compile* classpath, we keep them off JVM cp
+   *  while still shipping a self-contained launcher with no runtime network
+   *  dependency or hardcoded URL.
+   *
+   *  Note: this project does NOT `dependsOn(scala-pylib-py)` /
+   *  `dependsOn(scala-library-py)`. The resource generator references those
+   *  projects' `Compile / packageBin` task directly, which gives sbt the right
+   *  build-time ordering without putting their coordinates into the published
+   *  POM (which would defeat the whole point — coursier would resolve them
+   *  onto JVM cp).
+   */
+  lazy val `scala3-compiler-py-bootstrapped` = project.in(file("compiler-py"))
+    .dependsOn(`scala3-compiler-bootstrapped`)
+    .settings(publishSettings)
+    .settings(
+      name          := "scala3-compiler-py-bootstrapped",
+      version       := dottyVersion,
+      crossPaths    := true,
+      scalaVersion  := dottyNonBootstrappedVersion,
+      Compile / unmanagedSourceDirectories := Seq(baseDirectory.value / "src"),
+      Compile / mainClass := Some("dotty.tools.dotc.PyMain"),
+      target := target.value / "scala3-compiler-py-bootstrapped",
+      autoScalaLibrary := false,
+      bootstrappedScalaInstanceSettings,
+      publish / skip := true,
+      bspEnabled := false,
+      Compile / resourceGenerators += Def.task {
+        val out = (Compile / resourceManaged).value / "scpy"
+        IO.createDirectory(out)
+        val pylib = (`scala-pylib-py`   / Compile / packageBin).value
+        val libpy = (`scala-library-py` / Compile / packageBin).value
+        val pylibOut = out / "scala-pylib-py.jar"
+        val libpyOut = out / "scala-library-py.jar"
+        IO.copyFile(pylib, pylibOut)
+        IO.copyFile(libpy, libpyOut)
+        Seq(pylibOut, libpyOut)
+      }.taskValue,
+    )
+    .settings(pyPublishSettings("scpyc"))
 
   //lazy val `scala3-bench` = project.in(file("bench")).asDottyBench(NonBootstrapped)
   //lazy val `scala3-bench-bootstrapped` = project.in(file("bench")).asDottyBench(Bootstrapped)
