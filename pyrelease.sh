@@ -113,18 +113,20 @@ rsync -a "${STAGING}/${GROUP_PATH}/" "${GHPAGES_MAVEN}/${GROUP_PATH}/"
 # --- Regenerate apps/scpyc.json --------------------------------------------
 cat > "${GHPAGES_APPS}/scpyc.json" <<JSON
 {
-  "name": "scpyc",
-  "main-class": "dotty.tools.dotc.PyMain",
-  "dependencies": [
-    "io.github.linyxus.scalapy::scala3-compiler-py:${FULL_VERSION}"
-  ],
-  "repositories": [
-    "central",
-    "${GHPAGES_BASE_URL}/maven"
-  ],
-  "java-options": [
-    "-Dscala.usejavacp=true"
-  ]
+  "scpyc": {
+    "name": "scpyc",
+    "mainClass": "dotty.tools.dotc.PyMain",
+    "dependencies": [
+      "io.github.linyxus.scalapy:scala3-compiler-py_3:${FULL_VERSION}"
+    ],
+    "repositories": [
+      "central",
+      "${GHPAGES_BASE_URL}/maven"
+    ],
+    "java-options": [
+      "-Dscala.usejavacp=true"
+    ]
+  }
 }
 JSON
 # scala-library-py and scala-pylib-py are intentionally NOT listed as deps:
