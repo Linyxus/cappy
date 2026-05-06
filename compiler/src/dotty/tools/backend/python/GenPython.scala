@@ -1789,7 +1789,7 @@ private class PyCodeGen()(using genCtx: Context):
 
   private def genSuperCall(app: Apply, pos: PyPosition): PyTree =
     val sym = app.fun.symbol
-    val args = app.args.map(genExpr)
+    val args = genArgsPreservingOrder(app.args)
     val ownerName = encoding.encodeClassName(sym.owner)
     val methodName = encoding.encodeMethodName(sym)
     val tpe = encoding.encodeType(sym.info.finalResultType)
@@ -1805,7 +1805,7 @@ private class PyCodeGen()(using genCtx: Context):
   private def genApplyNew(app: Apply, pos: PyPosition): PyTree =
     val Apply(fun @ Select(New(tpt), _), args) = app: @unchecked
     val classSym = tpt.tpe.typeSymbol
-    val pyArgs = args.map(genExpr)
+    val pyArgs = genArgsPreservingOrder(args)
     if Intrinsics.isStringClass(classSym) then
       genStringCtorCall(fun.symbol, pyArgs, pos)
     else
@@ -1836,7 +1836,7 @@ private class PyCodeGen()(using genCtx: Context):
               PyExternalName("_scpy_new_multi_array"),
               List(
                 PyClassOf(arrayBaseTypeRef(arrayClassConstant.typeValue))(pos),
-                PyArrayValue(PyPrimRef.IntRef, dimsArray.elems.map(genExpr))(pos)
+                PyArrayValue(PyPrimRef.IntRef, genArgsPreservingOrder(dimsArray.elems))(pos)
               )
             )(PyArrayType, pos)
       case _ =>
@@ -1866,7 +1866,7 @@ private class PyCodeGen()(using genCtx: Context):
       None
 
   private def genArrayLiteral(arrayTp: Type, elems: List[Tree], pos: PyPosition): PyTree =
-    PyArrayValue(arrayElemTypeRef(arrayTp), elems.map(genExpr))(pos)
+    PyArrayValue(arrayElemTypeRef(arrayTp), genArgsPreservingOrder(elems))(pos)
 
   private def arrayElemTypeRef(arrayTp: Type): PyTypeRef =
     arrayTp match
@@ -1895,7 +1895,7 @@ private class PyCodeGen()(using genCtx: Context):
     val binding = encoding.externBindingOf(classSym).get
     PyApplyDynamic(
       genExternRef(binding, tpt.tpe, pos),
-      args.map(genExpr),
+      genArgsPreservingOrder(args),
       Nil
     )(encoding.encodeType(app.tpe), pos)
 
@@ -1903,7 +1903,7 @@ private class PyCodeGen()(using genCtx: Context):
     val sym = app.fun.symbol
     genDynamicApply(app, pos).getOrElse {
       boundary:
-        val args = app.args.map(genExpr)
+        val args = genArgsPreservingOrder(app.args)
         val methodName = encoding.encodeMethodName(sym)
         val ownerName  = encoding.encodeClassName(sym.owner)
         val resultTpe  = encoding.encodeType(sym.info.finalResultType)
@@ -3349,6 +3349,82 @@ private class PyCodeGen()(using genCtx: Context):
     matchResultCounter += 1
     PyLocalName(s"_scpy_match_result_$matchResultCounter")
 
+  private var argTempCounter = 0
+  private def freshArgTempName(): PyLocalName =
+    argTempCounter += 1
+    PyLocalName(s"_scpy_arg_$argTempCounter")
+
+  /** Strict left-to-right evaluation for a sequence of argument trees.
+   *
+   *  `genExpr` may push statements to `pendingLocalDefs` when it has to
+   *  hoist a value-producing `If`/`Match`/`Try`/`Labeled` (multi-stmt
+   *  body that can't ride along as a Python expression) to a temp.
+   *  Those pushed statements are flushed by the parent before the
+   *  enclosing call expression evaluates. So if arg `i` returned an
+   *  inline (non-pushed) expression and a later arg `j > i` pushed,
+   *  arg `j`'s hoisted statements would run BEFORE arg `i`'s inline
+   *  expression evaluates at the call site — reversing Scala's
+   *  left-to-right argument order, with side-effect consequences (see
+   *  e.g. `tests/run/Course-2002-13.scala`'s `Parser.line`).
+   *
+   *  Fix: after generating all args, find the smallest `k` whose
+   *  generation pushed anything. Every arg `< k` whose result isn't a
+   *  pure leaf (`PyLiteral`, `PyVarRef`, `PyThis`) gets lifted to a
+   *  fresh `_scpy_arg_N` temp inserted into `pendingLocalDefs`
+   *  immediately before arg `k`'s pushed statements, so it evaluates
+   *  in source order. Args `>= k` stay inline — they evaluate at the
+   *  call site, which is after all hoists, preserving order.
+   */
+  private def genArgsPreservingOrder(argTrees: List[Tree]): List[PyTree] =
+    case class Snap(prefixSize: Int, expr: PyTree)
+    val snaps: List[Snap] = argTrees.map { tree =>
+      val before = pendingLocalDefs.size
+      val expr = genExpr(tree)
+      Snap(before, expr)
+    }
+    val finalSize = pendingLocalDefs.size
+
+    // First arg whose generation grew `pendingLocalDefs`.
+    val firstPushIdx = snaps.iterator.zipWithIndex.find { case (snap, i) =>
+      val nextPrefix = if i + 1 < snaps.size then snaps(i + 1).prefixSize else finalSize
+      nextPrefix > snap.prefixSize
+    }.map(_._2)
+
+    firstPushIdx match
+      case None => snaps.map(_.expr)
+      case Some(k) =>
+        val insertAt = snaps(k).prefixSize
+        val out = mutable.ArrayBuffer.empty[PyTree]
+        var inserted = 0
+        for ((snap, i) <- snaps.zipWithIndex)
+          if i < k && !isPureArgExpr(snap.expr) then
+            val pos = snap.expr.pos
+            val tpe = snap.expr.tpe
+            val name = freshArgTempName()
+            val tempRef = PyVarRef(name)(tpe, pos)
+            val tempDef = PyVarDef(
+              name         = name,
+              originalName = PyOriginalName.NoOriginalName,
+              vtpe         = tpe,
+              mutable      = false,
+              rhs          = snap.expr
+            )(pos)
+            pendingLocalDefs.insert(insertAt + inserted, tempDef)
+            inserted += 1
+            out += tempRef
+          else
+            out += snap.expr
+        out.toList
+  end genArgsPreservingOrder
+
+  /** Pure leaf — re-evaluating it has no observable side effects, so
+   *  ordering relative to a later arg's hoists doesn't matter. */
+  private def isPureArgExpr(tree: PyTree): Boolean = tree match
+    case _: PyLiteral => true
+    case _: PyVarRef  => true
+    case _: PyThis    => true
+    case _            => false
+
   /** Hoist a value-producing `If` whose branches carry pending local
    *  definitions into a statement-form `PyIf` that assigns to a fresh
    *  temp, plus a `PyVarRef` reading the temp. This preserves the
@@ -3686,7 +3762,7 @@ private class PyCodeGen()(using genCtx: Context):
     val binding = encoding.externBindingOf(sym).get
     PyApplyDynamic(
       genExternRef(binding, sym.info.finalResultType, pos),
-      args.map(genExpr),
+      genArgsPreservingOrder(args),
       Nil
     )(encoding.encodeType(sym.info.finalResultType), pos)
 
@@ -3715,7 +3791,7 @@ private class PyCodeGen()(using genCtx: Context):
   private def genFacadeCall(sel: Select, args: List[Tree], pos: PyPosition): PyTree =
     PyApplyDynamic(
       genFacadeSelect(sel, pos),
-      args.map(genExpr),
+      genArgsPreservingOrder(args),
       Nil
     )(encoding.encodeType(sel.symbol.info.finalResultType), pos)
 
@@ -3746,7 +3822,7 @@ private class PyCodeGen()(using genCtx: Context):
           )
           Some(PyApplyDynamic(
             callee,
-            extractRepeatedArgs(dynArgs).map(genExpr),
+            genArgsPreservingOrder(extractRepeatedArgs(dynArgs)),
             Nil
           )(encoding.encodeType(app.tpe), pos))
         case _ =>
