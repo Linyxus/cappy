@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>scala3-py — Maven repo</title>
+<style>
+body { font-family: -apple-system, system-ui, sans-serif; max-width: 720px; margin: 4rem auto; padding: 0 1rem; line-height: 1.55; color: #222; }
+code, pre { font-family: ui-monospace, Menlo, monospace; }
+pre { background: #f6f8fa; padding: 1rem; border-radius: 6px; overflow-x: auto; }
+a { color: #0366d6; }
+h1, h2 { border-bottom: 1px solid #eee; padding-bottom: 0.3em; }
+</style>
+</head>
+<body>
+<h1>scala3-py</h1>
+<p>Experimental Python backend for the Scala 3 compiler. This page hosts the
+Maven repository (<code>maven/</code>) and Coursier app channel
+(<code>apps/</code>) for published releases.</p>
+
+<h2>Install via Coursier</h2>
+<pre>cs install --channel https://linyxus.github.io/scala3-py/apps scpyc</pre>
+
+<h2>Resolver</h2>
+<p>To depend on a published artifact directly:</p>
+<pre>resolvers += "scala3-py" at "https://linyxus.github.io/scala3-py/maven"</pre>
+
+<h2>Source</h2>
+<p><a href="https://github.com/linyxus/scala3-py">github.com/linyxus/scala3-py</a></p>
+</body>
+</html>
