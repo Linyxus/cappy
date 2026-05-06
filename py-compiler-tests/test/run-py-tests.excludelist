@@ -330,3 +330,6 @@ transparentPower                            # missing-driver (dir-test with stag
 # Missing-driver:java-source: dir-test references symbols declared in a
 # sibling `.java` file.
 t12290                                      # missing-driver:java-source (Test.scala -> TextBlocks.aText/html1/...; defined in TextBlocks.java)
+
+# It uses JVM reflection
+i22979
