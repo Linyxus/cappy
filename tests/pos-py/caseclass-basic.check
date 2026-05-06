@@ -21,4 +21,4 @@ Outer(Inner(x),2)
 true
 false
 Outer(Inner(z),2)
-oob:2
+oob:Index out of range: 2
