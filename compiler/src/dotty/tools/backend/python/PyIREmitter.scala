@@ -1633,10 +1633,37 @@ object PyIREmitter:
       // a safety net for codegen-synthesized closures of unexpected
       // shape.
       case PyClosure(params, _, body) =>
-        val paramsStr = params.map(_.name.name).mkString(", ")
+        // Python `lambda` captures free variables by NAME — the body
+        // resolves them via the enclosing scope at *call* time. Scala
+        // (and the JVM) capture by VALUE at lambda-creation time. The
+        // gap matters whenever the enclosing function later mutates a
+        // captured local: most prominently, dotty's tail-call mini-phase
+        // lowers `@tailrec` recursion into a loop that overwrites the
+        // method's parameter slots in place. A closure created inside
+        // that loop body — e.g. `LazyList#reverseOnto`'s
+        // `newLL(eagerCons(head, tl))` thunk, deferred until the lazy
+        // list is forced — would otherwise read the FINAL post-loop
+        // values of `this` / `tl`, which is the empty tail. The result
+        // is `NoSuchElementException("head of empty lazy list")` once
+        // the deferred thunk fires. See the upstream `tests/run/t153`
+        // shape and `notes/issue-tailrec-closure-capture.md`.
+        //
+        // Snapshot every free local-var read in the body via Python's
+        // default-argument trick (`lambda x, _v=_v: ...`). Default-
+        // argument expressions are evaluated at `def`/`lambda`
+        // definition time, so the closure carries the value live at
+        // creation.
+        val paramNames = params.iterator.map(_.name.name).toSet
+        val paramsStr  = params.map(_.name.name).mkString(", ")
+        val freeLocals = collectFreeLocals(body, paramNames).toList.sorted
+        val captures   = freeLocals.map(v => s"$v=$v").mkString(", ")
+        val sig =
+          if freeLocals.isEmpty then paramsStr
+          else if paramsStr.isEmpty then captures
+          else s"$paramsStr, $captures"
         val arity = params.length
         val carrier = if arity >= 0 && arity <= 22 then s"_scpy_Fn$arity" else "_scpy_Fn"
-        s"$carrier(lambda $paramsStr: ${exprToStr(body)})"
+        s"$carrier(lambda $sig: ${exprToStr(body)})"
 
       case PyClassOf(typeRef) =>
         typeRefToClassExpr(typeRef)
@@ -1996,6 +2023,55 @@ object PyIREmitter:
 
     private def sanitizeIdent(s: String): String =
       PyIRRuntime.sanitizeIdent(s)
+
+    // -- Free-local collection (for closure value-capture) -------
+
+    /** Collect the names of `PyVarRef` reads in `body` whose binder lies
+     *  outside `body` (i.e. is not introduced by a `PyClosure` /
+     *  `PyVarDef` / `PyTryCatch.errVar` inside `body` itself). Used by
+     *  `PyClosure` rendering to snapshot captured locals into the
+     *  Python lambda via the default-argument trick — see the comment
+     *  at the `PyClosure` case in `exprToStr`. */
+    private def collectFreeLocals(body: PyTree, alreadyBound: Set[String]): Set[String] =
+      val acc = mutable.Set.empty[String]
+      def visit(t: PyTree, bound: Set[String]): Unit = t match
+        case PyVarRef(n) =>
+          if !bound.contains(n.name) then acc += n.name
+        case c: PyClosure =>
+          visit(c.body, bound ++ c.params.iterator.map(_.name.name))
+        case b: PyBlock =>
+          var bnd = bound
+          for s <- b.stats do
+            s match
+              case pd: PyVarDef =>
+                visit(pd.rhs, bnd)
+                bnd = bnd + pd.name.name
+              case _ =>
+                visit(s, bnd)
+          visit(b.expr, bnd)
+        case tc: PyTryCatch =>
+          visit(tc.block, bound)
+          visit(tc.handler, bound + tc.errVar.name)
+        case _ =>
+          // Generic recursion via productIterator. Every PyTree node
+          // in this codebase is a `final case class`, so the concrete
+          // value is a `Product` — the base class itself does not
+          // declare it, hence the cast. The first param list contains
+          // the children (directly, in `List[PyTree]`, or in a
+          // `(List[PyMatchableLiteral], PyTree)` tuple for `PyMatch`
+          // cases). The trailing `(val pos / tpe)` curried lists are
+          // not part of `productIterator`, so type refs / names /
+          // positions don't show up here.
+          t match
+            case p: Product => p.productIterator.foreach(visitChild(_, bound))
+            case _          => ()
+      def visitChild(child: Any, bound: Set[String]): Unit = child match
+        case t: PyTree    => visit(t, bound)
+        case xs: Seq[?]   => xs.foreach(visitChild(_, bound))
+        case (a, b)       => visitChild(a, bound); visitChild(b, bound)
+        case _            => ()
+      visit(body, alreadyBound)
+      acc.toSet
 
     // -- Block flattening ----------------------------------------
 
