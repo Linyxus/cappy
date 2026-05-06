@@ -333,3 +333,6 @@ t12290                                      # missing-driver:java-source (Test.s
 
 # It uses JVM reflection
 i22979
+
+# Enum set was not supported
+enum-efficient-collections.scala
