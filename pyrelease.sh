@@ -114,11 +114,9 @@ rsync -a "${STAGING}/${GROUP_PATH}/" "${GHPAGES_MAVEN}/${GROUP_PATH}/"
 cat > "${GHPAGES_APPS}/scpyc.json" <<JSON
 {
   "name": "scpyc",
-  "main-class": "dotty.tools.dotc.Main",
+  "main-class": "dotty.tools.dotc.PyMain",
   "dependencies": [
-    "io.github.linyxus.scalapy::scala3-compiler-py:${FULL_VERSION}",
-    "io.github.linyxus.scalapy::scala-pylib-py:${FULL_VERSION}",
-    "io.github.linyxus.scalapy::scala-library-py:${FULL_VERSION}"
+    "io.github.linyxus.scalapy::scala3-compiler-py:${FULL_VERSION}"
   ],
   "repositories": [
     "central",
@@ -129,6 +127,10 @@ cat > "${GHPAGES_APPS}/scpyc.json" <<JSON
   ]
 }
 JSON
+# scala-library-py and scala-pylib-py are intentionally NOT listed as deps:
+# their classes overlap with scala-stdlib-py (the JVM runtime stdlib), so
+# putting them on JVM cp causes runtime conflicts. PyMain fetches them into
+# ~/.cache/scpyc/<version>/ at startup and adds them to the compile cp only.
 
 # --- Commit ----------------------------------------------------------------
 git -C "$GHPAGES_WORKTREE" add -A
