@@ -2987,6 +2987,12 @@ object Build {
     scmInfo      := (if (isPyBuild) Some(pyScmInfo) else scmInfo.value),
     developers   := (if (isPyBuild) List(pyDeveloper) else developers.value),
     publish / skip := (if (isPyBuild) false else (publish / skip).value),
+    // Skip the scaladoc-generated javadoc jar in PYBUILD mode. The compiler's
+    // javadoc jar alone is ~140 MB, which exceeds GitHub's 100 MB hard file
+    // limit on the gh-pages branch. Coursier resolution doesn't use javadoc;
+    // sources jars (much smaller) are still published for IDE consumers.
+    Compile / packageDoc / publishArtifact :=
+      (if (isPyBuild) false else (Compile / packageDoc / publishArtifact).value),
   )
 
   lazy val publishSettings = Seq(
