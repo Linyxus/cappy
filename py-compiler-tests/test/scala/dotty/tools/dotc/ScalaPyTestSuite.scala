@@ -16,22 +16,19 @@ import dotty.tools.vulpix.*
 private[dotc] trait ScalaPyTestSuite extends ParallelTesting:
   implicit val summaryReport: SummaryReporting = new SummaryReport
 
-  // The Python backend exercises shared `tests/run/` fixtures whose
-  // separate-compilation siblings (e.g. `unroll-*-integration`) ship
-  // both `//> using target.platform jvm` and
-  // `//> using target.platform scala-js` files in the same group.
-  // The JVM variant uses Java reflection (`getMethod`, `Boolean.FALSE`)
-  // to inspect the bytecode-level forwarders synthesized by `@unroll`;
-  // the Scala.js variant is intentionally a no-op stub. Both name a
-  // shared symbol the platform-neutral test driver references, so
-  // exactly one of them must be kept.
+  // The Python backend is its own test platform. Two consequences:
   //
-  // Selecting the Scala.js variant aligns with the Python backend:
-  // there are no JVM bytecode forwarders to reflect on, and the
-  // no-op stub keeps the test driver linkable. JVM-only sources
-  // would otherwise trip PyIR linker errors (e.g. on
-  // `java.lang.Boolean.FALSE`) that have no Python analogue.
-  override protected def testPlatform: TestPlatform = TestPlatform.ScalaJS
+  //  - Check-file resolution is `<base>.python.check` → `<base>.check`
+  //    (see `ParallelTesting.checkFile`). Where Python output happens
+  //    to match JVM's `.check`, no override is needed; where it
+  //    diverges, a sibling `.python.check` lives next to the test.
+  //
+  //  - `//> using target.platform <p>` companion files tagged with
+  //    any platform other than `python` are excluded from
+  //    compilation (see `ParallelTesting`'s `platformFiles` filter).
+  //    Tests that historically relied on a `scala-js`-tagged stub
+  //    for a shared symbol need an explicit `python`-tagged sibling.
+  override protected def testPlatform: TestPlatform = TestPlatform.Python
 
   // Bumped from 60s → 90s on 2026-05-02 to cover Perf B fixtures that
   // run correctly but exceed 60s under CPython interpretation
