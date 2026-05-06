@@ -574,7 +574,18 @@ private class PyCodeGen()(using genCtx: Context):
       emitted.iterator.map { case (_, cd) => cd.name -> cd }.toMap
 
     for (sym, classDef) <- emitted do
-      if classDef.kind == PyClassKind.ModuleClass && isForwarderCandidate(sym) then
+      // Static forwarders presuppose a singleton-bound module — without
+      // it, the synthesized `_scpy_module_value(_scpy_mod_<name>_).foo()`
+      // body references an unbound name. Inner module classes that
+      // require an `_outer` ctor argument (e.g. `object Branch` in a
+      // trait) survive the `Flatten` phase as `owner.is(Package)`-true
+      // module classes, so `isForwarderCandidate` would otherwise admit
+      // them; gate explicitly on the same singleton-eligibility
+      // predicate the emitter uses for `_scpy_mod_*_` binding emission.
+      if classDef.kind == PyClassKind.ModuleClass
+        && isForwarderCandidate(sym)
+        && PyIREmitter.hasModuleSingleton(classDef)
+      then
         val ownerName = forwarderTargetName(sym, classDef)
         val companion = byName.get(ownerName)
         val existingMethodNames =

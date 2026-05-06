@@ -35,6 +35,21 @@ object PyIREmitter:
   /** Reserved prefix for compiler-invented Python identifiers. */
   val Prefix: String = "_scpy_"
 
+  /** True iff `cls` will receive a `_scpy_mod_*_` singleton binding in
+   *  the emitted bundle. The singleton is only allocatable when the
+   *  module class has a no-arg constructor — inner module classes (e.g.
+   *  `object Branch` inside a trait) take an `_outer` argument and so
+   *  have no top-level singleton instance. The `emitPreamble` filter,
+   *  the `PySelectStatic` / `PyApplyStatic` / `PyLoadModule` routing in
+   *  this emitter, and the static-forwarder generation in GenPython all
+   *  must agree on this predicate, otherwise the bundle ends up with
+   *  references to `_scpy_mod_*_` names that nothing binds. */
+  def hasModuleSingleton(cls: PyClassDef): Boolean =
+    cls.kind == PyClassKind.ModuleClass &&
+      cls.methods.exists(m =>
+        m.flags.namespace == PyMemberNamespace.Constructor && m.args.isEmpty
+      )
+
   /** Entry point for a "main" method: the class where it lives plus
    *  that class's kind (Class vs ModuleClass - determines whether the
    *  guard calls `Name.main(...)` or `_scpy_mod_Name.main(...)`). */
@@ -173,12 +188,7 @@ object PyIREmitter:
       // argument and can't be instantiated without one. Detect by
       // looking for a no-arg constructor — top-level Scala objects have
       // one; inner objects don't.
-      val moduleClasses = orderedClasses.filter { cls =>
-        cls.kind == PyClassKind.ModuleClass &&
-          cls.methods.exists(m =>
-            m.flags.namespace == PyMemberNamespace.Constructor && m.args.isEmpty
-          )
-      }
+      val moduleClasses = orderedClasses.filter(PyIREmitter.hasModuleSingleton)
 
       if moduleClasses.nonEmpty then
         // Lazy module init: every singleton is allocated via `__new__`
@@ -1913,11 +1923,11 @@ object PyIREmitter:
      *  `PyLoadModule` and `PyApplyStatic` emission. */
     private def routeToModuleVar(cn: PyClassName): PyClassName =
       classByName.get(cn) match
-        case Some(c) if c.kind == PyClassKind.ModuleClass => cn
+        case Some(c) if PyIREmitter.hasModuleSingleton(c) => cn
         case _ =>
           val underscored = PyClassName(cn.nameString + "_")
           classByName.get(underscored) match
-            case Some(c) if c.kind == PyClassKind.ModuleClass => underscored
+            case Some(c) if PyIREmitter.hasModuleSingleton(c) => underscored
             case _ => cn
 
     /** True iff `cn` is known to be a non-ModuleClass in the emitted
@@ -1934,10 +1944,17 @@ object PyIREmitter:
      *  original module-routing path. */
     private def hasNoModuleVarBinding(cn: PyClassName): Boolean =
       classByName.get(cn) match
-        case Some(c) if c.kind != PyClassKind.ModuleClass =>
+        case Some(c) if PyIREmitter.hasModuleSingleton(c) => false
+        case Some(c) if c.kind == PyClassKind.ModuleClass =>
+          // ModuleClass with no no-arg ctor (inner module needing
+          // `_outer`): no `_scpy_mod_*_` is bound for it. The static
+          // members it carries (e.g. `LazyVals`-lifted `_lzyHandle`
+          // fields) must be accessed directly on the class identifier.
+          true
+        case Some(_) =>
           val underscored = PyClassName(cn.nameString + "_")
           classByName.get(underscored) match
-            case Some(uc) if uc.kind == PyClassKind.ModuleClass => false
+            case Some(uc) if PyIREmitter.hasModuleSingleton(uc) => false
             case _ => true
         case _ => false
 
