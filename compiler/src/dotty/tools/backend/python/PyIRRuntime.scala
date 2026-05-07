@@ -109,7 +109,6 @@ object PyIRRuntime:
   private val ScalaNonEmptyTupleClass    = PyClassName("scala.NonEmptyTuple")
   private val ScalaPairClass             = PyClassName("scala._times_colon")
   private val ScalaEmptyTupleModuleClass = PyClassName("scala.EmptyTuple_")
-  private val ScalaTupleXXLClass         = PyClassName("scala.runtime.TupleXXL")
   private val ScalaRuntimeTuplesClass    = PyClassName("scala.runtime.Tuples_")
   private val ScalaTupleNClasses: List[PyClassName] =
     (1 to 22).map(n => PyClassName(s"scala.Tuple$n")).toList
@@ -428,14 +427,12 @@ object PyIRRuntime:
         constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
         instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
       ),
-    ScalaTupleXXLClass ->
-      ProvidedClass(
-        kind = PyClassKind.Class,
-        superClass = Some(PyClassName.ObjectClass),
-        javaProvided = true,
-        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
-        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
-      ),
+    // `scala.runtime.TupleXXL` is intentionally NOT provided. Tuples
+    // of arity > 22 are constructed via `TupleXXL.apply(seq)` and
+    // pattern-matched via `TupleXXL.unapplySeq` — both of those need
+    // the Scala-side implementation, which the support library
+    // supplies as a normal compiled class. Adding TupleXXL here
+    // would drop that `.pyir` and leave the calls unbound.
     ScalaRuntimeTuplesClass ->
       ProvidedClass(
         kind = PyClassKind.ModuleClass,
@@ -1788,8 +1785,6 @@ object PyIRRuntime:
        |            return len(value) > 0
        |        if name == "scala.EmptyTuple$":
        |            return len(value) == 0
-       |        if name == "scala.runtime.TupleXXL":
-       |            return len(value) > 22
        |        if name.startswith("scala.Tuple"):
        |            tail = name[len("scala.Tuple"):]
        |            if tail.isdigit():
@@ -2225,7 +2220,9 @@ object PyIRRuntime:
        |_scpy_register_class(None, "scala.NonEmptyTuple", "interface", None, ("scala.Tuple",))
        |_scpy_register_class(None, "scala._times_colon", "class", "java.lang.Object", ("scala.NonEmptyTuple",))
        |_scpy_register_class(None, "scala.EmptyTuple_", "class", "java.lang.Object", ("scala.Tuple",))
-       |_scpy_register_class(None, "scala.runtime.TupleXXL", "class", "java.lang.Object")
+       |# `scala.runtime.TupleXXL` is supplied by the support library; do not
+       |# pre-register it here (the support-lib registration carries the real
+       |# class object).
        |_scpy_register_class(None, "scala.runtime.Tuples_", "class", "java.lang.Object")
        |_scpy_register_class(None, "scala.Tuple1", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
        |_scpy_register_class(None, "scala.Tuple2", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
@@ -3447,68 +3444,104 @@ object PyIRRuntime:
        |        return t
        |    return _scpy_ScalaTuple(t)
        |
+       |def _scpy_as_pytuple(x):
+       |    # Normalize a `Tuple`-typed value to a native Python tuple so the
+       |    # element-wise helpers below can operate uniformly. Python-tuple
+       |    # inputs (Tuple1..22 lowering, Scala-emitted) pass through; a
+       |    # `scala.runtime.TupleXXL` (kept as a real Scala class to preserve
+       |    # `unapplySeq`/`elems` shape) is unpacked via `productArity` /
+       |    # `productElement`. Any non-tuple `Product` reaches here too via
+       |    # `Tuples.{concat,cons,size,…}` calls whose erased static type
+       |    # does not promise a Python tuple — fall through to the same
+       |    # `Product` accessors.
+       |    if isinstance(x, tuple):
+       |        return x
+       |    n = x.${m("productArity")(I)}()
+       |    return tuple(x.${m("productElement", I)(ObjRef)}(i) for i in range(n))
+       |
        |def _scpy_tuple_get(t, i):
-       |    if i < 0 or i >= len(t):
+       |    pt = _scpy_as_pytuple(t)
+       |    if i < 0 or i >= len(pt):
        |        raise IndexOutOfBoundsException(_builtins.str(i))
-       |    return t[i]
+       |    return pt[i]
        |
        |def _scpy_tuple_concat(a, b):
-       |    return _scpy_ScalaTuple(a + b)
+       |    # `runtime.Tuples.concat` short-circuits when one side is empty
+       |    # and returns the OTHER side unchanged (`tests/run/tuple-concat.scala`
+       |    # asserts `(t ++ ()) eq t`). Preserve that identity by returning
+       |    # the original argument before normalizing/copying.
+       |    pa = _scpy_as_pytuple(a)
+       |    pb = _scpy_as_pytuple(b)
+       |    if len(pb) == 0:
+       |        return a
+       |    if len(pa) == 0:
+       |        return b
+       |    return _scpy_ScalaTuple(pa + pb)
        |
        |def _scpy_tuple_cons(x, t):
-       |    return _scpy_ScalaTuple((x,) + t)
+       |    return _scpy_ScalaTuple((x,) + _scpy_as_pytuple(t))
        |
        |def _scpy_tuple_append(x, t):
-       |    return _scpy_ScalaTuple(t + (x,))
+       |    return _scpy_ScalaTuple(_scpy_as_pytuple(t) + (x,))
        |
        |def _scpy_tuple_tail(t):
-       |    if len(t) == 0:
+       |    pt = _scpy_as_pytuple(t)
+       |    if len(pt) == 0:
        |        raise UnsupportedOperationException("tail of empty tuple", None)
-       |    return _scpy_ScalaTuple(t[1:])
+       |    return _scpy_ScalaTuple(pt[1:])
        |
        |def _scpy_tuple_init(t):
-       |    if len(t) == 0:
+       |    pt = _scpy_as_pytuple(t)
+       |    if len(pt) == 0:
        |        raise UnsupportedOperationException("init of empty tuple", None)
-       |    return _scpy_ScalaTuple(t[:-1])
+       |    return _scpy_ScalaTuple(pt[:-1])
        |
        |def _scpy_tuple_last(t):
-       |    if len(t) == 0:
+       |    pt = _scpy_as_pytuple(t)
+       |    if len(pt) == 0:
        |        raise NoSuchElementException()
-       |    return t[-1]
+       |    return pt[-1]
        |
        |def _scpy_tuple_size(t):
-       |    return len(t)
+       |    if isinstance(t, tuple):
+       |        return len(t)
+       |    return t.${m("productArity")(I)}()
        |
        |def _scpy_tuple_take(t, n):
        |    if n < 0:
        |        raise IndexOutOfBoundsException(_builtins.str(n))
-       |    if n >= len(t):
-       |        return _scpy_st(t)
-       |    return _scpy_ScalaTuple(t[:n])
+       |    pt = _scpy_as_pytuple(t)
+       |    if n >= len(pt):
+       |        return _scpy_st(pt)
+       |    return _scpy_ScalaTuple(pt[:n])
        |
        |def _scpy_tuple_drop(t, n):
        |    if n < 0:
        |        raise IndexOutOfBoundsException(_builtins.str(n))
-       |    if n >= len(t):
+       |    pt = _scpy_as_pytuple(t)
+       |    if n >= len(pt):
        |        return _scpy_ScalaTuple()
-       |    return _scpy_ScalaTuple(t[n:])
+       |    return _scpy_ScalaTuple(pt[n:])
        |
        |def _scpy_tuple_splitat(t, n):
        |    if n < 0:
        |        raise IndexOutOfBoundsException(_builtins.str(n))
-       |    if n >= len(t):
-       |        return _scpy_ScalaTuple((_scpy_st(t), _scpy_ScalaTuple()))
-       |    return _scpy_ScalaTuple((_scpy_ScalaTuple(t[:n]), _scpy_ScalaTuple(t[n:])))
+       |    pt = _scpy_as_pytuple(t)
+       |    if n >= len(pt):
+       |        return _scpy_ScalaTuple((_scpy_st(pt), _scpy_ScalaTuple()))
+       |    return _scpy_ScalaTuple((_scpy_ScalaTuple(pt[:n]), _scpy_ScalaTuple(pt[n:])))
        |
        |def _scpy_tuple_reverse(t):
-       |    return _scpy_ScalaTuple(t[::-1])
+       |    return _scpy_ScalaTuple(_scpy_as_pytuple(t)[::-1])
        |
        |def _scpy_tuple_zip(a, b):
-       |    n = len(a) if len(a) < len(b) else len(b)
-       |    return _scpy_ScalaTuple(_scpy_ScalaTuple((a[i], b[i])) for i in range(n))
+       |    pa = _scpy_as_pytuple(a)
+       |    pb = _scpy_as_pytuple(b)
+       |    n = len(pa) if len(pa) < len(pb) else len(pb)
+       |    return _scpy_ScalaTuple(_scpy_ScalaTuple((pa[i], pb[i])) for i in range(n))
        |
        |def _scpy_tuple_map(t, f):
-       |    return _scpy_ScalaTuple(f.${m("apply", ObjRef)(ObjRef)}(x) for x in t)
+       |    return _scpy_ScalaTuple(f.${m("apply", ObjRef)(ObjRef)}(x) for x in _scpy_as_pytuple(t))
        |
        |def _scpy_tuple_prefix(t):
        |    n = len(t)

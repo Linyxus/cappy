@@ -1810,8 +1810,13 @@ private class PyCodeGen()(using genCtx: Context):
     val pyArgs = genArgsPreservingOrder(args)
     if Intrinsics.isStringClass(classSym) then
       genStringCtorCall(fun.symbol, pyArgs, pos)
-    else if pyDefn.isTupleClass(classSym) then
+    else if isFixedArityTupleClass(classSym) then
       // `new Tuple{N}(...)` — lower to a native Python tuple value.
+      // Restricted to fixed-arity tuple classes (`Tuple1..22` and
+      // specialized forms): `new TupleXXL(arr)` and `new *:(h, t)`
+      // need their real Scala constructors so the runtime keeps the
+      // expected class identity for downstream `unapplySeq`/cons-shape
+      // operations.
       PyTupleValue(pyArgs)(encoding.encodeType(app.tpe), pos)
     else
       val className = encoding.encodeClassName(classSym)
@@ -2365,7 +2370,13 @@ private class PyCodeGen()(using genCtx: Context):
     val resultTpe = encoding.encodeType(resultScalaTpe)
     def ext(name: String, ts: List[PyTree]): PyTree =
       PyApplyExternal(PyExternalName(name), ts)(resultTpe, pos)
-    val recv = genExpr(receiver)
+    // `genExpr(receiver)` may push the receiver's side-effecting
+    // sub-trees to `pendingLocalDefs`. Only call it when a polyfill
+    // actually fires; otherwise the receiver will be re-evaluated by
+    // the regular `genNormalApply` dispatch path, duplicating any side
+    // effects (see `tests/run/runtime.scala`'s
+    // `{Console.print(23); test1.bar.System}.out.println()`).
+    def recv: PyTree = genExpr(receiver)
     if      sym == pyDefn.Product_productArity && args.isEmpty then
       Some(ext("_scpy_product_arity", List(recv)))
     else if sym == pyDefn.Product_productElement && args.length == 1 then
@@ -2387,15 +2398,32 @@ private class PyCodeGen()(using genCtx: Context):
     if tpe.tupleElementTypes.isDefined then return true
     pyDefn.isTupleClass(tpe.widenDealias.typeSymbol)
 
-  /** True when `sym` is the `apply` static factory on a tuple
-   *  companion module (`Tuple1$`..`Tuple22$`, `Tuple$`, or any
-   *  specialized form derived from `NonEmptyTuple`). */
+  /** True for a fixed-arity tuple class (`Tuple1..22` and specialized
+   *  forms like `Tuple2$mcII$sp`).
+   *
+   *  Deliberately excludes `Tuple` (trait), `NonEmptyTuple` (trait),
+   *  `*:` (cons class — distinct shape), `EmptyTuple$`, and
+   *  `TupleXXL` (variadic-arity, kept as a real Scala class). */
+  private def isFixedArityTupleClass(sym: Symbol): Boolean =
+    if !sym.exists || !sym.isClass then return false
+    if defn.isTupleClass(sym) then return true
+    val cs = sym.asClass
+    cs != pyDefn.PairClass && cs.derivesFrom(pyDefn.PairClass) && cs != pyDefn.TupleXXLClass
+
+  /** True when `sym` is the `apply(t1, …, tN)` factory on a
+   *  fixed-arity `TupleN` companion module (`Tuple1$`..`Tuple22$` and
+   *  any specialized form derived from `NonEmptyTuple`).
+   *
+   *  Deliberately excludes `Tuple$` and `TupleXXL$`: those expose
+   *  variadic / collection-shaped factories (`Tuple.apply(Seq)`,
+   *  `TupleXXL.apply(Seq)`) whose single Seq argument is NOT the
+   *  tuple's element list and would be miscompiled as a 1-tuple. */
   private def isTupleCompanionApply(sym: Symbol): Boolean =
     if sym.name != nme.apply then return false
     val owner = sym.owner
     if !owner.is(ModuleClass) then return false
     val companionClass = owner.linkedClass
-    companionClass.exists && pyDefn.isTupleClass(companionClass)
+    isFixedArityTupleClass(companionClass)
 
   private def genTuplesStaticCall(
       sym: Symbol,
