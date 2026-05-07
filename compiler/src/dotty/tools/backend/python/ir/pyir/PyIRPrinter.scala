@@ -260,6 +260,8 @@ object PyIRPrinter:
         s"array[${typeRefString(elem)}](${elems.map(exprString).mkString(", ")})"
       case PyArraySelect(arr, idx) =>
         s"${exprString(arr)}[${exprString(idx)}]"
+      case PyTupleValue(elems) =>
+        s"tuple(${elems.map(exprString).mkString(", ")})"
       // Operators
       case PyUnaryOp(op, lhs) =>
         s"$op(${exprString(lhs)})"

@@ -767,6 +767,10 @@ object PyReachability:
       case t: PyArraySelect =>
         walkTree(t.array); walkTree(t.index)
 
+      case t: PyTupleValue =>
+        fromType(t.tpe)
+        t.elems.foreach(walkTree)
+
       case t: PyUnaryOp =>
         walkTree(t.lhs)
 
@@ -913,6 +917,7 @@ object PyReachability:
       case t: PyNewArray        => seedModuleAccessorsInClosure(t.length)
       case t: PyArrayValue      => t.elems.foreach(seedModuleAccessorsInClosure)
       case t: PyArraySelect     => seedModuleAccessorsInClosure(t.array); seedModuleAccessorsInClosure(t.index)
+      case t: PyTupleValue      => t.elems.foreach(seedModuleAccessorsInClosure)
       case t: PyUnaryOp         => seedModuleAccessorsInClosure(t.lhs)
       case t: PyBinaryOp        => seedModuleAccessorsInClosure(t.lhs); seedModuleAccessorsInClosure(t.rhs)
       case t: PyClosure         => seedModuleAccessorsInClosure(t.body)

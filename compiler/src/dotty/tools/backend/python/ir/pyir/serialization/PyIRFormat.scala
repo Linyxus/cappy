@@ -29,8 +29,13 @@ object PyIRFormat:
    */
   final val MajorVersion: Int = 4
 
-  /** Minor version. Reader accepts older minors and rejects newer. */
-  final val MinorVersion: Int = 0
+  /** Minor version. Reader accepts older minors and rejects newer.
+   *
+   *  Bumped to 1 when `PyTupleValue` was added (tag `0x53`) so the
+   *  Python backend can lower Scala tuples directly to Python tuples.
+   *  Older readers will reject `.pyir` containing the new tag.
+   */
+  final val MinorVersion: Int = 1
 
   /** Packed `(major << 8) | minor`, written as a big-endian u16. */
   final val FormatVersion: Int = (MajorVersion << 8) | MinorVersion

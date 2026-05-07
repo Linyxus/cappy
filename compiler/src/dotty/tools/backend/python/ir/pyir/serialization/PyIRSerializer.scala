@@ -351,6 +351,7 @@ object PyIRSerializer:
       case _: PyNewArray        => TagPyNewArray
       case _: PyArrayValue      => TagPyArrayValue
       case _: PyArraySelect     => TagPyArraySelect
+      case _: PyTupleValue      => TagPyTupleValue
       case _: PyUnaryOp         => TagPyUnaryOp
       case _: PyBinaryOp        => TagPyBinaryOp
       case _: PyClosure         => TagPyClosure
@@ -537,6 +538,11 @@ object PyIRSerializer:
         writeType(n.tpe)
         writeTree(n.array)
         writeTree(n.index)
+
+      case n: PyTupleValue =>
+        writeType(n.tpe)
+        writeNat(n.elems.size)
+        n.elems.foreach(writeTree)
 
       // ----- Operators -----
       case n: PyUnaryOp =>

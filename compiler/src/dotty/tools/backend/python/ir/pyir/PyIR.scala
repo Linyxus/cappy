@@ -282,6 +282,17 @@ final case class PyArraySelect(array: PyTree, index: PyTree)
     (val tpe: PyType, val pos: PyPosition) extends PyAssignable
 
 // ===================================================================
+//  Tuples
+// ===================================================================
+
+/** Python tuple value. Lowers a Scala `Tuple{N}` / `EmptyTuple` /
+ *  `TupleXXL` value to a native Python tuple literal. Heterogeneous,
+ *  immutable, hashable. Element types are not tracked individually —
+ *  the overall `tpe` carries enough information for the linker. */
+final case class PyTupleValue(elems: List[PyTree])
+    (val tpe: PyType, val pos: PyPosition) extends PyTree
+
+// ===================================================================
 //  Operators
 // ===================================================================
 

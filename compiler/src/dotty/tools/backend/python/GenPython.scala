@@ -1513,6 +1513,7 @@ private class PyCodeGen()(using genCtx: Context):
             genStaticFieldGetter(sym, tree.tpe, pos)
           else if sym.is(Module) then
             if isStringCompanionModule(sym) then PyLoadModule(stringCompanionClassName)(pos)
+            else if sym == pyDefn.EmptyTupleModule then PyTupleValue(Nil)(encoding.encodeType(tree.tpe), pos)
             else PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
           else if isStaticFieldOwner(sym) && !sym.is(Method) then
             // `@scala.annotation.static val/var` read through a
@@ -1536,6 +1537,7 @@ private class PyCodeGen()(using genCtx: Context):
           case None =>
             if sym.is(Module) then
               if isStringCompanionModule(sym) then PyLoadModule(stringCompanionClassName)(pos)
+              else if sym == pyDefn.EmptyTupleModule then PyTupleValue(Nil)(encoding.encodeType(tree.tpe), pos)
               else PyLoadModule(encoding.encodeClassName(sym.moduleClass))(pos)
             else if isSystemStreamStaticFieldRef(sym) then
               genStaticFieldGetter(sym, tree.tpe, pos)
@@ -1808,6 +1810,9 @@ private class PyCodeGen()(using genCtx: Context):
     val pyArgs = genArgsPreservingOrder(args)
     if Intrinsics.isStringClass(classSym) then
       genStringCtorCall(fun.symbol, pyArgs, pos)
+    else if pyDefn.isTupleClass(classSym) then
+      // `new Tuple{N}(...)` — lower to a native Python tuple value.
+      PyTupleValue(pyArgs)(encoding.encodeType(app.tpe), pos)
     else
       val className = encoding.encodeClassName(classSym)
       val ctorName = encoding.encodeMethodName(fun.symbol)
@@ -1918,6 +1923,10 @@ private class PyCodeGen()(using genCtx: Context):
           case None       => ()
 
         genHashCodeSpecial(app, pos) match
+          case Some(tree) => break(tree)
+          case None       => ()
+
+        genTupleCallOpt(app, pos) match
           case Some(tree) => break(tree)
           case None       => ()
 
@@ -2288,6 +2297,177 @@ private class PyCodeGen()(using genCtx: Context):
       methodName,
       args
     )(PyStringType, pos)
+
+  /** Lower a Scala-tuple-shaped call to native Python tuple ops.
+   *
+   *  Three call shapes are handled:
+   *    1. `Tuple{N}.apply(...)` / `Tuple$.apply(...)` static calls on
+   *       a tuple companion module. Lower to `PyTupleValue`.
+   *    2. `runtime.Tuples.*` static dispatch helpers (the inline ops
+   *       in `library/src/scala/Tuple.scala` forward here). Lower to
+   *       `_scpy_tuple_*` runtime helpers in the prelude.
+   *    3. Instance methods on a Tuple-typed receiver: `_1` … `_22`,
+   *       `swap`, and the `Product` accessors (`productArity`,
+   *       `productElement`, `productIterator`, `productPrefix`,
+   *       `productElementName`). Lower to the same runtime helpers.
+   *
+   *  Returns `Some(tree)` when the call should be rewritten; `None`
+   *  otherwise. Receiver-type checks are static — calls on
+   *  `Product`/`Any`-typed receivers fall through to the regular
+   *  dispatch (out of scope per the plan).
+   */
+  private def genTupleCallOpt(app: Apply, pos: PyPosition): Option[PyTree] =
+    val sym = app.fun.symbol
+    if !sym.exists then return None
+
+    // (1) `Tuple{N}.apply(...)` on the case-class companion module.
+    if isTupleCompanionApply(sym) then
+      val args = genArgsPreservingOrder(app.args)
+      val tpe  = encoding.encodeType(app.tpe)
+      return Some(PyTupleValue(args)(tpe, pos))
+
+    // (2) `runtime.Tuples.*` static helpers.
+    if pyDefn.RuntimeTuplesModule.exists
+        && sym.owner == pyDefn.RuntimeTuplesModule.moduleClass
+    then
+      genTuplesStaticCall(sym, app.args, app.tpe, pos) match
+        case s @ Some(_) => return s
+        case None        => ()
+
+    // (3) Polymorphic `Product` methods. Erasure can collapse a tuple
+    //     to a `Product`/`Any` static type at the call site (notably
+    //     after `:*` / `++` / match-type evaluation), so receiver-type
+    //     dispatch alone is insufficient. Always route Product method
+    //     calls through a runtime helper that branches on
+    //     `isinstance(x, tuple)`.
+    app.fun match
+      case Select(receiver, _) =>
+        genProductPolyfill(sym, receiver, app.args, app.tpe, pos) match
+          case s @ Some(_) => return s
+          case None        => ()
+      case _ =>
+        ()
+
+    // (4) Instance methods on a Tuple receiver.
+    app.fun match
+      case Select(receiver, _) if isTupleReceiverType(receiver.tpe) =>
+        genTupleInstanceCall(sym, receiver, app.args, app.tpe, pos)
+      case _ =>
+        None
+
+  private def genProductPolyfill(
+      sym: Symbol,
+      receiver: Tree,
+      args: List[Tree],
+      resultScalaTpe: Type,
+      pos: PyPosition
+  ): Option[PyTree] =
+    val resultTpe = encoding.encodeType(resultScalaTpe)
+    def ext(name: String, ts: List[PyTree]): PyTree =
+      PyApplyExternal(PyExternalName(name), ts)(resultTpe, pos)
+    val recv = genExpr(receiver)
+    if      sym == pyDefn.Product_productArity && args.isEmpty then
+      Some(ext("_scpy_product_arity", List(recv)))
+    else if sym == pyDefn.Product_productElement && args.length == 1 then
+      Some(ext("_scpy_product_element", List(recv, genExpr(args.head))))
+    else if sym == pyDefn.Product_productIterator && args.isEmpty then
+      Some(ext("_scpy_product_iterator", List(recv)))
+    else if sym == pyDefn.Product_productPrefix && args.isEmpty then
+      Some(ext("_scpy_product_prefix", List(recv)))
+    else if sym == pyDefn.Product_productElementName && args.length == 1 then
+      Some(ext("_scpy_product_element_name", List(recv, genExpr(args.head))))
+    else
+      None
+
+  /** True iff `tpe` resolves to a Scala tuple type. Match-type aliases
+   *  like `Append[Tuple22, 23]` and singleton-tuple selections need
+   *  `widenDealias` to surface their underlying `*:` chain.
+   *  `tupleElementTypes` is dotc's authoritative tuple-shape check. */
+  private def isTupleReceiverType(tpe: Type): Boolean =
+    if tpe.tupleElementTypes.isDefined then return true
+    pyDefn.isTupleClass(tpe.widenDealias.typeSymbol)
+
+  /** True when `sym` is the `apply` static factory on a tuple
+   *  companion module (`Tuple1$`..`Tuple22$`, `Tuple$`, or any
+   *  specialized form derived from `NonEmptyTuple`). */
+  private def isTupleCompanionApply(sym: Symbol): Boolean =
+    if sym.name != nme.apply then return false
+    val owner = sym.owner
+    if !owner.is(ModuleClass) then return false
+    val companionClass = owner.linkedClass
+    companionClass.exists && pyDefn.isTupleClass(companionClass)
+
+  private def genTuplesStaticCall(
+      sym: Symbol,
+      args: List[Tree],
+      resultScalaTpe: Type,
+      pos: PyPosition
+  ): Option[PyTree] =
+    val resultTpe = encoding.encodeType(resultScalaTpe)
+    def ext(name: String): PyTree =
+      PyApplyExternal(
+        PyExternalName(name),
+        genArgsPreservingOrder(args)
+      )(resultTpe, pos)
+    if      sym == pyDefn.Tuples_apply       then Some(ext("_scpy_tuple_get"))
+    else if sym == pyDefn.Tuples_cons        then Some(ext("_scpy_tuple_cons"))
+    else if sym == pyDefn.Tuples_append      then Some(ext("_scpy_tuple_append"))
+    else if sym == pyDefn.Tuples_concat      then Some(ext("_scpy_tuple_concat"))
+    else if sym == pyDefn.Tuples_tail        then Some(ext("_scpy_tuple_tail"))
+    else if sym == pyDefn.Tuples_init        then Some(ext("_scpy_tuple_init"))
+    else if sym == pyDefn.Tuples_last        then Some(ext("_scpy_tuple_last"))
+    else if sym == pyDefn.Tuples_size        then Some(ext("_scpy_tuple_size"))
+    else if sym == pyDefn.Tuples_reverse     then Some(ext("_scpy_tuple_reverse"))
+    else if sym == pyDefn.Tuples_take        then Some(ext("_scpy_tuple_take"))
+    else if sym == pyDefn.Tuples_drop        then Some(ext("_scpy_tuple_drop"))
+    else if sym == pyDefn.Tuples_splitAt     then Some(ext("_scpy_tuple_splitat"))
+    else if sym == pyDefn.Tuples_zip         then Some(ext("_scpy_tuple_zip"))
+    else if sym == pyDefn.Tuples_map         then Some(ext("_scpy_tuple_map"))
+    else if sym == pyDefn.Tuples_toArray     then Some(ext("_scpy_tuple_to_array"))
+    else if sym == pyDefn.Tuples_toIArray    then Some(ext("_scpy_tuple_to_iarray"))
+    else if sym == pyDefn.Tuples_fromArray   then Some(ext("_scpy_tuple_from_array"))
+    else if sym == pyDefn.Tuples_fromIArray  then Some(ext("_scpy_tuple_from_iarray"))
+    else if sym == pyDefn.Tuples_fromProduct then Some(ext("_scpy_tuple_from_product"))
+    else if sym == pyDefn.Tuples_isInstanceOfTuple         then Some(ext("_scpy_isinstance_tuple"))
+    else if sym == pyDefn.Tuples_isInstanceOfEmptyTuple    then Some(ext("_scpy_isinstance_empty_tuple"))
+    else if sym == pyDefn.Tuples_isInstanceOfNonEmptyTuple then Some(ext("_scpy_isinstance_nonempty_tuple"))
+    else None
+
+  private def genTupleInstanceCall(
+      sym: Symbol,
+      receiver: Tree,
+      args: List[Tree],
+      resultScalaTpe: Type,
+      pos: PyPosition
+  ): Option[PyTree] =
+    val resultTpe = encoding.encodeType(resultScalaTpe)
+    val name = sym.name.toString
+    def recv: PyTree = genExpr(receiver)
+    def ext(helper: String, callArgs: List[PyTree]): PyTree =
+      PyApplyExternal(PyExternalName(helper), callArgs)(resultTpe, pos)
+
+    // `_1`..`_22` accessors on Tuple{N}.
+    if name.length >= 2 && name.charAt(0) == '_' && name.tail.forall(_.isDigit) then
+      val n = name.tail.toInt
+      if n >= 1 && n <= 22 && args.isEmpty then
+        return Some(ext("_scpy_tuple_get", List(recv, PyIntLit(n - 1)(pos))))
+
+    if sym == pyDefn.Tuple2_swap then
+      Some(ext("_scpy_tuple_reverse", List(recv)))
+    else if name == "productArity" && args.isEmpty then
+      Some(ext("_scpy_tuple_size", List(recv)))
+    else if name == "productElement" && args.length == 1 then
+      Some(ext("_scpy_tuple_get", List(recv, genExpr(args.head))))
+    else if name == "productIterator" && args.isEmpty then
+      Some(ext("_scpy_tuple_iter", List(recv)))
+    else if name == "productPrefix" && args.isEmpty then
+      Some(ext("_scpy_tuple_prefix", List(recv)))
+    else if name == "productElementName" && args.length == 1 then
+      Some(ext("_scpy_tuple_element_name", List(recv, genExpr(args.head))))
+    else if name == "hashCode" && args.isEmpty then
+      Some(ext("_scpy_tuple_hash", List(recv)))
+    else
+      None
 
   private def genStringStaticCall(
       sym: Symbol,

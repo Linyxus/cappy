@@ -20,6 +20,15 @@ class TupleOptimizations extends MiniPhase with IdentityDenotTransformer {
 
   override def description: String = TupleOptimizations.description
 
+  // Disable on the Python backend: this phase rewrites
+  // `scala.runtime.Tuples.{cons,tail,size,concat,apply,toArray}` calls
+  // into `tup.productIterator.next()` chains and `TupleN.apply(...)`
+  // factories, which are not what GenPython wants. The Python backend
+  // intercepts the same `runtime.Tuples.*` symbols itself and lowers
+  // them to native Python tuple operations (`(x,) + t`, `t[1:]`, ...).
+  // Mirrors the same guard on `SpecializeTuples`.
+  override def isEnabled(using Context): Boolean = !ctx.settings.scalapy.value
+
   override def transformApply(tree: tpd.Apply)(using Context): tpd.Tree =
     if (!tree.symbol.exists || tree.symbol.owner != defn.RuntimeTuplesModuleClass) tree
     else if (tree.symbol == defn.RuntimeTuples_cons) transformTupleCons(tree)

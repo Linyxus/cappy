@@ -339,6 +339,8 @@ object PyLinker:
           isDroppablePure(expr)
         case PyArrayValue(_, elems) =>
           elems.forall(isDroppablePure)
+        case PyTupleValue(elems) =>
+          elems.forall(isDroppablePure)
         case _ =>
           false
 
@@ -463,6 +465,9 @@ object PyLinker:
         case PyArraySelect(array, index) =>
           PyArraySelect(rewriteTree(array, ctx), rewriteTree(index, ctx))(tree.tpe, tree.pos)
 
+        case PyTupleValue(elems) =>
+          PyTupleValue(elems.map(rewriteTree(_, ctx)))(tree.tpe, tree.pos)
+
         case PyUnaryOp(op, lhs) =>
           PyUnaryOp(op, rewriteTree(lhs, ctx))(tree.pos)
 
@@ -532,6 +537,7 @@ object PyLinker:
         case t: PyNewArray       => walk(t.length)
         case t: PyArrayValue     => t.elems.foreach(walk)
         case t: PyArraySelect    => walk(t.array); walk(t.index)
+        case t: PyTupleValue     => t.elems.foreach(walk)
         case t: PyUnaryOp        => walk(t.lhs)
         case t: PyBinaryOp       => walk(t.lhs); walk(t.rhs)
         case t: PyClosure        => walk(t.body)
@@ -849,6 +855,10 @@ object PyLinker:
           validateTree(tree.array, classInfos)
           validateTree(tree.index, classInfos)
           validateType(tree.tpe, tree.pos, classInfos)
+
+        case tree: PyTupleValue =>
+          validateType(tree.tpe, tree.pos, classInfos)
+          tree.elems.foreach(validateTree(_, classInfos))
 
         case tree: PyUnaryOp =>
           validateTree(tree.lhs, classInfos)

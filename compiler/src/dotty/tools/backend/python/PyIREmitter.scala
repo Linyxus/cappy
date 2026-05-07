@@ -1351,6 +1351,8 @@ object PyIREmitter:
       case tree: PyArraySelect =>
         collectExternAliases(tree.array)
         collectExternAliases(tree.index)
+      case tree: PyTupleValue =>
+        tree.elems.foreach(collectExternAliases)
       case tree: PyUnaryOp =>
         collectExternAliases(tree.lhs)
       case tree: PyBinaryOp =>
@@ -1613,6 +1615,12 @@ object PyIREmitter:
 
       case PyArraySelect(array, index) =>
         s"${parenthesize(array)}[${exprToStr(index)}]"
+
+      case PyTupleValue(elems) =>
+        elems match
+          case Nil      => "_scpy_ScalaTuple()"
+          case e :: Nil => s"_scpy_ScalaTuple((${exprToStr(e)},))"
+          case _        => s"_scpy_ScalaTuple((${elems.map(exprToStr).mkString(", ")}))"
 
       // Operators
       case PyUnaryOp(op, lhs) =>

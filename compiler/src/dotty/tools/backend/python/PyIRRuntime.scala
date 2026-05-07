@@ -99,6 +99,21 @@ object PyIRRuntime:
   private val PrimitiveIteratorOfLongClass   = PyClassName("java.util.PrimitiveIterator_OfLong")
   private val PrimitiveIteratorOfDoubleClass = PyClassName("java.util.PrimitiveIterator_OfDouble")
 
+  // Scala tuple classes are runtime-provided when `-scalapy` is on.
+  // GenPython lowers tuple values to native Python `tuple`s, so the
+  // compiled `.pyir` for the Scala-side tuple classes is intentionally
+  // dropped at link time. `javaProvided = true` makes any unintercepted
+  // method call link cleanly and surface as an `AttributeError` at
+  // runtime rather than a hard link error.
+  private val ScalaTupleClass            = PyClassName("scala.Tuple")
+  private val ScalaNonEmptyTupleClass    = PyClassName("scala.NonEmptyTuple")
+  private val ScalaPairClass             = PyClassName("scala._times_colon")
+  private val ScalaEmptyTupleModuleClass = PyClassName("scala.EmptyTuple_")
+  private val ScalaTupleXXLClass         = PyClassName("scala.runtime.TupleXXL")
+  private val ScalaRuntimeTuplesClass    = PyClassName("scala.runtime.Tuples_")
+  private val ScalaTupleNClasses: List[PyClassName] =
+    (1 to 22).map(n => PyClassName(s"scala.Tuple$n")).toList
+
   private val ObjectCtor =
     PyMethodName(
       PySimpleMethodName.Constructor,
@@ -380,7 +395,67 @@ object PyIRRuntime:
           )
         )
       ),
-  )
+    ScalaTupleClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ScalaNonEmptyTupleClass ->
+      ProvidedClass(
+        kind = PyClassKind.Interface,
+        superClass = None,
+        interfaces = List(ScalaTupleClass),
+        javaProvided = true,
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ScalaPairClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        interfaces = List(ScalaNonEmptyTupleClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ScalaEmptyTupleModuleClass ->
+      ProvidedClass(
+        kind = PyClassKind.ModuleClass,
+        superClass = Some(PyClassName.ObjectClass),
+        interfaces = List(ScalaTupleClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ScalaTupleXXLClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ScalaRuntimeTuplesClass ->
+      ProvidedClass(
+        kind = PyClassKind.ModuleClass,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("")),
+        staticMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+  ) ++ ScalaTupleNClasses.map { cn =>
+    cn -> ProvidedClass(
+      kind = PyClassKind.Class,
+      superClass = Some(PyClassName.ObjectClass),
+      interfaces = List(ScalaPairClass, ScalaNonEmptyTupleClass),
+      javaProvided = true,
+      constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+      instanceMethods = MethodMatcher(simpleNamePrefixes = Set("")),
+      staticMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+    )
+  }.toMap
 
   private[python] def providedClass(className: PyClassName): Option[ProvidedClass] =
     providedClasses.get(className)
@@ -422,7 +497,7 @@ object PyIRRuntime:
       PySimpleMethodName.Constructor,
       List(PyClassRef(PyClassName("java.lang.String"))),
       PyPrimRef.VoidRef
-    )
+    ),
   )
 
   /** Virtual-call seeds for runtime-prelude helpers that dispatch on an
@@ -440,6 +515,37 @@ object PyIRRuntime:
    *  overrides get DCE'd and the helper's fallback `AttributeError`s.
    */
   private[python] val virtualCallSeeds: List[(PyClassName, PyMethodName)] = List(
+    // `_scpy_product_*` helpers polyfill `Product` methods. Every
+    // statically-visible call site to `Product.productIterator` etc.
+    // is redirected by GenPython to one of these helpers, which then
+    // falls back to `recv.productMethod()` for non-tuple receivers.
+    // Seed the Product method symbols as virtual targets so case-class
+    // / anon-class overrides stay reachable.
+    PyClassName("scala.Product") -> PyMethodName(
+      PySimpleMethodName("productIterator"),
+      Nil,
+      PyClassRef(PyClassName("scala.collection.Iterator"))
+    ),
+    PyClassName("scala.Product") -> PyMethodName(
+      PySimpleMethodName("productArity"),
+      Nil,
+      PyPrimRef.IntRef
+    ),
+    PyClassName("scala.Product") -> PyMethodName(
+      PySimpleMethodName("productPrefix"),
+      Nil,
+      PyClassRef(PyClassName("java.lang.String"))
+    ),
+    PyClassName("scala.Product") -> PyMethodName(
+      PySimpleMethodName("productElement"),
+      List(PyPrimRef.IntRef),
+      PyClassRef(PyClassName.ObjectClass)
+    ),
+    PyClassName("scala.Product") -> PyMethodName(
+      PySimpleMethodName("productElementName"),
+      List(PyPrimRef.IntRef),
+      PyClassRef(PyClassName("java.lang.String"))
+    ),
     PyClassName("java.lang.CharSequence") -> PyMethodName(
       PySimpleMethodName("subSequence"),
       List(PyPrimRef.IntRef, PyPrimRef.IntRef),
@@ -1669,6 +1775,26 @@ object PyIRRuntime:
        |            npe_cls = _scpy_class_of_name("java.lang.NullPointerException")
        |            if _scpy_is_assignable(clazz, npe_cls):
        |                return True
+       |    # Scala tuples lower to native Python tuples. The class side
+       |    # has no `_scpy_class` link to the tuple value, so `_scpy_is_instance`
+       |    # cannot answer; resolve based on the registered class name.
+       |    if isinstance(value, tuple):
+       |        name = getattr(clazz, "_scpy_name", None)
+       |        if name is None:
+       |            return False
+       |        if name == "scala.Tuple":
+       |            return True
+       |        if name == "scala.NonEmptyTuple":
+       |            return len(value) > 0
+       |        if name == "scala.EmptyTuple$":
+       |            return len(value) == 0
+       |        if name == "scala.runtime.TupleXXL":
+       |            return len(value) > 22
+       |        if name.startswith("scala.Tuple"):
+       |            tail = name[len("scala.Tuple"):]
+       |            if tail.isdigit():
+       |                return len(value) == int(tail)
+       |        return False
        |    return _scpy_is_instance(value, clazz)
        |
        |_scpy_primitive_void = _scpy_register_class(None, "void", "primitive")
@@ -2090,6 +2216,39 @@ object PyIRRuntime:
        |_scpy_register_class(None, "java.lang.Long", "class", "java.lang.Number", ("java.lang.Comparable", "java.io.Serializable"))
        |_scpy_register_class(None, "java.lang.Float", "class", "java.lang.Number", ("java.lang.Comparable", "java.io.Serializable"))
        |_scpy_register_class(None, "java.lang.Double", "class", "java.lang.Number", ("java.lang.Comparable", "java.io.Serializable"))
+       |# Scala tuple classes — runtime-provided, backed by native Python
+       |# tuples. No `py_type` is bound: the runtime never instantiates
+       |# these classes, only consults `_scpy_class_of_name(...)` for
+       |# `isInstanceOf[Tuple{N}]` checks (special-cased in
+       |# `_scpy_is_value_of_type`).
+       |_scpy_register_class(None, "scala.Tuple", "interface", None)
+       |_scpy_register_class(None, "scala.NonEmptyTuple", "interface", None, ("scala.Tuple",))
+       |_scpy_register_class(None, "scala._times_colon", "class", "java.lang.Object", ("scala.NonEmptyTuple",))
+       |_scpy_register_class(None, "scala.EmptyTuple_", "class", "java.lang.Object", ("scala.Tuple",))
+       |_scpy_register_class(None, "scala.runtime.TupleXXL", "class", "java.lang.Object")
+       |_scpy_register_class(None, "scala.runtime.Tuples_", "class", "java.lang.Object")
+       |_scpy_register_class(None, "scala.Tuple1", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple2", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple3", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple4", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple5", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple6", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple7", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple8", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple9", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple10", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple11", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple12", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple13", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple14", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple15", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple16", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple17", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple18", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple19", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple20", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple21", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |_scpy_register_class(None, "scala.Tuple22", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
        |
        |# -- lazy module init --
        |# Wraps a module class so its `__init__` runs at most once on
@@ -2338,6 +2497,12 @@ object PyIRRuntime:
        |        return "true"
        |    if x is False:
        |        return "false"
+       |    # Scala tuples lower to native Python tuples but are tagged with
+       |    # the `_scpy_ScalaTuple` subclass; format only those Scala-style
+       |    # so foreign tuples returned by `@extern` Python facades keep
+       |    # Python's native repr (e.g. `np.shape == (2, 3)`).
+       |    if isinstance(x, _scpy_ScalaTuple):
+       |        return _scpy_tuple_to_str(x)
        |    to_string = getattr(x, "${m("toString")(StrRef)}", None)
        |    if to_string is not None:
        |        return to_string()
@@ -2763,6 +2928,13 @@ object PyIRRuntime:
        |        return result - 0x100000000 if result >= 0x80000000 else result
        |    if isinstance(x, str):
        |        return _scpy_str_hash_code(x)
+       |    # Scala tuples (Python tuples tagged with `_scpy_ScalaTuple`)
+       |    # use JVM-bit-exact `MurmurHash3.caseClassHash` so
+       |    # `(1, 2).hashCode` matches the JVM. Foreign Python tuples
+       |    # from `@extern` facades fall through to Python's native
+       |    # `tuple.__hash__`.
+       |    if isinstance(x, _scpy_ScalaTuple):
+       |        return _scpy_tuple_hash(x)
        |    # Non-primitive: defer to the Scala/Python `__hash__` slot.
        |    return x.__hash__()
        |
@@ -3244,4 +3416,272 @@ object PyIRRuntime:
        |            continue
        |        raise IllegalArgumentException('Illegal escape: `\\' + ch + '`', None)
        |    return ''.join(out)
+       |""".stripMargin +
+    raw"""|# -- Tuple helpers --
+       |# Scala tuples lower to native Python tuples (heterogeneous,
+       |# immutable, hashable). These helpers implement the surface of
+       |# `scala.runtime.Tuples.*` plus the `Product` machinery the
+       |# compiler routes here. Boundary handling for arity 22 ↔ 23
+       |# disappears: a Python tuple has no upper bound.
+       |#
+       |# `_scpy_ScalaTuple` is a tag-only subclass of `tuple`. It
+       |# distinguishes Scala-tuple values from foreign Python tuples
+       |# returned by `@extern` facades (e.g. `np.shape`, `math.frexp`).
+       |# The two kinds compare and hash equal under Python's content-
+       |# based `tuple.__eq__`/`__hash__`, so interop equality still
+       |# works; only string formatting and a few `isinstance` checks
+       |# branch on the tag.
+       |class _scpy_ScalaTuple(tuple):
+       |    __slots__ = ()
+       |    def __hash__(self):
+       |        # JVM-bit-exact `MurmurHash3.caseClassHash` so a dict-key
+       |        # `(1, 2)` constructed in Scala lookups identically to one
+       |        # constructed via `*:` cons. `_scpy_tuple_hash` is forward-
+       |        # declared lower in the prelude.
+       |        return _scpy_tuple_hash(self)
+       |
+       |def _scpy_st(t):
+       |    # Wrap an arbitrary tuple as a Scala tuple. Idempotent:
+       |    # already-tagged inputs pass through.
+       |    if t.__class__ is _scpy_ScalaTuple:
+       |        return t
+       |    return _scpy_ScalaTuple(t)
+       |
+       |def _scpy_tuple_get(t, i):
+       |    if i < 0 or i >= len(t):
+       |        raise IndexOutOfBoundsException(_builtins.str(i))
+       |    return t[i]
+       |
+       |def _scpy_tuple_concat(a, b):
+       |    return _scpy_ScalaTuple(a + b)
+       |
+       |def _scpy_tuple_cons(x, t):
+       |    return _scpy_ScalaTuple((x,) + t)
+       |
+       |def _scpy_tuple_append(x, t):
+       |    return _scpy_ScalaTuple(t + (x,))
+       |
+       |def _scpy_tuple_tail(t):
+       |    if len(t) == 0:
+       |        raise UnsupportedOperationException("tail of empty tuple", None)
+       |    return _scpy_ScalaTuple(t[1:])
+       |
+       |def _scpy_tuple_init(t):
+       |    if len(t) == 0:
+       |        raise UnsupportedOperationException("init of empty tuple", None)
+       |    return _scpy_ScalaTuple(t[:-1])
+       |
+       |def _scpy_tuple_last(t):
+       |    if len(t) == 0:
+       |        raise NoSuchElementException()
+       |    return t[-1]
+       |
+       |def _scpy_tuple_size(t):
+       |    return len(t)
+       |
+       |def _scpy_tuple_take(t, n):
+       |    if n < 0:
+       |        raise IndexOutOfBoundsException(_builtins.str(n))
+       |    if n >= len(t):
+       |        return _scpy_st(t)
+       |    return _scpy_ScalaTuple(t[:n])
+       |
+       |def _scpy_tuple_drop(t, n):
+       |    if n < 0:
+       |        raise IndexOutOfBoundsException(_builtins.str(n))
+       |    if n >= len(t):
+       |        return _scpy_ScalaTuple()
+       |    return _scpy_ScalaTuple(t[n:])
+       |
+       |def _scpy_tuple_splitat(t, n):
+       |    if n < 0:
+       |        raise IndexOutOfBoundsException(_builtins.str(n))
+       |    if n >= len(t):
+       |        return _scpy_ScalaTuple((_scpy_st(t), _scpy_ScalaTuple()))
+       |    return _scpy_ScalaTuple((_scpy_ScalaTuple(t[:n]), _scpy_ScalaTuple(t[n:])))
+       |
+       |def _scpy_tuple_reverse(t):
+       |    return _scpy_ScalaTuple(t[::-1])
+       |
+       |def _scpy_tuple_zip(a, b):
+       |    n = len(a) if len(a) < len(b) else len(b)
+       |    return _scpy_ScalaTuple(_scpy_ScalaTuple((a[i], b[i])) for i in range(n))
+       |
+       |def _scpy_tuple_map(t, f):
+       |    return _scpy_ScalaTuple(f.${m("apply", ObjRef)(ObjRef)}(x) for x in t)
+       |
+       |def _scpy_tuple_prefix(t):
+       |    n = len(t)
+       |    if n == 0:
+       |        return ""
+       |    if n <= 22:
+       |        return "Tuple" + _builtins.str(n)
+       |    return "Tuple"
+       |
+       |def _scpy_tuple_element_name(t, n):
+       |    return "_" + _builtins.str(n + 1)
+       |
+       |def _scpy_tuple_to_str(t):
+       |    n = len(t)
+       |    if n == 0:
+       |        return "()"
+       |    return "(" + ",".join(_scpy_to_str(x) for x in t) + ")"
+       |
+       |# JVM-bit-exact `MurmurHash3.caseClassHash` for tuples. Mirrors
+       |# `scala.runtime.Statics.{mix,mixLast,finalizeHash,avalanche}` and
+       |# the `caseClassHash` body in `scala.util.hashing.MurmurHash3`.
+       |# Pinned tests in `scala-runtime-statics-hash.scala` rely on these
+       |# values matching JVM `Tuple{N}.hashCode` exactly. Element hashes
+       |# go through `_scpy_any_hash_code` so they match the JVM
+       |# boxed-primitive `hashCode` rules (`Long.hashCode = (int)lv ^
+       |# (int)(lv >>> 32)`, etc.).
+       |def _scpy_tuple_mh3_rotl(x, n):
+       |    u = x & 0xFFFFFFFF
+       |    r = ((u << n) | (u >> (32 - n))) & 0xFFFFFFFF
+       |    return r - 0x100000000 if r >= 0x80000000 else r
+       |
+       |def _scpy_tuple_mh3_mix_last(h, data):
+       |    k = _scpy_i32(data * 0xcc9e2d51)
+       |    k = _scpy_tuple_mh3_rotl(k, 15)
+       |    k = _scpy_i32(k * 0x1b873593)
+       |    return _scpy_i32(h ^ k)
+       |
+       |def _scpy_tuple_mh3_mix(h, data):
+       |    h = _scpy_tuple_mh3_mix_last(h, data)
+       |    h = _scpy_tuple_mh3_rotl(h, 13)
+       |    return _scpy_i32(_scpy_i32(h * 5) + 0xe6546b64)
+       |
+       |def _scpy_tuple_mh3_avalanche(h):
+       |    h = _scpy_i32(h ^ ((h & 0xFFFFFFFF) >> 16))
+       |    h = _scpy_i32(h * 0x85ebca6b)
+       |    h = _scpy_i32(h ^ ((h & 0xFFFFFFFF) >> 13))
+       |    h = _scpy_i32(h * 0xc2b2ae35)
+       |    h = _scpy_i32(h ^ ((h & 0xFFFFFFFF) >> 16))
+       |    return h
+       |
+       |def _scpy_tuple_mh3_finalize(h, length):
+       |    return _scpy_tuple_mh3_avalanche(_scpy_i32(h ^ length))
+       |
+       |def _scpy_tuple_hash(t):
+       |    n = len(t)
+       |    aye = _scpy_str_hash_code(_scpy_tuple_prefix(t))
+       |    if n == 0:
+       |        return aye
+       |    # MurmurHash3.productSeed = 0xcafebabe → -889275714 signed
+       |    h = -889275714
+       |    h = _scpy_tuple_mh3_mix(h, aye)
+       |    for i in range(n):
+       |        h = _scpy_tuple_mh3_mix(h, _scpy_any_hash_code(t[i]))
+       |    return _scpy_tuple_mh3_finalize(h, n)
+       |
+       |def _scpy_tuple_to_array(t):
+       |    return _scpy_array_value(_scpy_class_of_name("java.lang.Object"), list(t))
+       |
+       |def _scpy_tuple_to_iarray(t):
+       |    return _scpy_array_value(_scpy_class_of_name("java.lang.Object"), list(t))
+       |
+       |def _scpy_tuple_from_array(arr):
+       |    if arr is None:
+       |        return _scpy_ScalaTuple()
+       |    return _scpy_ScalaTuple(arr)
+       |
+       |def _scpy_tuple_from_iarray(arr):
+       |    if arr is None:
+       |        return _scpy_ScalaTuple()
+       |    return _scpy_ScalaTuple(arr)
+       |
+       |def _scpy_tuple_from_product(p):
+       |    if p is None:
+       |        return _scpy_ScalaTuple()
+       |    if isinstance(p, tuple):
+       |        return _scpy_st(p)
+       |    n = p.${m("productArity")(I)}()
+       |    return _scpy_ScalaTuple(p.${m("productElement", I)(ObjRef)}(i) for i in range(n))
+       |
+       |# Iterator over a tuple.
+       |#
+       |# `scala.collection.AbstractIterator` is defined in pylib (loaded
+       |# AFTER this prelude), so the iterator class cannot extend it at
+       |# definition time. Defer construction: on first call,
+       |# `_scpy_tuple_iter` looks up `AbstractIterator` from the
+       |# registered-class table and builds a subclass dynamically. All
+       |# Iterator default methods (`toList`, `toSeq`, `mkString`,
+       |# `foreach`, `map`, `filter`, …) are then inherited at runtime.
+       |_scpy_TupleIterator = None
+       |
+       |def _scpy_tuple_iter(t):
+       |    global _scpy_TupleIterator
+       |    if _scpy_TupleIterator is None:
+       |        abs_iter_cls = _scpy_class_registry.get("scala.collection.AbstractIterator")
+       |        base_py = None
+       |        if abs_iter_cls is not None:
+       |            base_py = getattr(abs_iter_cls, "_scpy_py_type", None)
+       |        if base_py is None:
+       |            # AbstractIterator not yet registered (e.g. pylib not loaded
+       |            # in this bundle). Fall back to a bare class — only
+       |            # `hasNext`/`next`/`mkString` work in that mode.
+       |            base_py = object
+       |        def _iter_init(self, tup):
+       |            self._scpy_t = tup
+       |            self._scpy_i = 0
+       |            try:
+       |                base_py.__init__(self)
+       |            except TypeError:
+       |                pass
+       |        def _iter_has_next(self):
+       |            return self._scpy_i < len(self._scpy_t)
+       |        def _iter_next(self):
+       |            if self._scpy_i >= len(self._scpy_t):
+       |                raise NoSuchElementException()
+       |            v = self._scpy_t[self._scpy_i]
+       |            self._scpy_i += 1
+       |            return v
+       |        body = {
+       |            "__init__": _iter_init,
+       |            "${m("hasNext")(Z)}": _iter_has_next,
+       |            "${m("next")(ObjRef)}": _iter_next,
+       |        }
+       |        _scpy_TupleIterator = type("_scpy_TupleIterator", (base_py,), body)
+       |    return _scpy_TupleIterator(t)
+       |
+       |def _scpy_isinstance_tuple(x):
+       |    return isinstance(x, tuple)
+       |
+       |def _scpy_isinstance_empty_tuple(x):
+       |    return isinstance(x, tuple) and len(x) == 0
+       |
+       |def _scpy_isinstance_nonempty_tuple(x):
+       |    return isinstance(x, tuple) and len(x) > 0
+       |
+       |# Polymorphic `Product` method dispatch. After erasure, a Tuple value
+       |# whose static type is `Product`/`Any`/match-type-aliased is just a
+       |# Python tuple, with no Scala-level Product methods. These helpers
+       |# branch on `isinstance(x, tuple)` and otherwise dispatch to the
+       |# encoded Product method on the real receiver.
+       |def _scpy_product_arity(p):
+       |    if isinstance(p, tuple):
+       |        return len(p)
+       |    return p.${m("productArity")(I)}()
+       |
+       |def _scpy_product_element(p, n):
+       |    if isinstance(p, tuple):
+       |        if n < 0 or n >= len(p):
+       |            raise IndexOutOfBoundsException(_builtins.str(n))
+       |        return p[n]
+       |    return p.${m("productElement", I)(ObjRef)}(n)
+       |
+       |def _scpy_product_iterator(p):
+       |    if isinstance(p, tuple):
+       |        return _scpy_tuple_iter(p)
+       |    return p.${m("productIterator")(PyClassRef(PyClassName("scala.collection.Iterator")))}()
+       |
+       |def _scpy_product_prefix(p):
+       |    if isinstance(p, tuple):
+       |        return _scpy_tuple_prefix(p)
+       |    return p.${m("productPrefix")(StrRef)}()
+       |
+       |def _scpy_product_element_name(p, n):
+       |    if isinstance(p, tuple):
+       |        return _scpy_tuple_element_name(p, n)
+       |    return p.${m("productElementName", I)(StrRef)}(n)
        |""".stripMargin

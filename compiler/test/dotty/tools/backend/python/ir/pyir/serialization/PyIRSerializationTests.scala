@@ -412,6 +412,19 @@ class PyIRSerializationTests:
     for t <- List(nu, ldMod, isI, asI, newA, arrV, arrSel) do
       assertEquals(t, roundTripTree(t))
 
+  @Test def tupleValueRoundTrip(): Unit =
+    val tupleType = PyClassType(PyClassName("scala.Tuple3"))
+    val empty   = PyTupleValue(Nil)(PyClassType(PyClassName("scala.Tuple")), NoPos)
+    val single  = PyTupleValue(List(PyIntLit(7)(NoPos)))(
+      PyClassType(PyClassName("scala.Tuple1")), NoPos)
+    val mixed   = PyTupleValue(
+      List(PyIntLit(1)(NoPos), PyStringLit("x")(NoPos), PyBooleanLit(true)(NoPos))
+    )(tupleType, NoPos)
+    val nested  = PyTupleValue(List(mixed, empty))(tupleType, NoPos)
+
+    for t <- List[PyTree](empty, single, mixed, nested) do
+      assertEquals(t, roundTripTree(t))
+
   // ---------------------------------------------------------------
   //  Operators
   // ---------------------------------------------------------------
