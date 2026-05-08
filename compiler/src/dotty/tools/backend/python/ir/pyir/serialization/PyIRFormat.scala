@@ -34,8 +34,12 @@ object PyIRFormat:
    *  Bumped to 1 when `PyTupleValue` was added (tag `0x53`) so the
    *  Python backend can lower Scala tuples directly to Python tuples.
    *  Older readers will reject `.pyir` containing the new tag.
+   *
+   *  Bumped to 2 when `PyDictValue` was added (tag `0x54`) so the
+   *  Python backend can lower `scala.python.PyMap` factory calls to
+   *  Python dict literals.
    */
-  final val MinorVersion: Int = 1
+  final val MinorVersion: Int = 2
 
   /** Packed `(major << 8) | minor`, written as a big-endian u16. */
   final val FormatVersion: Int = (MajorVersion << 8) | MinorVersion

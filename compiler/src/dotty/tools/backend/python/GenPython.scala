@@ -1935,6 +1935,10 @@ private class PyCodeGen()(using genCtx: Context):
           case Some(tree) => break(tree)
           case None       => ()
 
+        genPyMapCallOpt(app, pos) match
+          case Some(tree) => break(tree)
+          case None       => ()
+
         if !isStaticTarget && sym.name == nme.clone_ then
           app.fun match
             case Select(receiver, _) =>
@@ -2496,6 +2500,73 @@ private class PyCodeGen()(using genCtx: Context):
       Some(ext("_scpy_tuple_hash", List(recv)))
     else
       None
+
+  /** Lower a `scala.python.PyMap` call to native Python `dict` ops.
+   *
+   *  Two call shapes:
+   *    1. `PyMap.empty[K, V]()` factory — lower to `PyDictValue(Nil)`.
+   *    2. Instance methods on a `PyMap`-typed receiver — dispatch to
+   *       a `_scpy_dict_*` runtime helper.
+   *
+   *  No erasure-collapse concern (`PyMap` shares no common supertype
+   *  with `Tuple`/`Product`/`Any`-typed call sites that we'd want to
+   *  miss), so the receiver-type check is purely static.
+   */
+  private def genPyMapCallOpt(app: Apply, pos: PyPosition): Option[PyTree] =
+    val sym = app.fun.symbol
+    if !sym.exists then return None
+
+    if pyDefn.PyMapModule.exists && sym == pyDefn.PyMap_empty then
+      return Some(PyDictValue(Nil)(encoding.encodeType(app.tpe), pos))
+
+    app.fun match
+      case Select(receiver, _) if isPyMapReceiverType(receiver.tpe) =>
+        genPyMapInstanceCall(sym, receiver, app.args, app.tpe, pos)
+      case _ =>
+        None
+
+  private def isPyMapReceiverType(tpe: Type): Boolean =
+    if !pyDefn.PyMapClass.exists then return false
+    tpe.widenDealias.typeSymbol == pyDefn.PyMapClass
+
+  private def genPyMapInstanceCall(
+      sym: Symbol,
+      receiver: Tree,
+      args: List[Tree],
+      resultScalaTpe: Type,
+      pos: PyPosition
+  ): Option[PyTree] =
+    val resultTpe = encoding.encodeType(resultScalaTpe)
+    // Lazy: avoid pushing the receiver's side-effecting sub-trees into
+    // `pendingLocalDefs` when we end up returning None and the regular
+    // dispatch re-evaluates the receiver. Same lesson as `genProductPolyfill`.
+    def recv: PyTree = genExpr(receiver)
+    def ext(name: String, ts: List[PyTree]): PyTree =
+      PyApplyExternal(PyExternalName(name), ts)(resultTpe, pos)
+    def arg(i: Int): PyTree = genExpr(args(i))
+
+    if      sym == pyDefn.PyMap_size         then Some(ext("_scpy_dict_size",          List(recv)))
+    else if sym == pyDefn.PyMap_isEmpty      then Some(ext("_scpy_dict_is_empty",      List(recv)))
+    else if sym == pyDefn.PyMap_nonEmpty     then Some(ext("_scpy_dict_non_empty",     List(recv)))
+    else if sym == pyDefn.PyMap_apply        then Some(ext("_scpy_dict_get",           List(recv, arg(0))))
+    else if sym == pyDefn.PyMap_get          then Some(ext("_scpy_dict_get_or_null",   List(recv, arg(0))))
+    else if sym == pyDefn.PyMap_getOrElse    then Some(ext("_scpy_dict_get_or_else",   List(recv, arg(0), arg(1))))
+    else if sym == pyDefn.PyMap_update       then Some(ext("_scpy_dict_set",           List(recv, arg(0), arg(1))))
+    else if sym == pyDefn.PyMap_delete       then Some(ext("_scpy_dict_delete",        List(recv, arg(0))))
+    else if sym == pyDefn.PyMap_setDefault   then Some(ext("_scpy_dict_set_default",   List(recv, arg(0), arg(1))))
+    else if sym == pyDefn.PyMap_pop          then Some(ext("_scpy_dict_pop",           List(recv, arg(0))))
+    else if sym == pyDefn.PyMap_popOrElse    then Some(ext("_scpy_dict_pop_or_else",   List(recv, arg(0), arg(1))))
+    else if sym == pyDefn.PyMap_popItem      then Some(ext("_scpy_dict_pop_item",      List(recv)))
+    else if sym == pyDefn.PyMap_clear        then Some(ext("_scpy_dict_clear",         List(recv)))
+    else if sym == pyDefn.PyMap_updateAll    then Some(ext("_scpy_dict_update_all",    List(recv, arg(0))))
+    else if sym == pyDefn.PyMap_contains     then Some(ext("_scpy_dict_contains",      List(recv, arg(0))))
+    else if sym == pyDefn.PyMap_copy         then Some(ext("_scpy_dict_copy",          List(recv)))
+    else if sym == pyDefn.PyMap_merged       then Some(ext("_scpy_dict_merged",        List(recv, arg(0))))
+    else if sym == pyDefn.PyMap_mergeInPlace then Some(ext("_scpy_dict_merge_in_place",List(recv, arg(0))))
+    else if sym == pyDefn.PyMap_keys         then Some(ext("_scpy_dict_keys_iter",     List(recv)))
+    else if sym == pyDefn.PyMap_values       then Some(ext("_scpy_dict_values_iter",   List(recv)))
+    else if sym == pyDefn.PyMap_items        then Some(ext("_scpy_dict_items_iter",    List(recv)))
+    else None
 
   private def genStringStaticCall(
       sym: Symbol,

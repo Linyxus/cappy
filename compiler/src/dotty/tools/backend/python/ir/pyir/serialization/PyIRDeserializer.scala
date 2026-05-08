@@ -601,6 +601,16 @@ object PyIRDeserializer:
         val elems = List.fill(elemN)(readTree())
         PyTupleValue(elems)(tpe, pos)
 
+      case TagPyDictValue =>
+        val tpe     = readType()
+        val entryN  = reader.readNat()
+        val entries = List.fill(entryN) {
+          val k = readTree()
+          val v = readTree()
+          (k, v)
+        }
+        PyDictValue(entries)(tpe, pos)
+
       // ----- Operators -----
       case TagPyUnaryOp =>
         val op  = unaryFromTag(reader.readByte().toByte)

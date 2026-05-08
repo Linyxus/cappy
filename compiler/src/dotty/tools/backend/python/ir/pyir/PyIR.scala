@@ -292,6 +292,12 @@ final case class PyArraySelect(array: PyTree, index: PyTree)
 final case class PyTupleValue(elems: List[PyTree])
     (val tpe: PyType, val pos: PyPosition) extends PyTree
 
+/** Python dict value. Lowers a `scala.python.PyMap[K, V]` factory call
+ *  to a native Python dict literal. The Scala `PyMap` type erases
+ *  away — at runtime, a `PyMap` value IS a Python `dict`. */
+final case class PyDictValue(entries: List[(PyTree, PyTree)])
+    (val tpe: PyType, val pos: PyPosition) extends PyTree
+
 // ===================================================================
 //  Operators
 // ===================================================================

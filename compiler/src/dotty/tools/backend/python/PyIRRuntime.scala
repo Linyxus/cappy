@@ -113,6 +113,11 @@ object PyIRRuntime:
   private val ScalaTupleNClasses: List[PyClassName] =
     (1 to 22).map(n => PyClassName(s"scala.Tuple$n")).toList
 
+  // `scala.python.PyMap` lowers to a bare Python `dict`. The compiled
+  // `.pyir` for the Scala-side class is dropped at link time; every
+  // call site is intercepted in `GenPython.genPyMapCallOpt`.
+  private val ScalaPythonPyMapClass = PyClassName("scala.python.PyMap")
+
   private val ObjectCtor =
     PyMethodName(
       PySimpleMethodName.Constructor,
@@ -436,6 +441,15 @@ object PyIRRuntime:
     ScalaRuntimeTuplesClass ->
       ProvidedClass(
         kind = PyClassKind.ModuleClass,
+        superClass = Some(PyClassName.ObjectClass),
+        javaProvided = true,
+        constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
+        instanceMethods = MethodMatcher(simpleNamePrefixes = Set("")),
+        staticMethods = MethodMatcher(simpleNamePrefixes = Set(""))
+      ),
+    ScalaPythonPyMapClass ->
+      ProvidedClass(
+        kind = PyClassKind.Class,
         superClass = Some(PyClassName.ObjectClass),
         javaProvided = true,
         constructors = MethodMatcher(simpleNamePrefixes = Set("<init>")),
@@ -1790,6 +1804,12 @@ object PyIRRuntime:
        |            if tail.isdigit():
        |                return len(value) == int(tail)
        |        return False
+       |    # `scala.python.PyMap` lowers to a bare Python `dict`. The
+       |    # `case _: PyMap[?, ?]` pattern lands here.
+       |    if isinstance(value, dict):
+       |        name = getattr(clazz, "_scpy_name", None)
+       |        if name == "scala.python.PyMap":
+       |            return True
        |    return _scpy_is_instance(value, clazz)
        |
        |_scpy_primitive_void = _scpy_register_class(None, "void", "primitive")
@@ -2246,6 +2266,9 @@ object PyIRRuntime:
        |_scpy_register_class(None, "scala.Tuple20", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
        |_scpy_register_class(None, "scala.Tuple21", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
        |_scpy_register_class(None, "scala.Tuple22", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
+       |# `scala.python.PyMap` is a Python `dict` at runtime. Register so
+       |# `case _: PyMap[?, ?]` and reflection lookups have a class entry.
+       |_scpy_register_class(None, "scala.python.PyMap", "class", "java.lang.Object")
        |
        |# -- lazy module init --
        |# Wraps a module class so its `__init__` runs at most once on
@@ -2500,6 +2523,13 @@ object PyIRRuntime:
        |    # Python's native repr (e.g. `np.shape == (2, 3)`).
        |    if isinstance(x, _scpy_ScalaTuple):
        |        return _scpy_tuple_to_str(x)
+       |    # `scala.python.PyMap` lowers to a bare Python `dict` (no
+       |    # marker subclass — `PyMap` and foreign dicts are
+       |    # indistinguishable by design). Format Scala-style:
+       |    # `Map(k -> v, k -> v)`.
+       |    if isinstance(x, dict):
+       |        parts = [_scpy_to_str(k) + " -> " + _scpy_to_str(v) for k, v in x.items()]
+       |        return "Map(" + ", ".join(parts) + ")"
        |    to_string = getattr(x, "${m("toString")(StrRef)}", None)
        |    if to_string is not None:
        |        return to_string()
@@ -3725,4 +3755,49 @@ object PyIRRuntime:
        |    if isinstance(p, tuple):
        |        return _scpy_tuple_element_name(p, n)
        |    return p.${m("productElementName", I)(StrRef)}(n)
+       |
+       |# ---- dict helpers ------------------------------------------------
+       |# `scala.python.PyMap[K, V]` lowers to a bare Python `dict`. These
+       |# helpers back the GenPython intercepts in `genPyMapInstanceCall`.
+       |# `apply` and `pop` raise Python `KeyError` on a miss — the Scala
+       |# API documents this; null-tolerant variants go through `get` /
+       |# `getOrElse` / `popOrElse`.
+       |
+       |def _scpy_dict_size(d):                  return len(d)
+       |def _scpy_dict_is_empty(d):              return not d
+       |def _scpy_dict_non_empty(d):             return _builtins.bool(d)
+       |def _scpy_dict_get(d, k):                return d[k]
+       |def _scpy_dict_get_or_null(d, k):        return d.get(k, None)
+       |def _scpy_dict_get_or_else(d, k, dft):   return d.get(k, dft)
+       |def _scpy_dict_set(d, k, v):             d[k] = v
+       |def _scpy_dict_delete(d, k):             del d[k]
+       |def _scpy_dict_set_default(d, k, dft):   return d.setdefault(k, dft)
+       |def _scpy_dict_pop(d, k):                return d.pop(k)
+       |def _scpy_dict_pop_or_else(d, k, dft):   return d.pop(k, dft)
+       |def _scpy_dict_clear(d):                 d.clear()
+       |def _scpy_dict_update_all(d, other):     d.update(other)
+       |def _scpy_dict_contains(d, k):           return k in d
+       |def _scpy_dict_copy(d):                  return d.copy()
+       |def _scpy_dict_merged(d, other):         return {**d, **other}
+       |def _scpy_dict_merge_in_place(d, other): d.update(other)
+       |
+       |def _scpy_dict_pop_item(d):
+       |    # `popitem()` returns a Python 2-tuple. Wrap so it formats /
+       |    # destructures as a Scala tuple under the rest of the runtime.
+       |    return _scpy_ScalaTuple(d.popitem())
+       |
+       |# Snapshot views. Materialise to a tuple and reuse `_scpy_tuple_iter`
+       |# so we get a real Scala `scala.collection.Iterator` (with all
+       |# `Iterator` default methods) without rolling another iterator class.
+       |def _scpy_dict_keys_iter(d):
+       |    return _scpy_tuple_iter(tuple(d.keys()))
+       |
+       |def _scpy_dict_values_iter(d):
+       |    return _scpy_tuple_iter(tuple(d.values()))
+       |
+       |def _scpy_dict_items_iter(d):
+       |    # Each item is a Python 2-tuple `(k, v)`. Wrap as a Scala tuple
+       |    # so `for (k, v) <- m.items()` and `println(item)` behave the
+       |    # same as if the pair had been constructed in Scala.
+       |    return _scpy_tuple_iter(tuple(_scpy_ScalaTuple(it) for it in d.items()))
        |""".stripMargin

@@ -262,6 +262,9 @@ object PyIRPrinter:
         s"${exprString(arr)}[${exprString(idx)}]"
       case PyTupleValue(elems) =>
         s"tuple(${elems.map(exprString).mkString(", ")})"
+      case PyDictValue(entries) =>
+        val pairs = entries.map((k, v) => s"${exprString(k)}: ${exprString(v)}")
+        s"dict(${pairs.mkString(", ")})"
       // Operators
       case PyUnaryOp(op, lhs) =>
         s"$op(${exprString(lhs)})"

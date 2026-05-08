@@ -1353,6 +1353,11 @@ object PyIREmitter:
         collectExternAliases(tree.index)
       case tree: PyTupleValue =>
         tree.elems.foreach(collectExternAliases)
+      case tree: PyDictValue =>
+        tree.entries.foreach { case (k, v) =>
+          collectExternAliases(k)
+          collectExternAliases(v)
+        }
       case tree: PyUnaryOp =>
         collectExternAliases(tree.lhs)
       case tree: PyBinaryOp =>
@@ -1629,6 +1634,12 @@ object PyIREmitter:
           case Nil      => "_scpy_empty_tuple"
           case e :: Nil => s"_scpy_ScalaTuple((${exprToStr(e)},))"
           case _        => s"_scpy_ScalaTuple((${elems.map(exprToStr).mkString(", ")}))"
+
+      case PyDictValue(entries) =>
+        if entries.isEmpty then "{}"
+        else
+          val pairs = entries.map((k, v) => s"${exprToStr(k)}: ${exprToStr(v)}")
+          s"{${pairs.mkString(", ")}}"
 
       // Operators
       case PyUnaryOp(op, lhs) =>

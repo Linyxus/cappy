@@ -168,6 +168,71 @@ final class PyDefinitions:
   def Tuples_isInstanceOfEmptyTuple(using Context): Symbol    = Tuples_isInstanceOfEmptyTupleR.symbol
   def Tuples_isInstanceOfNonEmptyTuple(using Context): Symbol = Tuples_isInstanceOfNonEmptyTupleR.symbol
 
+  // ---------------------------------------------------------------
+  //  PyMap intrinsics
+  //
+  //  When `-scalapy` is on, the backend lowers `scala.python.PyMap`
+  //  values to native Python dicts. The symbols below identify the
+  //  call sites that get rewritten in `GenPython.genPyMapCallOpt`.
+  // ---------------------------------------------------------------
+
+  @threadUnsafe lazy val PyMapClassType: TypeRef = requiredClassRef("scala.python.PyMap")
+  def PyMapClass(using Context): ClassSymbol = PyMapClassType.symbol.asClass
+
+  @threadUnsafe lazy val PyMapModuleRef = requiredModuleRef("scala.python.PyMap")
+  def PyMapModule(using Context): Symbol = PyMapModuleRef.symbol
+
+  private def pyMapClassMethod(name: String)(using Context): TermRef =
+    PyMapClass.requiredMethodRef(name)
+  private def pyMapModuleMethod(name: String)(using Context): TermRef =
+    PyMapModule.requiredMethodRef(name)
+
+  @threadUnsafe lazy val PyMap_emptyR        = pyMapModuleMethod("empty")
+  @threadUnsafe lazy val PyMap_sizeR         = pyMapClassMethod("size")
+  @threadUnsafe lazy val PyMap_isEmptyR      = pyMapClassMethod("isEmpty")
+  @threadUnsafe lazy val PyMap_nonEmptyR     = pyMapClassMethod("nonEmpty")
+  @threadUnsafe lazy val PyMap_applyR        = pyMapClassMethod("apply")
+  @threadUnsafe lazy val PyMap_getR          = pyMapClassMethod("get")
+  @threadUnsafe lazy val PyMap_getOrElseR    = pyMapClassMethod("getOrElse")
+  @threadUnsafe lazy val PyMap_updateR       = pyMapClassMethod("update")
+  @threadUnsafe lazy val PyMap_deleteR       = pyMapClassMethod("delete")
+  @threadUnsafe lazy val PyMap_setDefaultR   = pyMapClassMethod("setDefault")
+  @threadUnsafe lazy val PyMap_popR          = pyMapClassMethod("pop")
+  @threadUnsafe lazy val PyMap_popOrElseR    = pyMapClassMethod("popOrElse")
+  @threadUnsafe lazy val PyMap_popItemR      = pyMapClassMethod("popItem")
+  @threadUnsafe lazy val PyMap_clearR        = pyMapClassMethod("clear")
+  @threadUnsafe lazy val PyMap_updateAllR    = pyMapClassMethod("updateAll")
+  @threadUnsafe lazy val PyMap_containsR     = pyMapClassMethod("contains")
+  @threadUnsafe lazy val PyMap_copyR         = pyMapClassMethod("copy")
+  @threadUnsafe lazy val PyMap_mergedR       = pyMapClassMethod("merged")
+  @threadUnsafe lazy val PyMap_mergeInPlaceR = pyMapClassMethod("mergeInPlace")
+  @threadUnsafe lazy val PyMap_keysR         = pyMapClassMethod("keys")
+  @threadUnsafe lazy val PyMap_valuesR       = pyMapClassMethod("values")
+  @threadUnsafe lazy val PyMap_itemsR        = pyMapClassMethod("items")
+
+  def PyMap_empty(using Context): Symbol        = PyMap_emptyR.symbol
+  def PyMap_size(using Context): Symbol         = PyMap_sizeR.symbol
+  def PyMap_isEmpty(using Context): Symbol      = PyMap_isEmptyR.symbol
+  def PyMap_nonEmpty(using Context): Symbol     = PyMap_nonEmptyR.symbol
+  def PyMap_apply(using Context): Symbol        = PyMap_applyR.symbol
+  def PyMap_get(using Context): Symbol          = PyMap_getR.symbol
+  def PyMap_getOrElse(using Context): Symbol    = PyMap_getOrElseR.symbol
+  def PyMap_update(using Context): Symbol       = PyMap_updateR.symbol
+  def PyMap_delete(using Context): Symbol       = PyMap_deleteR.symbol
+  def PyMap_setDefault(using Context): Symbol   = PyMap_setDefaultR.symbol
+  def PyMap_pop(using Context): Symbol          = PyMap_popR.symbol
+  def PyMap_popOrElse(using Context): Symbol    = PyMap_popOrElseR.symbol
+  def PyMap_popItem(using Context): Symbol      = PyMap_popItemR.symbol
+  def PyMap_clear(using Context): Symbol        = PyMap_clearR.symbol
+  def PyMap_updateAll(using Context): Symbol    = PyMap_updateAllR.symbol
+  def PyMap_contains(using Context): Symbol     = PyMap_containsR.symbol
+  def PyMap_copy(using Context): Symbol         = PyMap_copyR.symbol
+  def PyMap_merged(using Context): Symbol       = PyMap_mergedR.symbol
+  def PyMap_mergeInPlace(using Context): Symbol = PyMap_mergeInPlaceR.symbol
+  def PyMap_keys(using Context): Symbol         = PyMap_keysR.symbol
+  def PyMap_values(using Context): Symbol       = PyMap_valuesR.symbol
+  def PyMap_items(using Context): Symbol        = PyMap_itemsR.symbol
+
   /** True iff `sym` is the class of a tuple instance.
    *
    *  Scala 3's `Tuple1..22` only extend `Product{N}` — they do NOT
@@ -247,6 +312,30 @@ final class PyDefinitions:
     requireReal(Tuples_isInstanceOfTuple, "scala.runtime.Tuples.isInstanceOfTuple")
     requireReal(Tuples_isInstanceOfEmptyTuple, "scala.runtime.Tuples.isInstanceOfEmptyTuple")
     requireReal(Tuples_isInstanceOfNonEmptyTuple, "scala.runtime.Tuples.isInstanceOfNonEmptyTuple")
+    requireReal(PyMapClass, "scala.python.PyMap")
+    requireReal(PyMapModule, "scala.python.PyMap (module)")
+    requireReal(PyMap_empty, "scala.python.PyMap.empty")
+    requireReal(PyMap_size, "scala.python.PyMap.size")
+    requireReal(PyMap_isEmpty, "scala.python.PyMap.isEmpty")
+    requireReal(PyMap_nonEmpty, "scala.python.PyMap.nonEmpty")
+    requireReal(PyMap_apply, "scala.python.PyMap.apply")
+    requireReal(PyMap_get, "scala.python.PyMap.get")
+    requireReal(PyMap_getOrElse, "scala.python.PyMap.getOrElse")
+    requireReal(PyMap_update, "scala.python.PyMap.update")
+    requireReal(PyMap_delete, "scala.python.PyMap.delete")
+    requireReal(PyMap_setDefault, "scala.python.PyMap.setDefault")
+    requireReal(PyMap_pop, "scala.python.PyMap.pop")
+    requireReal(PyMap_popOrElse, "scala.python.PyMap.popOrElse")
+    requireReal(PyMap_popItem, "scala.python.PyMap.popItem")
+    requireReal(PyMap_clear, "scala.python.PyMap.clear")
+    requireReal(PyMap_updateAll, "scala.python.PyMap.updateAll")
+    requireReal(PyMap_contains, "scala.python.PyMap.contains")
+    requireReal(PyMap_copy, "scala.python.PyMap.copy")
+    requireReal(PyMap_merged, "scala.python.PyMap.merged")
+    requireReal(PyMap_mergeInPlace, "scala.python.PyMap.mergeInPlace")
+    requireReal(PyMap_keys, "scala.python.PyMap.keys")
+    requireReal(PyMap_values, "scala.python.PyMap.values")
+    requireReal(PyMap_items, "scala.python.PyMap.items")
 
   private def requireReal(sym: Symbol, desc: String)(using Context): Unit =
     if !sym.exists then

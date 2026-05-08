@@ -425,6 +425,26 @@ class PyIRSerializationTests:
     for t <- List[PyTree](empty, single, mixed, nested) do
       assertEquals(t, roundTripTree(t))
 
+  @Test def dictValueRoundTrip(): Unit =
+    val mapType = PyClassType(PyClassName("scala.python.PyMap"))
+    val empty   = PyDictValue(Nil)(mapType, NoPos)
+    val single  = PyDictValue(
+      List((PyStringLit("a")(NoPos), PyIntLit(1)(NoPos)))
+    )(mapType, NoPos)
+    val mixed   = PyDictValue(
+      List(
+        (PyStringLit("k1")(NoPos), PyIntLit(1)(NoPos)),
+        (PyIntLit(2)(NoPos), PyStringLit("v2")(NoPos)),
+        (PyBooleanLit(true)(NoPos), PyNullLit()(NoPos))
+      )
+    )(mapType, NoPos)
+    val nested  = PyDictValue(
+      List((PyStringLit("inner")(NoPos), single))
+    )(mapType, NoPos)
+
+    for t <- List[PyTree](empty, single, mixed, nested) do
+      assertEquals(t, roundTripTree(t))
+
   // ---------------------------------------------------------------
   //  Operators
   // ---------------------------------------------------------------

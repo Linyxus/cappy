@@ -56,11 +56,12 @@ object PyIRTags:
   final val TagPyIsInstanceOf: Byte = 0x48
   final val TagPyAsInstanceOf: Byte = 0x49
 
-  // Arrays / tuples (0x50..0x57)
+  // Arrays / tuples / dicts (0x50..0x57)
   final val TagPyNewArray:    Byte = 0x50
   final val TagPyArrayValue:  Byte = 0x51
   final val TagPyArraySelect: Byte = 0x52
   final val TagPyTupleValue:  Byte = 0x53
+  final val TagPyDictValue:   Byte = 0x54
 
   // Operators (0x58..0x5F)
   final val TagPyUnaryOp:  Byte = 0x58
