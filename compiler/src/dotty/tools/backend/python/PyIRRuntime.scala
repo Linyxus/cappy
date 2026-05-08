@@ -3437,6 +3437,14 @@ object PyIRRuntime:
        |        # declared lower in the prelude.
        |        return _scpy_tuple_hash(self)
        |
+       |# `EmptyTuple` is a JVM case-object singleton; `case _: EmptyTuple`
+       |# patterns desugar to `x eq EmptyTuple` reference-equality checks.
+       |# Every codegen reference to the empty Scala tuple (the
+       |# `EmptyTuple` module load, `Tuple.apply()`, the empty-arity
+       |# `PyTupleValue`) reads this single cached instance so the `is`
+       |# identity is preserved.
+       |_scpy_empty_tuple = _scpy_ScalaTuple()
+       |
        |def _scpy_st(t):
        |    # Wrap an arbitrary tuple as a Scala tuple. Idempotent:
        |    # already-tagged inputs pass through.
@@ -3520,7 +3528,7 @@ object PyIRRuntime:
        |        raise IndexOutOfBoundsException(_builtins.str(n))
        |    pt = _scpy_as_pytuple(t)
        |    if n >= len(pt):
-       |        return _scpy_ScalaTuple()
+       |        return _scpy_empty_tuple
        |    return _scpy_ScalaTuple(pt[n:])
        |
        |def _scpy_tuple_splitat(t, n):
@@ -3528,7 +3536,7 @@ object PyIRRuntime:
        |        raise IndexOutOfBoundsException(_builtins.str(n))
        |    pt = _scpy_as_pytuple(t)
        |    if n >= len(pt):
-       |        return _scpy_ScalaTuple((_scpy_st(pt), _scpy_ScalaTuple()))
+       |        return _scpy_ScalaTuple((_scpy_st(pt), _scpy_empty_tuple))
        |    return _scpy_ScalaTuple((_scpy_ScalaTuple(pt[:n]), _scpy_ScalaTuple(pt[n:])))
        |
        |def _scpy_tuple_reverse(t):
@@ -3614,18 +3622,18 @@ object PyIRRuntime:
        |    return _scpy_array_value(_scpy_class_of_name("java.lang.Object"), list(t))
        |
        |def _scpy_tuple_from_array(arr):
-       |    if arr is None:
-       |        return _scpy_ScalaTuple()
+       |    if arr is None or len(arr) == 0:
+       |        return _scpy_empty_tuple
        |    return _scpy_ScalaTuple(arr)
        |
        |def _scpy_tuple_from_iarray(arr):
-       |    if arr is None:
-       |        return _scpy_ScalaTuple()
+       |    if arr is None or len(arr) == 0:
+       |        return _scpy_empty_tuple
        |    return _scpy_ScalaTuple(arr)
        |
        |def _scpy_tuple_from_product(p):
        |    if p is None:
-       |        return _scpy_ScalaTuple()
+       |        return _scpy_empty_tuple
        |    if isinstance(p, tuple):
        |        return _scpy_st(p)
        |    n = p.${m("productArity")(I)}()

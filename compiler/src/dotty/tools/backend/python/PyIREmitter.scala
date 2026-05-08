@@ -1618,7 +1618,15 @@ object PyIREmitter:
 
       case PyTupleValue(elems) =>
         elems match
-          case Nil      => "_scpy_ScalaTuple()"
+          // Empty Scala tuples (`Tuple.apply()`, `EmptyTuple` module
+          // reference, …) all resolve to the SAME prelude singleton,
+          // not a fresh instance. The Scala JVM model treats
+          // `EmptyTuple` as a case-object singleton; pattern matches
+          // against `case _: EmptyTuple` desugar to a reference-eq
+          // check (`x eq EmptyTuple`), which is `is` in Python — that
+          // identity is only preserved when every empty `_scpy_ScalaTuple`
+          // reads from the same cached object.
+          case Nil      => "_scpy_empty_tuple"
           case e :: Nil => s"_scpy_ScalaTuple((${exprToStr(e)},))"
           case _        => s"_scpy_ScalaTuple((${elems.map(exprToStr).mkString(", ")}))"
 
