@@ -1,0 +1,106 @@
+--- construction ---
+zeros.shape: (2, 3)
+zeros.ndim: 2
+zeros.size: 6
+zeros.dtype: float64
+zeros.tolist: [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+ones.dtype: int32
+ones.tolist: [1, 1, 1]
+full.tolist: [[7, 7], [7, 7]]
+arange.tolist: [0, 2, 4, 6, 8]
+arange.size: 5
+linspace.tolist: [0.0, 0.25, 0.5, 0.75, 1.0]
+eye.tolist: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+a.tolist: [[1.0, 2.0], [3.0, 4.0]]
+a.shape: (2, 2)
+--- attributes ---
+a.T.tolist: [[1.0, 3.0], [2.0, 4.0]]
+a.itemsize: 8
+--- reshape / axes ---
+m.tolist: [[0, 1, 2], [3, 4, 5]]
+m.ravel.tolist: [0, 1, 2, 3, 4, 5]
+m.flatten.tolist: [0, 1, 2, 3, 4, 5]
+m.transpose: [[0, 3], [1, 4], [2, 5]]
+m.swapaxes: [[0, 3], [1, 4], [2, 5]]
+expand_dims.shape: (1, 2, 3)
+squeeze.shape: (2, 3)
+--- indexing ---
+m(1).tolist: [3, 4, 5]
+m(1, 2): 5
+m.range(0, 2).tolist: [[0, 1, 2], [3, 4, 5]]
+mut.tolist: [[1.0, 0.0], [0.0, 2.0]]
+--- arithmetic ---
+u + v: [5.0, 7.0, 9.0]
+u - v: [-3.0, -3.0, -3.0]
+u * v: [4.0, 10.0, 18.0]
+u / v: [0.25, 0.4, 0.5]
+u + 10: [11.0, 12.0, 13.0]
+u ** 2: [1.0, 4.0, 9.0]
+-u: [-1.0, -2.0, -3.0]
+--- comparisons ---
+u < v: [True, True, True]
+u equ u: [True, True, True]
+u >= 2.0: [False, True, True]
+--- reductions ---
+u.sum: np.float64(6.0)
+u.mean: 2.0
+u.min: np.float64(1.0)
+u.max: np.float64(3.0)
+u.argmax: 2
+u.prod: np.float64(6.0)
+u.cumsum: [1.0, 3.0, 6.0]
+mat.sum(0): [3, 5, 7]
+mat.sum(1): [3, 12]
+mat.all: False
+mat.any: True
+--- universal funcs ---
+sqrt: [1.0, 2.0, 3.0]
+exp(0): [1.0]
+log: [0.0, 1.0]
+log2: [0.0, 1.0, 3.0]
+abs: [1.0, 2.0, 3.0]
+floor: [1.0, -2.0]
+ceil: [2.0, -1.0]
+clip: [2, 2, 2, 3, 4, 5, 6, 7, 7, 7]
+max-of: [4.0, 5.0, 6.0]
+min-of: [1.0, 2.0, 3.0]
+--- linear algebra ---
+A.tolist: [[1.0, 2.0], [3.0, 4.0]]
+dot: [[19.0, 22.0], [43.0, 50.0]]
+matmul: [[19.0, 22.0], [43.0, 50.0]]
+A @@ B: [[19.0, 22.0], [43.0, 50.0]]
+inner: 32.0
+outer: [[4.0, 5.0, 6.0], [8.0, 10.0, 12.0], [12.0, 15.0, 18.0]]
+trace: np.float64(5.0)
+--- combining ---
+concat: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+vstack: [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+hstack: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+stack0.shape: (2, 3)
+stack1.shape: (3, 2)
+--- where / sort / unique ---
+where: [0.0, 2.0, 3.0]
+sort: [1, 1, 2, 3, 4, 5, 6, 9]
+argsort: [1, 3, 6, 0, 2, 4, 7, 5]
+unique: [1, 2, 3, 4, 5, 6, 9]
+--- type / copy ---
+astype.dtype: int64
+astype.tolist: [1, 2, 3]
+u (after copy mut): [1.0, 2.0, 3.0]
+cp: [99.0, 2.0, 3.0]
+--- equality ---
+array_equal: true
+allclose:    true
+--- nan / finite ---
+isnan: [False, True, False, False, False]
+isfinite: [True, False, False, False, True]
+isinf: [False, False, True, True, False]
+--- escape hatch ---
+py.tolist: [1.0, 2.0, 3.0]
+--- typed shapes ---
+zeros(4): [0.0, 0.0, 0.0, 0.0]
+zeros(()): ()
+zeros((3,)): (3,)
+zeros((2, 3)): (2, 3)
+zeros((2, 3, 4)): (2, 3, 4)
+u.reshape((1, 3)).shape: (1, 3)
