@@ -16,7 +16,7 @@ class PylibTest:
     cleanScalaPyOutput(testGroup)
     val filter = FileFilter.include(rawPylibEntries)
     if hasScalaPySources("tests/pos-py", filter) then
-      compileFilesInDir("tests/pos-py", scalaPyRawPylibOptions, filter).checkRuns()
+      stagePythonCompanions(compileFilesInDir("tests/pos-py", scalaPyRawPylibOptions, filter)).checkRuns()
 
 object PylibTest extends ScalaPyTestSuite:
   val rawPylibEntries: List[String] = List(

@@ -62,7 +62,7 @@ class PyStockRunTests:
     cleanScalaPyOutput(testGroup)
     val filter = FileFilter.and(chunkFilter, FileFilter.exclude(loadExcludelist(excludelistFile)))
     if hasScalaPySources("tests/run", filter) then
-      compileFilesInDir("tests/run", scalaPyOptions, filter).checkRuns()
+      stagePythonCompanions(compileFilesInDir("tests/run", scalaPyOptions, filter)).checkRuns()
 
   private def bucketFilter(bucket: Int): FileFilter =
     FileFilter.predicate(name => Math.floorMod(name.hashCode, NumBuckets) == bucket)

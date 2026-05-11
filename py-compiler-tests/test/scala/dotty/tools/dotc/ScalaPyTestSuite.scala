@@ -2,6 +2,7 @@ package dotty.tools.dotc
 
 import java.io.File
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.Comparator
 
 import scala.concurrent.duration.*
@@ -63,6 +64,31 @@ private[dotc] trait ScalaPyTestSuite extends ParallelTesting:
       (testFilter.isEmpty || testFilter.exists(file.getPath.contains)) &&
       (file.isDirectory || (file.isFile && file.getName.endsWith(".scala")))
     )
+
+  /** Stage Python companion files from directory-style fixtures into
+   *  `<outDir>/_pyextras/`. PyRun prepends that subdir to PYTHONPATH at
+   *  run time so the bundle can `import <companion>`. Flat-file
+   *  (JointCompilationSource) targets are skipped — companions only work
+   *  for directory fixtures. Returns the input for fluent chaining.
+   */
+  def stagePythonCompanions(test: CompilationTest): CompilationTest =
+    test.targets.foreach {
+      case sep: SeparateCompilationSource =>
+        val pyFiles = Option(sep.dir.listFiles()).getOrElse(Array.empty[File])
+          .filter(f => f.isFile && f.getName.endsWith(".py"))
+        if pyFiles.nonEmpty then
+          val extras = new File(sep.outDir, "_pyextras")
+          extras.mkdirs()
+          pyFiles.foreach { src =>
+            Files.copy(
+              src.toPath,
+              new File(extras, src.getName).toPath,
+              StandardCopyOption.REPLACE_EXISTING
+            )
+          }
+      case _ => ()
+    }
+    test
 
   protected def finishScalaPySuite(): Unit =
     cleanup()

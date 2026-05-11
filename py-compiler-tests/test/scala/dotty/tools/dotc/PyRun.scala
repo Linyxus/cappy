@@ -113,10 +113,19 @@ object PyRun:
 
   private def runProcess(command: List[String], workingDirectory: File, projectRoot: File, maxDuration: Duration): Either[String, ProcessResult] =
     try
-      val process = new ProcessBuilder(command*)
+      val pb = new ProcessBuilder(command*)
         .directory(workingDirectory)
         .redirectErrorStream(true)
-        .start()
+      val extras = new File(workingDirectory, "_pyextras")
+      if extras.isDirectory then
+        val env = pb.environment().nn
+        val prior = env.get("PYTHONPATH")
+        val combined =
+          if prior == null || prior.isEmpty
+          then extras.getAbsolutePath
+          else extras.getAbsolutePath + File.pathSeparator + prior
+        env.put("PYTHONPATH", combined)
+      val process = pb.start()
 
       // Self-enforce a deadline because Vulpix's per-fixture maxDuration
       // is not propagated through ScalaPyTestSuite.runMain (which calls us

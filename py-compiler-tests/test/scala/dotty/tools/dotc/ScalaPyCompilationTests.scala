@@ -18,7 +18,7 @@ class ScalaPyCompilationTests:
     cleanScalaPyOutput(testGroup)
     val filter = FileFilter.exclude(PylibTest.rawPylibEntries)
     if hasScalaPySources("tests/pos-py", filter) then
-      compileFilesInDir("tests/pos-py", scalaPyOptions, filter).checkRuns()
+      stagePythonCompanions(compileFilesInDir("tests/pos-py", scalaPyOptions, filter)).checkRuns()
 
   @Test def negScalaPy: Unit =
     if !hasScalaPySources("tests/neg-py") then
