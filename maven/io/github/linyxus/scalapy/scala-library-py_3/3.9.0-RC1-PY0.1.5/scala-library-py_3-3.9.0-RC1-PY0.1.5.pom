@@ -1,0 +1,43 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>io.github.linyxus.scalapy</groupId>
+    <artifactId>scala-library-py_3</artifactId>
+    <packaging>jar</packaging>
+    <description>scala-library-py</description>
+    <url>https://github.com/linyxus/scala3-py</url>
+    <version>3.9.0-RC1-PY0.1.5</version>
+    <licenses>
+        <license>
+            <name>Apache-2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+    <name>scala-library-py</name>
+    <organization>
+        <name>LAMP/EPFL</name>
+        <url>http://lamp.epfl.ch</url>
+    </organization>
+    <scm>
+        <url>https://github.com/linyxus/scala3-py</url>
+        <connection>scm:git:git@github.com:linyxus/scala3-py.git</connection>
+    </scm>
+    <developers>
+        <developer>
+            <id>linyxus</id>
+            <name>Yichen Xu</name>
+            <url>https://github.com/linyxus</url>
+        </developer>
+    </developers>
+    <properties>
+        <info.scala.versionLine>Next</info.scala.versionLine>
+    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>io.github.linyxus.scalapy</groupId>
+            <artifactId>scala3-library-py_3</artifactId>
+            <version>3.9.0-RC1-PY0.1.5</version>
+        </dependency>
+    </dependencies>
+</project>
