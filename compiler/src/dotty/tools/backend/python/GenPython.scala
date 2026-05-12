@@ -156,8 +156,7 @@ object GenPython:
           case None =>
             NoSourcePosition
 
-/** Main code generator that translates post-erasure Scala trees into the
-  * typed PyIR. Modeled after `dotty.tools.backend.sjs.JSCodeGen`.
+/** Main code generator that translates post-erasure Scala trees into the typed PyIR.
   */
 private class PyCodeGen()(using genCtx: Context):
 
@@ -782,9 +781,9 @@ private class PyCodeGen()(using genCtx: Context):
       seen.get(pyName) match
         case Some(prior) =>
           report.error(
-            s"Facade member '${sym.name.show}' resolves to Python name '$pyName', " +
-              s"which collides with '${prior.name.show}' in the same facade. " +
-              "Python has no overloading; use `@name` to disambiguate.",
+            s"""Facade member ${sym.show} resolves to Python name '$pyName',
+               |which collides with ${prior.show} in the same facade.
+               |Python has no overloading; use `@name` to disambiguate.""".stripMargin,
             sym.srcPos
           )
         case None =>

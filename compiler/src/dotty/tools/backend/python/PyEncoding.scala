@@ -67,7 +67,6 @@ class PyEncoding(using Context):
         val lastSeg  = sanitizeClassSimpleName(rawSegments.last, rewired.is(ModuleClass))
         initSegs :+ lastSeg
     PyClassName(segments.mkString("."))
-
   /** Sanitize a class's last path segment.
    *
    *  For module classes: identical to `sanitizeName`, since dotc has
