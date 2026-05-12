@@ -448,8 +448,15 @@ class PyEncoding(using Context):
     else digitGuarded
 
   private def annotationCarrierSymbols(sym: Symbol): List[Symbol] =
+    // For a `val` accessor (Dotty's `Fields` phase splits a `val` into a
+    // private field plus a getter method), the user-written annotations
+    // such as `@name` land on the *private field*, not on the getter. The
+    // getter's `Select` is what user code hits when reading `p.axisX`, so
+    // we must also consult the backing field when looking for annotations.
+    val field = if sym.is(Accessor) then sym.field else NoSymbol
     List(
       sym,
+      field,
       if sym.is(Module) then sym.moduleClass else NoSymbol,
       if sym.is(ModuleClass) then sym.sourceModule else NoSymbol
     ).filter(_.exists).distinct
