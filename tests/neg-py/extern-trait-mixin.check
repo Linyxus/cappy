@@ -1,11 +1,11 @@
--- Error: tests/neg-py/extern-trait-mixin.scala:13:6 -------------------------------------------------------------------
-13 |class HasTwoMix extends Object, ModTrait, OtherTrait // error
+-- Error: tests/neg-py/extern-trait-mixin.scala:12:6 -------------------------------------------------------------------
+12 |class HasOneMix extends Object, ModTrait // error
    |      ^
    |      `@extern` trait 'ModTrait' cannot appear as a mix-in.
    |      Only the single primary `extends` parent may target a Python class;
    |      interface inheritance from `@extern` traits is not yet supported.
--- Error: tests/neg-py/extern-trait-mixin.scala:12:6 -------------------------------------------------------------------
-12 |class HasOneMix extends Object, ModTrait // error
+-- Error: tests/neg-py/extern-trait-mixin.scala:13:6 -------------------------------------------------------------------
+13 |class HasTwoMix extends Object, ModTrait, OtherTrait // error
    |      ^
    |      `@extern` trait 'ModTrait' cannot appear as a mix-in.
    |      Only the single primary `extends` parent may target a Python class;
