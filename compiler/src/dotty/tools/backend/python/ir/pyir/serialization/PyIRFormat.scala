@@ -26,8 +26,13 @@ object PyIRFormat:
    *  encode as `_scpy_f_<owner>__<simple>` to avoid colliding with
    *  same-named subclass fields; public fields keep their simple name.
    *  Old `.pyir` files lack the trailing flag byte and cannot be read.
+   *
+   *  Bumped to 5 when `PyApply` and `PyApplyStatically` were merged into
+   *  a single `PyApply` node carrying a `PyDispatch` field. `TagPyApply`
+   *  (0x30) now writes a dispatch byte after `flags`; `TagPyApplyStatically`
+   *  (0x31) is retired. Old `.pyir` files cannot be read.
    */
-  final val MajorVersion: Int = 4
+  final val MajorVersion: Int = 5
 
   /** Minor version. Reader accepts older minors and rejects newer.
    *

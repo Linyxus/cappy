@@ -41,7 +41,8 @@ object PyIRTags:
 
   // Calls (0x30..0x3F)
   final val TagPyApply:           Byte = 0x30
-  final val TagPyApplyStatically: Byte = 0x31
+  // 0x31 — reserved (formerly TagPyApplyStatically; merged into TagPyApply
+  // with a dispatch byte).
   final val TagPyApplyStatic:     Byte = 0x32
   final val TagPyApplyExternal:   Byte = 0x33
   final val TagPyExternalRef:     Byte = 0x34
@@ -241,6 +242,23 @@ object PyIRTags:
     case TagNsStaticConstructor => PyMemberNamespace.StaticConstructor
     case _ => throw new CorruptIRException(
       s"Unknown PyMemberNamespace tag: 0x${(tag & 0xff).toHexString}")
+
+  // ===============================================================
+  //  PyDispatch tag table.
+  // ===============================================================
+
+  final val TagDispatchVirtual: Byte = 0x01
+  final val TagDispatchStatic:  Byte = 0x02
+
+  def dispatchTag(d: PyDispatch): Byte = d match
+    case PyDispatch.Virtual => TagDispatchVirtual
+    case PyDispatch.Static  => TagDispatchStatic
+
+  def dispatchFromTag(tag: Byte): PyDispatch = tag match
+    case TagDispatchVirtual => PyDispatch.Virtual
+    case TagDispatchStatic  => PyDispatch.Static
+    case _ => throw new CorruptIRException(
+      s"Unknown PyDispatch tag: 0x${(tag & 0xff).toHexString}")
 
   // ===============================================================
   //  PyUnaryCode tag table.

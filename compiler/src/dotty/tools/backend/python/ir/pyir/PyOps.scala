@@ -170,6 +170,17 @@ object PyApplyFlags:
 
   val empty: PyApplyFlags = new PyApplyFlags(0)
 
+/** Dispatch policy carried by a `PyApply`.
+ *
+ *  - `Virtual`: instance dispatch via virtual lookup; `className` names
+ *    the static receiver type and the linker starts its dispatch search
+ *    there.
+ *  - `Static`: dispatch is resolved exactly at `className` (super calls,
+ *    final-method calls). The linker does not walk overrides.
+ */
+enum PyDispatch:
+  case Virtual, Static
+
 /** Namespace classifier for class members.
  *
  *  Encodes visibility + dispatch context in a single value. Maps to

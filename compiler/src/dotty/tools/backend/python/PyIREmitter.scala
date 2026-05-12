@@ -1322,9 +1322,6 @@ object PyIREmitter:
       case tree: PyApply =>
         collectExternAliases(tree.receiver)
         tree.args.foreach(collectExternAliases)
-      case tree: PyApplyStatically =>
-        collectExternAliases(tree.receiver)
-        tree.args.foreach(collectExternAliases)
       case tree: PyApplyStatic =>
         tree.args.foreach(collectExternAliases)
       case tree: PyApplyExternal =>
@@ -1422,67 +1419,68 @@ object PyIREmitter:
           s"${moduleValueExpr(routeToModuleVar(field.owner))}.${field.encoded}"
 
       // Calls
-      case PyApply(_, receiver, className, method, args) =>
+      case PyApply(_, dispatch, receiver, className, method, args) =>
         val argsStr = args.map(exprToStr).mkString(", ")
-        // C7: a `this(...)` self-delegation inside a secondary ctor
-        // body reaches us as `PyApply(this, OwnerClass, <init>, args)`.
-        // Emitting `self.__init__(args)` would re-enter the dynamic
-        // type's dispatcher — re-zero fields, re-run type guards — and
-        // subclasses' dispatcher-shape changes could misdispatch. Skip
-        // the dispatcher entirely and call the specific primary helper
-        // directly. Use the SAME helper-name function the definition
-        // uses (`constructorHelperName`) so names stay in lockstep.
-        if method.simple.isConstructor && receiver.isInstanceOf[PyThis] then
-          s"self.${constructorHelperName(className, method)}($argsStr)"
-        else
-          s"${parenthesize(receiver)}.${method.encoded}($argsStr)"
+        dispatch match
+          case PyDispatch.Virtual =>
+            // C7: a `this(...)` self-delegation inside a secondary ctor
+            // body reaches us as `PyApply(this, OwnerClass, <init>, args)`.
+            // Emitting `self.__init__(args)` would re-enter the dynamic
+            // type's dispatcher — re-zero fields, re-run type guards — and
+            // subclasses' dispatcher-shape changes could misdispatch. Skip
+            // the dispatcher entirely and call the specific primary helper
+            // directly. Use the SAME helper-name function the definition
+            // uses (`constructorHelperName`) so names stay in lockstep.
+            if method.simple.isConstructor && receiver.isInstanceOf[PyThis] then
+              s"self.${constructorHelperName(className, method)}($argsStr)"
+            else
+              s"${parenthesize(receiver)}.${method.encoded}($argsStr)"
 
-      case PyApplyStatically(_, receiver, className, method, args) =>
-        val argsStr = args.map(exprToStr).mkString(", ")
-        // Bypass Python's MRO and dispatch directly to the resolved
-        // class. `PyApplyStatically.className` already names the exact
-        // class in which the method is resolved (per PyIR docs), so
-        // we honour Scala's source-level resolution rather than letting
-        // Python C3 walk pick a different override.
-        //
-        // Why not `super()`? Python's MRO and Scala's linearization
-        // disagree in two directions:
-        //   1. Trait re-overrides: `class C extends B with T` linearizes
-        //      T after B in Scala (T wins); Python MRO with bases `(B, T)`
-        //      walks B before T (B wins). Reversing the bases tuple to
-        //      `(T, B)` flips this case but breaks
-        //   2. Abstract trait declarations: `class C extends B with T`
-        //      where T declares `m` abstractly and B implements it.
-        //      Scala's linearization preserves B's concrete impl; Python
-        //      with `(T, B)` would pick T's abstract declaration.
-        // Calling `ClassName.method(self, args)` sidesteps both: we use
-        // exactly the class the Scala compiler resolved.
-        //
-        // See notes/issue-arraydeque-map-class-walk-recursion.md.
-        // Constructor calls land here for `super.<init>(...)` chains.
-        // Route them to the encoded ctor helper directly so the parent's
-        // `__init__` (a no-arg field-zero-init forwarder) is bypassed —
-        // we want exactly the helper that matches the resolved
-        // signature. Runtime-provided classes (e.g. `_scpy_Object`,
-        // `_scpy_java_Throwable`, the `*Ref` boxes) don't carry the
-        // encoded helpers — fall back to `__init__` (which on
-        // `object`/`_scpy_Object` is a no-op, and on the hand-written
-        // runtime stubs is the actual ctor body). Ditto for support
-        // classes that escaped the bundle (e.g. interfaces with no
-        // ctor body), in which case the dispatcher form remains a
-        // safe fallback.
-        val targetMethod =
-          if method.simple.isConstructor then
-            if PyIRRuntime.providedClass(className).isDefined then method.encoded
-            else constructorHelperName(className, method)
-          else method.encoded
-        val sep = if args.isEmpty then "" else ", "
-        receiver match
-          case _: PyThis =>
-            s"${classIdentifier(className)}.$targetMethod(self$sep$argsStr)"
-          case _ =>
-            val prefix = parenthesize(receiver)
-            s"${classIdentifier(className)}.$targetMethod($prefix$sep$argsStr)"
+          case PyDispatch.Static =>
+            // Bypass Python's MRO and dispatch directly to the resolved
+            // class. For a `Static` apply, `className` already names the
+            // exact class in which the method is resolved (per PyIR docs),
+            // so we honour Scala's source-level resolution rather than
+            // letting Python C3 walk pick a different override.
+            //
+            // Why not `super()`? Python's MRO and Scala's linearization
+            // disagree in two directions:
+            //   1. Trait re-overrides: `class C extends B with T` linearizes
+            //      T after B in Scala (T wins); Python MRO with bases `(B, T)`
+            //      walks B before T (B wins). Reversing the bases tuple to
+            //      `(T, B)` flips this case but breaks
+            //   2. Abstract trait declarations: `class C extends B with T`
+            //      where T declares `m` abstractly and B implements it.
+            //      Scala's linearization preserves B's concrete impl; Python
+            //      with `(T, B)` would pick T's abstract declaration.
+            // Calling `ClassName.method(self, args)` sidesteps both: we use
+            // exactly the class the Scala compiler resolved.
+            //
+            // See notes/issue-arraydeque-map-class-walk-recursion.md.
+            // Constructor calls land here for `super.<init>(...)` chains.
+            // Route them to the encoded ctor helper directly so the parent's
+            // `__init__` (a no-arg field-zero-init forwarder) is bypassed —
+            // we want exactly the helper that matches the resolved
+            // signature. Runtime-provided classes (e.g. `_scpy_Object`,
+            // `_scpy_java_Throwable`, the `*Ref` boxes) don't carry the
+            // encoded helpers — fall back to `__init__` (which on
+            // `object`/`_scpy_Object` is a no-op, and on the hand-written
+            // runtime stubs is the actual ctor body). Ditto for support
+            // classes that escaped the bundle (e.g. interfaces with no
+            // ctor body), in which case the dispatcher form remains a
+            // safe fallback.
+            val targetMethod =
+              if method.simple.isConstructor then
+                if PyIRRuntime.providedClass(className).isDefined then method.encoded
+                else constructorHelperName(className, method)
+              else method.encoded
+            val sep = if args.isEmpty then "" else ", "
+            receiver match
+              case _: PyThis =>
+                s"${classIdentifier(className)}.$targetMethod(self$sep$argsStr)"
+              case _ =>
+                val prefix = parenthesize(receiver)
+                s"${classIdentifier(className)}.$targetMethod($prefix$sep$argsStr)"
 
       case PyApplyStatic(_, className, method, args) =>
         val argsStr = args.map(exprToStr).mkString(", ")

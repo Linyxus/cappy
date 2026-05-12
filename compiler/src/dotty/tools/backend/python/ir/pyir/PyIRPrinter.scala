@@ -227,9 +227,9 @@ object PyIRPrinter:
       case PySelectStatic(field)  =>
         s"${field.owner.nameString}.${field.simple.name}"
       // Calls
-      case PyApply(_, recv, _, m, args) =>
+      case PyApply(_, PyDispatch.Virtual, recv, _, m, args) =>
         s"${exprString(recv)}.${m.encoded}(${args.map(exprString).mkString(", ")})"
-      case PyApplyStatically(_, recv, cn, m, args) =>
+      case PyApply(_, PyDispatch.Static, recv, cn, m, args) =>
         s"${exprString(recv)}.${cn.nameString}::${m.encoded}(${args.map(exprString).mkString(", ")})"
       case PyApplyStatic(_, cn, m, args) =>
         s"${cn.nameString}::${m.encoded}(${args.map(exprString).mkString(", ")})"

@@ -496,22 +496,13 @@ object PyIRDeserializer:
       case TagPyApply =>
         val tpe       = readType()
         val flags     = new PyApplyFlags(reader.readNat())
+        val dispatch  = dispatchFromTag(reader.readByte().toByte)
         val receiver  = readTree()
         val className = readClassNameRef()
         val method    = readMethodNameRef()
         val argN      = reader.readNat()
         val args      = List.fill(argN)(readTree())
-        PyApply(flags, receiver, className, method, args)(tpe, pos)
-
-      case TagPyApplyStatically =>
-        val tpe       = readType()
-        val flags     = new PyApplyFlags(reader.readNat())
-        val receiver  = readTree()
-        val className = readClassNameRef()
-        val method    = readMethodNameRef()
-        val argN      = reader.readNat()
-        val args      = List.fill(argN)(readTree())
-        PyApplyStatically(flags, receiver, className, method, args)(tpe, pos)
+        PyApply(flags, dispatch, receiver, className, method, args)(tpe, pos)
 
       case TagPyApplyStatic =>
         val tpe       = readType()

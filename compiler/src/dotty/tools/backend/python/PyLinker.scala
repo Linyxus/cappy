@@ -421,11 +421,8 @@ object PyLinker:
         case PySelectStatic(_) =>
           tree
 
-        case PyApply(flags, receiver, className, method, args) =>
-          PyApply(flags, rewriteTree(receiver, ctx), className, method, args.map(rewriteTree(_, ctx)))(tree.tpe, tree.pos)
-
-        case PyApplyStatically(flags, receiver, className, method, args) =>
-          PyApplyStatically(flags, rewriteTree(receiver, ctx), className, method, args.map(rewriteTree(_, ctx)))(tree.tpe, tree.pos)
+        case PyApply(flags, dispatch, receiver, className, method, args) =>
+          PyApply(flags, dispatch, rewriteTree(receiver, ctx), className, method, args.map(rewriteTree(_, ctx)))(tree.tpe, tree.pos)
 
         case PyApplyStatic(flags, className, method, args) =>
           PyApplyStatic(flags, className, method, args.map(rewriteTree(_, ctx)))(tree.tpe, tree.pos)
@@ -527,9 +524,6 @@ object PyLinker:
         case t: PySelect         => walk(t.qualifier); refs += t.field
         case t: PySelectStatic   => refs += t.field
         case t: PyApply          => walk(t.receiver); t.args.foreach(walk)
-        case t: PyApplyStatically =>
-          walk(t.receiver)
-          t.args.foreach(walk)
         case t: PyApplyStatic    => t.args.foreach(walk)
         case t: PyApplyExternal  => t.args.foreach(walk)
         case _: PyExternalRef    => ()
@@ -793,17 +787,11 @@ object PyLinker:
           validateMethodName(tree.method, tree.pos, classInfos)
           if tree.method.simple.isConstructor then
             requireConstructor(tree.className, tree.method, tree.pos, classInfos)
-          else
-            requireInstanceMethod(tree.className, tree.method, tree.pos, classInfos)
-
-        case tree: PyApplyStatically =>
-          validateTree(tree.receiver, classInfos)
-          tree.args.foreach(validateTree(_, classInfos))
-          validateMethodName(tree.method, tree.pos, classInfos)
-          if tree.method.simple.isConstructor then
-            requireConstructor(tree.className, tree.method, tree.pos, classInfos)
-          else
-            requireExactInstanceMethod(tree.className, tree.method, tree.pos, classInfos)
+          else tree.dispatch match
+            case PyDispatch.Virtual =>
+              requireInstanceMethod(tree.className, tree.method, tree.pos, classInfos)
+            case PyDispatch.Static =>
+              requireExactInstanceMethod(tree.className, tree.method, tree.pos, classInfos)
 
         case tree: PyApplyStatic =>
           tree.args.foreach(validateTree(_, classInfos))

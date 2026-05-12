@@ -64,6 +64,7 @@ class PyUnrollForwarderTest:
           namespace = PyMemberNamespace.PublicStatic,
           body = PyApply(
             PyApplyFlags.empty,
+            PyDispatch.Virtual,
             PyNew(owner, ctorName(), Nil)(NoPos),
             owner,
             methodName("foo", paramRefs = List(PyPrimRef.IntRef)),
@@ -124,6 +125,7 @@ class PyUnrollForwarderTest:
           namespace = PyMemberNamespace.PublicStatic,
           body = PyApply(
             PyApplyFlags.empty,
+            PyDispatch.Virtual,
             PyNew(owner, ctorName(), Nil)(NoPos),
             owner,
             methodName("foo", paramRefs = List(PyPrimRef.IntRef)),

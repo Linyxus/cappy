@@ -142,6 +142,7 @@ class PyEncoderEdgesTest:
     // dispatching to the lambda by its encoded name.
     val callerBody = PyApply(
       flags     = PyApplyFlags.empty,
+      dispatch  = PyDispatch.Virtual,
       receiver  = PyLoadModule(moduleName)(NoPos),
       className = moduleName,
       method    = lambdaName,
@@ -240,6 +241,7 @@ class PyEncoderEdgesTest:
     )
     val callerBody = PyApply(
       flags     = PyApplyFlags.empty,
+      dispatch  = PyDispatch.Virtual,
       receiver  = PyLoadModule(moduleName)(NoPos),
       className = moduleName,
       method    = targetMethod,

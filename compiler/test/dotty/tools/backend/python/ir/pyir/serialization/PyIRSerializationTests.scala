@@ -372,8 +372,7 @@ class PyIRSerializationTests:
     val mname = PyMethodName(PySimpleMethodName("foo"), List(PyPrimRef.IntRef), PyPrimRef.IntRef)
     val flags = PyApplyFlags.empty.withPrivate(true)
 
-    val apply = PyApply(flags, recv, cls, mname, List(PyIntLit(1)(NoPos)))(PyIntType, NoPos)
-    val applyStatically = PyApplyStatically(flags, recv, cls, mname, Nil)(PyVoidType, NoPos)
+    val apply = PyApply(flags, PyDispatch.Virtual, recv, cls, mname, List(PyIntLit(1)(NoPos)))(PyIntType, NoPos)
     val applyStatic = PyApplyStatic(flags, cls, mname, Nil)(PyVoidType, NoPos)
     val applyExternal = PyApplyExternal(PyExternalName("print"), List(PyStringLit("hi")(NoPos)))(PyVoidType, NoPos)
     val externalRef = PyExternalRef("numpy", List("ndarray", "shape"))(PyAnyType, NoPos)
@@ -384,7 +383,10 @@ class PyIRSerializationTests:
       List(("axis", PyIntLit(0)(NoPos)), ("keepdims", PyBooleanLit(true)(NoPos)))
     )(PyAnyType, NoPos)
 
-    for t <- List(apply, applyStatically, applyStatic, applyExternal,
+    // Both dispatch variants must round-trip through the dispatch byte.
+    val applyStaticDispatch = PyApply(flags, PyDispatch.Static, recv, cls, mname, Nil)(PyVoidType, NoPos)
+
+    for t <- List(apply, applyStaticDispatch, applyStatic, applyExternal,
                   externalRef, attrAccess, applyDynamic) do
       assertEquals(t, roundTripTree(t))
 
@@ -392,7 +394,11 @@ class PyIRSerializationTests:
     // the primary constructor field.
     val rtApply = roundTripTree(apply).asInstanceOf[PyApply]
     assertEquals(flags.bits, rtApply.flags.bits)
+    assertEquals(PyDispatch.Virtual, rtApply.dispatch)
     assertEquals(PyIntType, rtApply.tpe)
+
+    val rtStaticDispatch = roundTripTree(applyStaticDispatch).asInstanceOf[PyApply]
+    assertEquals(PyDispatch.Static, rtStaticDispatch.dispatch)
 
   // ---------------------------------------------------------------
   //  Construction / type tests / arrays

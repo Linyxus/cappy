@@ -698,6 +698,7 @@ private class PyCodeGen()(using genCtx: Context):
         val paramRefs: List[PyTree] = m.args.map(p => PyVarRef(p.name)(p.ptpe, p.pos))
         val body = PyApply(
           flags     = PyApplyFlags.empty,
+          dispatch  = PyDispatch.Virtual,
           receiver  = PyLoadModule(moduleName)(m.pos),
           className = moduleName,
           method    = m.name,
@@ -1795,8 +1796,9 @@ private class PyCodeGen()(using genCtx: Context):
     val methodName = encoding.encodeMethodName(sym)
     val tpe = encoding.encodeType(sym.info.finalResultType)
     val classTpe = PyClassType(encoding.encodeClassName(currentClassSym))
-    PyApplyStatically(
+    PyApply(
       PyApplyFlags.empty,
+      PyDispatch.Static,
       PyThis()(classTpe, pos),
       ownerName,
       methodName,
@@ -2031,6 +2033,7 @@ private class PyCodeGen()(using genCtx: Context):
               else genExpr(receiver)
             PyApply(
               PyApplyFlags.empty,
+              PyDispatch.Virtual,
               recvTree,
               dispatchOwner,
               methodName,
@@ -2041,6 +2044,7 @@ private class PyCodeGen()(using genCtx: Context):
             if sym.owner.is(ModuleClass) then
               PyApply(
                 PyApplyFlags.empty,
+                PyDispatch.Virtual,
                 moduleReceiver(sym.owner, pos),
                 ownerName,
                 methodName,
@@ -2065,6 +2069,7 @@ private class PyCodeGen()(using genCtx: Context):
                 case sel @ Select(qual, _) if !qual.isInstanceOf[This] =>
                   PyApply(
                     PyApplyFlags.empty,
+                    PyDispatch.Virtual,
                     genExpr(qual),
                     ownerName,
                     methodName,
@@ -2083,6 +2088,7 @@ private class PyCodeGen()(using genCtx: Context):
                   // intended singleton receiver.
                   PyApply(
                     PyApplyFlags.empty,
+                    PyDispatch.Virtual,
                     genExpr(qual),
                     ownerName,
                     methodName,
@@ -2092,6 +2098,7 @@ private class PyCodeGen()(using genCtx: Context):
                   val classTpe = PyClassType(encoding.encodeClassName(currentClassSym))
                   PyApply(
                     PyApplyFlags.empty,
+                    PyDispatch.Virtual,
                     PyThis()(classTpe, pos),
                     ownerName,
                     methodName,
@@ -2300,6 +2307,7 @@ private class PyCodeGen()(using genCtx: Context):
     )
     PyApply(
       PyApplyFlags.empty,
+      PyDispatch.Virtual,
       PyLoadModule(stringCompanionClassName)(pos),
       stringCompanionClassName,
       methodName,
@@ -2581,6 +2589,7 @@ private class PyCodeGen()(using genCtx: Context):
     genStringValueOfIntrinsic(methodName, args, pos).getOrElse {
       PyApply(
         PyApplyFlags.empty,
+        PyDispatch.Virtual,
         PyLoadModule(stringCompanionClassName)(pos),
         stringCompanionClassName,
         methodName,
@@ -2660,6 +2669,7 @@ private class PyCodeGen()(using genCtx: Context):
     )
     PyApply(
       PyApplyFlags.empty,
+      PyDispatch.Virtual,
       PyLoadModule(stringCompanionClassName)(pos),
       stringCompanionClassName,
       methodName,
@@ -3888,6 +3898,7 @@ private class PyCodeGen()(using genCtx: Context):
       else if targetSym.owner.is(ModuleClass) then
         PyApply(
           PyApplyFlags.empty,
+          PyDispatch.Virtual,
           moduleReceiver(targetSym.owner, pos),
           ownerClass,
           methodName,
@@ -3905,6 +3916,7 @@ private class PyCodeGen()(using genCtx: Context):
             PyThis()(PyClassType(encoding.encodeClassName(currentClassSym)), pos)
         PyApply(
           PyApplyFlags.empty,
+          PyDispatch.Virtual,
           receiver,
           ownerClass,
           methodName,

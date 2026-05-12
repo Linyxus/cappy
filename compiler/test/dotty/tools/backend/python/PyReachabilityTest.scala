@@ -379,6 +379,7 @@ class PyReachabilityTest:
           List(PyNew(dogName, ctorName(), Nil)(NoPos)),
           PyApply(
             PyApplyFlags.empty,
+            PyDispatch.Virtual,
             PyThis()(PyClassType(animalName), NoPos),
             animalName,
             speak,
@@ -589,6 +590,7 @@ class PyReachabilityTest:
           List(PyNew(concreteName, ctorName(), Nil)(NoPos)),
           PyApply(
             PyApplyFlags.empty,
+            PyDispatch.Virtual,
             PyThis()(PyClassType(extIfaceName), NoPos),
             extIfaceName,
             helper,

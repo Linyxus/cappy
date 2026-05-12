@@ -175,23 +175,16 @@ final case class PySelectStatic(field: PyFieldName)
 // either be wired (private/constructor metadata) or removed wholesale.
 // See `PyApplyFlags` in `PyOps.scala` for the reserved bit layout.
 
-/** Instance dispatch via virtual lookup.
+/** Method call on a receiver.
  *
- *  The `className` field names the *static* receiver type - the class
- *  in whose hierarchy the linker starts its dispatch search. */
+ *  When `dispatch == Virtual`, `className` names the *static* receiver
+ *  type - the class in whose hierarchy the linker starts its dispatch
+ *  search. When `dispatch == Static`, `className` names the exact class
+ *  in which the method is resolved (super calls, final-method calls);
+ *  the linker does not walk overrides. */
 final case class PyApply(
     flags:     PyApplyFlags,
-    receiver:  PyTree,
-    className: PyClassName,
-    method:    PyMethodName,
-    args:      List[PyTree]
-)(val tpe: PyType, val pos: PyPosition) extends PyTree
-
-/** Statically dispatched call (super calls, final method calls).
- *
- *  `className` names the exact class in which the method is resolved. */
-final case class PyApplyStatically(
-    flags:     PyApplyFlags,
+    dispatch:  PyDispatch,
     receiver:  PyTree,
     className: PyClassName,
     method:    PyMethodName,

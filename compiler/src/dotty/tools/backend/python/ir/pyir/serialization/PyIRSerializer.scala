@@ -338,7 +338,6 @@ object PyIRSerializer:
       case _: PySelect          => TagPySelect
       case _: PySelectStatic    => TagPySelectStatic
       case _: PyApply           => TagPyApply
-      case _: PyApplyStatically => TagPyApplyStatically
       case _: PyApplyStatic     => TagPyApplyStatic
       case _: PyApplyExternal   => TagPyApplyExternal
       case _: PyExternalRef     => TagPyExternalRef
@@ -455,15 +454,7 @@ object PyIRSerializer:
       case n: PyApply =>
         writeType(n.tpe)
         writeNat(n.flags.bits)
-        writeTree(n.receiver)
-        writeClassNameRef(n.className)
-        writeMethodNameRef(n.method)
-        writeNat(n.args.size)
-        n.args.foreach(writeTree)
-
-      case n: PyApplyStatically =>
-        writeType(n.tpe)
-        writeNat(n.flags.bits)
+        writeByteRaw(dispatchTag(n.dispatch).toInt & 0xff)
         writeTree(n.receiver)
         writeClassNameRef(n.className)
         writeMethodNameRef(n.method)

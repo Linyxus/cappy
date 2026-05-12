@@ -32,6 +32,7 @@ class PyLinkerTest:
           namespace = PyMemberNamespace.PublicStatic,
           body = PyApply(
             PyApplyFlags.empty,
+            PyDispatch.Virtual,
             PyNew(classA.name, ctorName(), Nil)(NoPos),
             classA.name,
             methodName("ping", resultRef = PyPrimRef.IntRef),
@@ -67,8 +68,9 @@ class PyLinkerTest:
         ctor(
           body = PyBlock(
             List(
-              PyApplyStatically(
+              PyApply(
                 PyApplyFlags.empty,
+                PyDispatch.Static,
                 PyThis()(PyClassType(childName), NoPos),
                 PyClassName.ObjectClass,
                 ctorName(),
@@ -78,6 +80,7 @@ class PyLinkerTest:
             // Call toString on Object — java-provided, lenient lookup
             PyApply(
               PyApplyFlags.empty,
+              PyDispatch.Virtual,
               PyThis()(PyClassType(childName), NoPos),
               PyClassName.ObjectClass,
               methodName("toString", resultRef = PyClassRef(PyClassName.StringClass)),
@@ -151,6 +154,7 @@ class PyLinkerTest:
           name = methodName("missingInstance"),
           body = PyApply(
             PyApplyFlags.empty,
+            PyDispatch.Virtual,
             PyNew(targetName, ctorName(), Nil)(NoPos),
             targetName,
             methodName("nope"),

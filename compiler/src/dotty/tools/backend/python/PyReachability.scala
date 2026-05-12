@@ -667,18 +667,15 @@ object PyReachability:
         t.args.foreach(walkTree)
         enqueue(Work.ReachClass(t.className))
         // Constructors can surface as `PyApply` from the uniform-call
-        // lowering. Dispatch is exact — not virtual — so route them
-        // like `PyApplyStatically`.
+        // lowering. Dispatch is exact — not virtual — so route them as
+        // static regardless of the dispatch field.
         if t.method.simple.isConstructor then
           enqueue(Work.AnalyzeMethod(t.className, t.method))
-        else
-          logVirtualCall(t.className, t.method)
-
-      case t: PyApplyStatically =>
-        walkTree(t.receiver)
-        t.args.foreach(walkTree)
-        enqueue(Work.ReachClass(t.className))
-        enqueue(Work.AnalyzeMethod(t.className, t.method))
+        else t.dispatch match
+          case PyDispatch.Virtual =>
+            logVirtualCall(t.className, t.method)
+          case PyDispatch.Static =>
+            enqueue(Work.AnalyzeMethod(t.className, t.method))
 
       case t: PyApplyStatic =>
         t.args.foreach(walkTree)
@@ -884,9 +881,6 @@ object PyReachability:
         if isBundledModuleClass(t.className) then seedModuleLoad(t.className)
         t.args.foreach(seedModuleAccessorsInClosure)
       case t: PyApply =>
-        seedModuleAccessorsInClosure(t.receiver)
-        t.args.foreach(seedModuleAccessorsInClosure)
-      case t: PyApplyStatically =>
         seedModuleAccessorsInClosure(t.receiver)
         t.args.foreach(seedModuleAccessorsInClosure)
       case t: PyApplyDynamic =>
