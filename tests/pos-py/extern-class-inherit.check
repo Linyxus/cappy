@@ -7,3 +7,19 @@ leaf.describeMid=mid(seed=7)
 c.bump=11
 c.bump=12
 c.bump=13
+d.tag=default
+p.x=10 y=scala z=2.5
+nl.getSeed=12
+sa.count=10 sb.count=20
+--init-order--
+py-init:alpha
+scala-body:alpha
+tr.name=alpha
+mo.describe=scala-describe(5)
+ws.doWork=scala-work
+ws.execute=py-work-done
+ef.combined=scala-tag/8
+singleton.getSeed=99
+failerOK.ok=true
+hi.get=hello hi.seed=13
+hn.get=123 hn.seed=13
