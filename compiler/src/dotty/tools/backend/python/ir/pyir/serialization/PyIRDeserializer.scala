@@ -333,9 +333,17 @@ object PyIRDeserializer:
       val name         = readClassNameRef()
       val originalName = readOptionalString()
       val kind         = classKindFromTag(reader.readByte().toByte)
-      val superClass   =
-        if reader.readByte() == 0 then None
-        else Some(readClassNameRef())
+      val superClass: Option[PyClassSuper] = reader.readByte() match
+        case 0 => None
+        case 1 => Some(PyClassSuper.Nominal(readClassNameRef()))
+        case 2 =>
+          val mod  = readString()
+          val n    = reader.readNat()
+          val path = List.fill(n)(readString())
+          Some(PyClassSuper.Extern(mod, path))
+        case other =>
+          throw new CorruptIRException(
+            s"Unknown PyClassDef.superClass discriminator: 0x${(other & 0xff).toHexString}")
       val ifaceN     = reader.readNat()
       val interfaces = List.fill(ifaceN)(readClassNameRef())
       val fieldN     = reader.readNat()

@@ -1,0 +1,9 @@
+m.getSeed=11
+m.describe=Mod(seed=11)
+m2.getSeed=42
+m2.describe=Mod(seed=42)
+leaf.getSeed=7
+leaf.describeMid=mid(seed=7)
+c.bump=11
+c.bump=12
+c.bump=13

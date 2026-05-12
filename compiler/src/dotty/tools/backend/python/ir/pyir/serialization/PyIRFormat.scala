@@ -43,8 +43,15 @@ object PyIRFormat:
    *  Bumped to 2 when `PyDictValue` was added (tag `0x54`) so the
    *  Python backend can lower `scala.python.PyMap` factory calls to
    *  Python dict literals.
+   *
+   *  Bumped to 3 when `PyClassDef.superClass` widened from
+   *  `Option[PyClassName]` to `Option[PyClassSuper]`. The `superClass`
+   *  encoding gained a third discriminator byte value (2 = extern
+   *  module + dotted path) so a Scala class can extend an `@extern`
+   *  Python class. Older readers will reject `.pyir` containing the
+   *  new discriminator.
    */
-  final val MinorVersion: Int = 2
+  final val MinorVersion: Int = 3
 
   /** Packed `(major << 8) | minor`, written as a big-endian u16. */
   final val FormatVersion: Int = (MajorVersion << 8) | MinorVersion

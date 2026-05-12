@@ -270,10 +270,15 @@ object PyIRSerializer:
       writeOptionalString(cls.originalName)
       writeByteRaw(classKindTag(cls.kind).toInt & 0xff)
       cls.superClass match
-        case None     => writeByteRaw(0)
-        case Some(sc) =>
+        case None                                  => writeByteRaw(0)
+        case Some(PyClassSuper.Nominal(sc))        =>
           writeByteRaw(1)
           writeClassNameRef(sc)
+        case Some(PyClassSuper.Extern(mod, path))  =>
+          writeByteRaw(2)
+          writeString(mod)
+          writeNat(path.size)
+          path.foreach(writeString)
       writeNat(cls.interfaces.size)
       cls.interfaces.foreach(writeClassNameRef)
       writeNat(cls.fields.size)

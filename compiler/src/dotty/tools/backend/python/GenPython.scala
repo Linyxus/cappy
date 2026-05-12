@@ -814,14 +814,40 @@ private class PyCodeGen()(using genCtx: Context):
       pos          = posOf(td)
     )
 
-  private def genBases(sym: ClassSymbol): (Option[PyClassName], List[PyClassName]) =
+  private def genBases(sym: ClassSymbol): (Option[PyClassSuper], List[PyClassName]) =
     val superSym = sym.superClass
-    val superName =
-      if superSym != defn.ObjectClass && superSym != NoSymbol then
-        Some(encoding.encodeClassName(superSym))
-      else None
-    val interfaceNames = sym.directlyInheritedTraits.map(encoding.encodeClassName)
-    (superName, interfaceNames)
+    val superSlot: Option[PyClassSuper] =
+      if superSym == defn.ObjectClass || superSym == NoSymbol then
+        None
+      else if encoding.hasExternAnnotation(superSym) then
+        // Foreign Python parent. The user's facade carries the
+        // module + class-path; emit an `Extern` superclass that
+        // the linker and DCE leave alone and the emitter renders
+        // through the extern-import alias machinery.
+        encoding.externBindingOf(superSym) match
+          case Some(binding) =>
+            Some(PyClassSuper.Extern(binding.module, binding.path))
+          case None =>
+            // `externBindingOf` already reported a malformed-extern
+            // diagnostic. Fall back to the nominal path so codegen
+            // doesn't crash; the user sees the binding error.
+            Some(PyClassSuper.Nominal(encoding.encodeClassName(superSym)))
+      else
+        Some(PyClassSuper.Nominal(encoding.encodeClassName(superSym)))
+    val rawInterfaces = sym.directlyInheritedTraits
+    for iface <- rawInterfaces if encoding.hasExternAnnotation(iface) do
+      // v1 scope: only the single `extends` parent may be `@extern`.
+      // An `@extern` trait in interface position would require
+      // multiple-inheritance plumbing through the Python runtime that
+      // we haven't built yet; reject with a clear message.
+      report.error(
+        s"""`@extern` trait '${iface.name.show}' cannot appear as a mix-in.
+           |Only the single primary `extends` parent may target a Python class;
+           |interface inheritance from `@extern` traits is not yet supported.""".stripMargin,
+        sym.srcPos
+      )
+    val interfaceNames = rawInterfaces.map(encoding.encodeClassName)
+    (superSlot, interfaceNames)
 
   // --- Class member collection ---------------------------------------
 
@@ -1792,10 +1818,28 @@ private class PyCodeGen()(using genCtx: Context):
   private def genSuperCall(app: Apply, pos: PyPosition): PyTree =
     val sym = app.fun.symbol
     val args = genArgsPreservingOrder(app.args)
-    val ownerName = encoding.encodeClassName(sym.owner)
-    val methodName = encoding.encodeMethodName(sym)
     val tpe = encoding.encodeType(sym.info.finalResultType)
     val classTpe = PyClassType(encoding.encodeClassName(currentClassSym))
+    // Foreign Python parent: route the super call through the same
+    // dynamic-call machinery the rest of the facade infrastructure uses.
+    // For the `__init__` chain we emit `<extern>.<__init__>(self, ...)`;
+    // the bundled Python `class Foo(<extern>):` declaration carries the
+    // MRO so attribute lookup for inherited fields still resolves.
+    if encoding.hasExternAnnotation(sym.owner) && sym.isClassConstructor then
+      encoding.externBindingOf(sym.owner) match
+        case Some(binding) =>
+          val initRef = PyExternalRef(
+            binding.module,
+            binding.path :+ "__init__"
+          )(PyAnyType, pos)
+          val self = PyThis()(classTpe, pos)
+          return PyApplyDynamic(initRef, self :: args, Nil)(tpe, pos)
+        case None =>
+          // Malformed extern — fall through to the nominal path; the
+          // facade-binding error is already reported.
+          ()
+    val ownerName = encoding.encodeClassName(sym.owner)
+    val methodName = encoding.encodeMethodName(sym)
     PyApply(
       PyApplyFlags.empty,
       PyDispatch.Static,

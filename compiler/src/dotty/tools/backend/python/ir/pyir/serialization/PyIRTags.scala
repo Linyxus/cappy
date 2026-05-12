@@ -192,6 +192,16 @@ object PyIRTags:
       s"Unknown PyPrimRef.Tag tag: 0x${(tag & 0xff).toHexString}")
 
   // ===============================================================
+  //  PyClassDef.superClass discriminator byte values.
+  //
+  //  Written inline in the class-encoding block (no separate tag
+  //  table). Append-only:
+  //    0x00 — None (no superclass).
+  //    0x01 — Some(PyClassSuper.Nominal(<classNameRef>)).
+  //    0x02 — Some(PyClassSuper.Extern(<module:string>, <path:list[string]>)).
+  // ===============================================================
+
+  // ===============================================================
   //  PyClassKind tag table.
   // ===============================================================
 

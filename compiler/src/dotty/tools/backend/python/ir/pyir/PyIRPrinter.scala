@@ -61,7 +61,12 @@ object PyIRPrinter:
         case PyClassKind.Class         => "class"
         case PyClassKind.ModuleClass   => "module class"
         case PyClassKind.Interface     => "interface"
-      val sup = cls.superClass.fold("")(s => s" extends ${s.nameString}")
+      val sup = cls.superClass.fold("") {
+        case PyClassSuper.Nominal(s)        => s" extends ${s.nameString}"
+        case PyClassSuper.Extern(mod, path) =>
+          val py = if path.isEmpty then mod else s"$mod.${path.mkString(".")}"
+          s" extends extern[$py]"
+      }
       val ifs =
         if cls.interfaces.isEmpty then ""
         else cls.interfaces.map(_.nameString).mkString(" implements ", ", ", "")

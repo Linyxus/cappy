@@ -198,7 +198,7 @@ object PyReachability:
     private val directDescendants: Map[PyClassName, Set[PyClassName]] =
       val acc = mutable.HashMap.empty[PyClassName, mutable.HashSet[PyClassName]]
       for c <- classByName.valuesIterator do
-        c.superClass.foreach { s => acc.getOrElseUpdate(s, mutable.HashSet.empty) += c.name }
+        c.superClassName.foreach { s => acc.getOrElseUpdate(s, mutable.HashSet.empty) += c.name }
         c.interfaces.foreach { i => acc.getOrElseUpdate(i, mutable.HashSet.empty) += c.name }
       acc.view.mapValues(_.toSet).toMap
 
@@ -218,14 +218,14 @@ object PyReachability:
           val seen = mutable.HashSet.empty[PyClassName]
           val stack = mutable.ArrayDeque.empty[PyClassName]
           classByName.get(cls).foreach { cd =>
-            cd.superClass.foreach(stack += _)
+            cd.superClassName.foreach(stack += _)
             cd.interfaces.foreach(stack += _)
           }
           while stack.nonEmpty do
             val a = stack.removeHead()
             if seen.add(a) then
               classByName.get(a).foreach { cd =>
-                cd.superClass.foreach(stack += _)
+                cd.superClassName.foreach(stack += _)
                 cd.interfaces.foreach(stack += _)
               }
           val result = seen.toSet
@@ -307,7 +307,7 @@ object PyReachability:
       if s.isReachable then return
       s.isReachable = true
       classByName.get(cls).foreach { cd =>
-        cd.superClass.foreach(sc => enqueue(Work.ReachClass(sc)))
+        cd.superClassName.foreach(sc => enqueue(Work.ReachClass(sc)))
         cd.interfaces.foreach(i  => enqueue(Work.ReachClass(i)))
         // `<clinit>` runs on class definition in Python; if we keep the
         // class we'll run its static init, so analyze the body to pull
@@ -553,7 +553,7 @@ object PyReachability:
           case Some(cd) =>
             cd.methods.find(md => md.name == m && isInstanceMethod(md.flags.namespace)) match
               case Some(_) => found = Some((cn, m))
-              case None    => cur = cd.superClass
+              case None    => cur = cd.superClassName
           case None =>
             cur = None
       // Fall back to a transitive interface-default lookup. BFS through
@@ -571,7 +571,7 @@ object PyReachability:
           classByName.get(cn) match
             case Some(cd) =>
               cd.interfaces.foreach(queue += _)
-              hop = cd.superClass
+              hop = cd.superClassName
             case None => hop = None
         while queue.nonEmpty && found.isEmpty do
           val ifaceName = queue.removeHead()

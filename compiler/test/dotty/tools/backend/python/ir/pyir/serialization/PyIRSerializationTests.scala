@@ -43,13 +43,14 @@ class PyIRSerializationTests:
   private def wrapInClass(
       name:    String,
       methods: List[PyMethodDef],
-      fields:  List[PyFieldDef] = Nil
+      fields:     List[PyFieldDef]         = Nil,
+      superClass: Option[PyClassSuper]     = None
   ): PyClassDef =
     PyClassDef(
       name         = PyClassName(name),
       originalName = PyOriginalName.NoOriginalName,
       kind         = PyClassKind.Class,
-      superClass   = None,
+      superClass   = superClass,
       interfaces   = Nil,
       fields       = fields,
       methods      = methods,
@@ -120,7 +121,7 @@ class PyIRSerializationTests:
       name = cn,
       originalName = PyOriginalName.fromString("Bar"),
       kind = PyClassKind.Class,
-      superClass = Some(PyClassName.ObjectClass),
+      superClass = Some(PyClassSuper.Nominal(PyClassName.ObjectClass)),
       interfaces = Nil,
       fields = List(PyFieldDef(
         PyMemberFlags.empty, PyFieldName(cn, PySimpleFieldName("x")),
@@ -518,7 +519,7 @@ class PyIRSerializationTests:
       name = cn,
       originalName = PyOriginalName.fromString("Bar"),
       kind = PyClassKind.Class,
-      superClass = Some(PyClassName.ObjectClass),
+      superClass = Some(PyClassSuper.Nominal(PyClassName.ObjectClass)),
       interfaces = List(PyClassName("a.I"), PyClassName("a.J")),
       fields = List(field),
       methods = List(ctor, abstractMethod),
@@ -532,6 +533,25 @@ class PyIRSerializationTests:
     // Verify position pool round-trips a non-trivial position.
     assertEquals(SamplePos, cu.classes.head.pos)
     assertEquals(SamplePos, cu.classes.head.fields.head.pos)
+
+  @Test def externSuperClassRoundTrips(): Unit =
+    // PyClassSuper.Extern survives the wire (discriminator byte 2 +
+    // module string + path strings). Both single-element and multi-
+    // element paths, plus the empty-path "extends a bare module"
+    // shape, must come back identical.
+    for (mod, path) <- List(
+      ("mod",     List("Mod")),
+      ("numpy",   List("ndarray")),
+      ("a.b.c",   List("Outer", "Inner")),
+      ("builtins", Nil)
+    ) do
+      val cls = wrapInClass(
+        s"ExternSub_${mod}_${path.mkString("_")}",
+        Nil,
+        superClass = Some(PyClassSuper.Extern(mod, path))
+      )
+      val cu = roundTrip(List(cls))
+      assertEquals(s"extern super ($mod, $path)", cls, cu.classes.head)
 
   @Test def everyNamespaceRoundTrips(): Unit =
     for ns <- PyMemberNamespace.values do
@@ -592,7 +612,7 @@ class PyIRSerializationTests:
       pos = NoPos
     )
     val cls = PyClassDef(cn, PyOriginalName.fromString("Bar"), PyClassKind.Class,
-      Some(PyClassName.ObjectClass), Nil, List(field), List(ctor, m), NoPos)
+      Some(PyClassSuper.Nominal(PyClassName.ObjectClass)), Nil, List(field), List(ctor, m), NoPos)
 
     val classes = List(cls)
     val pyA = PyIREmitter.emitToString(classes, None)

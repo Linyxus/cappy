@@ -48,12 +48,34 @@ final case class PyClassDef(
     name:         PyClassName,
     originalName: PyOriginalName,
     kind:         PyClassKind,
-    superClass:   Option[PyClassName],
+    superClass:   Option[PyClassSuper],
     interfaces:   List[PyClassName],
     fields:       List[PyFieldDef],
     methods:      List[PyMethodDef],
     pos:          PyPosition
-)
+):
+  /** Convenience: the nominal name of `superClass` if it points to an
+   *  in-bundle or runtime-provided class. Returns `None` when there is
+   *  no superclass *or* when the superclass is a foreign Python class
+   *  (`PyClassSuper.Extern`). Code paths that build / walk the in-bundle
+   *  ancestor graph use this so foreign parents stay invisible to
+   *  linker/DCE/MRO machinery. */
+  def superClassName: Option[PyClassName] = superClass match
+    case Some(PyClassSuper.Nominal(name)) => Some(name)
+    case _                                 => None
+
+/** What a class extends. Either a nominal reference to another PyIR
+ *  class (Scala class or runtime-provided JDK root) or a *foreign*
+ *  Python class identified by Python module + dotted path. Foreign
+ *  parents are linker-opaque: they are never expected to resolve to a
+ *  PyClassDef anywhere in the bundle, never participate in reachability
+ *  walks, and bypass topological-emit ordering. They only manifest in
+ *  the emitter, where they render as `<module>.<class>` in the bases
+ *  list and the synthetic super-`__init__` chain. */
+sealed trait PyClassSuper
+object PyClassSuper:
+  final case class Nominal(name: PyClassName) extends PyClassSuper
+  final case class Extern(module: String, path: List[String]) extends PyClassSuper
 
 enum PyClassKind:
   case Class            // ordinary Scala class (also abstract classes — we

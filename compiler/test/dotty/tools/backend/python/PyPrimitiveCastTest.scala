@@ -240,7 +240,7 @@ class PyPrimitiveCastTest:
       name = name,
       originalName = PyOriginalName.NoOriginalName,
       kind = kind,
-      superClass = superClass,
+      superClass = superClass.map(PyClassSuper.Nominal.apply),
       interfaces = interfaces,
       fields = Nil,
       methods = methods,

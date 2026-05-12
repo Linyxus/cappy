@@ -407,8 +407,10 @@ object PyIREmitter:
       val seen = mutable.Set.empty[PyClassName]
       val queue = mutable.Queue.empty[PyClassName]
       // Seed with direct parents in the bases-list order so the choice
-      // matches Python's MRO walk for simple linearizations.
-      cls.superClass.foreach(queue.enqueue)
+      // matches Python's MRO walk for simple linearizations. Foreign
+      // Python parents (`PyClassSuper.Extern`) are opaque to us — we
+      // cannot inspect their methods, so we don't enqueue them.
+      cls.superClassName.foreach(queue.enqueue)
       cls.interfaces.foreach(queue.enqueue)
       while queue.nonEmpty do
         val n = queue.dequeue()
@@ -416,7 +418,7 @@ object PyIREmitter:
           if classDefinesHash(n) then return Some(n)
           classByName.get(n) match
             case Some(c) =>
-              c.superClass.foreach(queue.enqueue)
+              c.superClassName.foreach(queue.enqueue)
               c.interfaces.foreach(queue.enqueue)
             case None =>
               PyIRRuntime.providedClass(n).foreach { pc =>
@@ -511,8 +513,18 @@ object PyIREmitter:
         case PyClassKind.Interface =>
           "None"
         case _ =>
-          val superName = cls.superClass.getOrElse(PyClassName.ObjectClass)
-          "\"" + escapeString(superName.nameString) + "\""
+          val literal = cls.superClass match
+            case Some(PyClassSuper.Nominal(name)) => name.nameString
+            case Some(PyClassSuper.Extern(mod, path)) =>
+              // Foreign Python parent — diagnostics-only metadata. We
+              // record the Python-side dotted name (e.g. `mod.Mod`) so
+              // `Class.getName()` / `_scpy_register_class` introspection
+              // sees something meaningful, even though the runtime
+              // never reverse-resolves it back to a Scala class.
+              if path.isEmpty then mod else s"$mod.${path.mkString(".")}"
+            case None =>
+              PyClassName.ObjectClass.nameString
+          "\"" + escapeString(literal) + "\""
 
     private def classInterfacesLiteral(interfaces: List[PyClassName]): String =
       if interfaces.isEmpty then "()"
@@ -542,7 +554,10 @@ object PyIREmitter:
           ()
         else
           inProgress += cls.name
-          val bases = cls.superClass.toList ::: cls.interfaces
+          // Foreign Python parents impose no in-bundle ordering edge:
+          // they will never resolve to a class we emit, so they cannot
+          // require any predecessor.
+          val bases = cls.superClassName.toList ::: cls.interfaces
           for base <- bases do
             classesByName.get(base).foreach(visit)
           inProgress -= cls.name
@@ -558,6 +573,19 @@ object PyIREmitter:
         // exception or `raise` / `except Exception` stop working.
         return List("Exception")
 
+      // Foreign Python parent: render via the existing extern-import
+      // alias mechanism. The resulting `<alias>` (or `<alias>.<sub>`)
+      // becomes the sole base, since extern parents are not subject to
+      // the nominal-ancestor de-duplication below — we can't see their
+      // MRO. Interfaces still come from the nominal world.
+      cls.superClass match
+        case Some(PyClassSuper.Extern(mod, path)) =>
+          val externBase = externClassRefExpr(mod, path)
+          val ifaceBases = cls.interfaces.filter(knownClasses.contains).map(classIdentifier)
+          val bases = externBase :: ifaceBases
+          return bases.distinct
+        case _ => ()
+
       // Scala superclass plus any interface whose Python class actually
       // exists in the bundle (or is runtime-provided). Traits without a
       // Python representation — scala stdlib internals like
@@ -567,7 +595,7 @@ object PyIREmitter:
       // interfaces like `java.util.function.Predicate`) must flow through
       // so anonymous SAM expansions can `super()` into the default
       // implementations.
-      val directSuper = cls.superClass.toList.filterNot(_ == PyClassName.ObjectClass)
+      val directSuper = cls.superClassName.toList.filterNot(_ == PyClassName.ObjectClass)
       val ifaceBases  = cls.interfaces.filter(knownClasses.contains)
       val rawBases    = (directSuper ::: ifaceBases).distinct
 
@@ -579,6 +607,17 @@ object PyIREmitter:
       val redundant = rawBases.flatMap(other => transitiveAncestors(other) - other).toSet
       val bases = rawBases.filterNot(redundant.contains).map(classIdentifier)
       if bases.isEmpty then List("_scpy_Object") else bases
+
+    /** Build the Python-side expression that references a foreign class
+     *  identified by `module` + dotted `path`. Routes through the same
+     *  alias machinery as `PyExternalRef` rendering (see
+     *  `exprToStr(PyExternalRef)`), so a single `import` line is shared
+     *  between a class's bases-list, its super-`__init__` call, and any
+     *  member access elsewhere in the bundle. */
+    private def externClassRefExpr(module: String, path: List[String]): String =
+      val (imp, rest) = importOf(module, path)
+      val alias = bindExternAlias(imp)
+      if rest.isEmpty then alias else s"$alias.${rest.mkString(".")}"
 
     /** True if `cls` is `java.lang.Throwable` or transitively extends it,
      *  following both in-bundle super/interface links and the
@@ -596,7 +635,8 @@ object PyIREmitter:
         if seen.add(n) then
           classByName.get(n) match
             case Some(cls) =>
-              cls.superClass.foreach(walk)
+              // Foreign Python parents are opaque to us; never follow them.
+              cls.superClassName.foreach(walk)
               cls.interfaces.foreach(walk)
             case None =>
               PyIRRuntime.providedClass(n).foreach { pc =>
@@ -1275,6 +1315,17 @@ object PyIREmitter:
       else (FromImport(module, path.head), path.tail)
 
     private def collectExternAliases(classes: List[PyClassDef]): Unit =
+      // Foreign Python parents need their module imported so
+      // `class Foo(<alias>.<Class>):` resolves at Python-load time. The
+      // alias is interned via `bindExternAlias`, sharing the import with
+      // any `PyExternalRef` inside method bodies that targets the same
+      // module.
+      for cls <- classes do
+        cls.superClass match
+          case Some(PyClassSuper.Extern(mod, path)) =>
+            val (imp, _) = importOf(mod, path)
+            bindExternAlias(imp)
+          case _ => ()
       for
         cls <- classes
         method <- cls.methods

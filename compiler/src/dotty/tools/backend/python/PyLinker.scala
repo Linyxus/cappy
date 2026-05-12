@@ -229,7 +229,7 @@ object PyLinker:
       def mark(cls: PyClassName): Unit =
         if owners.add(cls) then
           byName.get(cls).foreach { c =>
-            c.superClass.foreach(mark)
+            c.superClassName.foreach(mark)
             c.interfaces.foreach(mark)
           }
       classes.iterator.map(_.name).filter(reach.isInstantiated).foreach(mark)
@@ -561,7 +561,7 @@ object PyLinker:
       val ordered = mutable.ListBuffer.empty[PyClassDef]
       def visit(cls: PyClassDef): Unit =
         if visited.add(cls.name) then
-          cls.superClass.flatMap(byName.get).foreach(visit)
+          cls.superClassName.flatMap(byName.get).foreach(visit)
           ordered += cls
       classes.foreach(visit)
       ordered.toList
@@ -617,7 +617,12 @@ object PyLinker:
 
           cls.name -> ClassInfo(
             kind = cls.kind,
-            superClass = cls.superClass,
+            // Foreign Python parents (`PyClassSuper.Extern`) are
+            // intentionally invisible to in-bundle ancestor walks: the
+            // linker never expects them to resolve to a ClassInfo, and
+            // method-resolution / hash-lookup machinery would loop or
+            // mis-fire if it saw them. `superClassName` drops them.
+            superClass = cls.superClassName,
             interfaces = cls.interfaces,
             fieldsByName = collectFirsts(cls.fields)(_.name),
             methodsByName = collectFirsts(cls.methods)(_.name),
@@ -698,7 +703,10 @@ object PyLinker:
           ()
 
     private def validateClass(cls: PyClassDef, classInfos: Map[PyClassName, ClassInfo]): Unit =
-      cls.superClass.foreach { superClass =>
+      // Only nominal superclasses must resolve to a `ClassInfo`; an
+      // `Extern` parent is a foreign Python class, never present in the
+      // bundle by design.
+      cls.superClassName.foreach { superClass =>
         requireClass(superClass, cls.pos, classInfos, s"superclass '${superClass.nameString}'")
       }
       cls.interfaces.foreach { iface =>
