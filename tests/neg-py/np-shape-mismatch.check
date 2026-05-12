@@ -1,0 +1,46 @@
+-- [E172] Type Error: tests/neg-py/np-shape-mismatch.scala:41:27 -------------------------------------------------------
+41 |  val f = np.zeros("hello")        // error
+   |                           ^
+   |    No given instance of type np.IsShape[String] was found for a context parameter of method zeros in object np.
+   |    I found:
+   |
+   |        np.IsShape.given_IsShape_T[T]
+   |
+   |    But given instance given_IsShape_T in object IsShape does not match type np.IsShape[String].
+-- [E172] Type Error: tests/neg-py/np-shape-mismatch.scala:42:28 -------------------------------------------------------
+42 |  val g = np.zeros((2, "x"))       // error
+   |                            ^
+   |No given instance of type np.IsShape[(Int, String)] was found for a context parameter of method zeros in object np.
+   |I found:
+   |
+   |    np.IsShape.given_IsShape_T[(Int, String)](/* missing */summon[Tuple.Union[(Int, String)] <:< Int])
+   |
+   |But no implicit values were found that match type Tuple.Union[(Int, String)] <:< Int.
+-- [E172] Type Error: tests/neg-py/np-shape-mismatch.scala:43:30 -------------------------------------------------------
+43 |  val h = np.zeros((1.0, 2.0))     // error
+   |                              ^
+   |No given instance of type np.IsShape[(Double, Double)] was found for a context parameter of method zeros in object np.
+   |I found:
+   |
+   |    np.IsShape.given_IsShape_T[(Double, Double)](/* missing */summon[Tuple.Union[(Double, Double)] <:< Int])
+   |
+   |But no implicit values were found that match type Tuple.Union[(Double, Double)] <:< Int.
+-- [E172] Type Error: tests/neg-py/np-shape-mismatch.scala:44:23 -------------------------------------------------------
+44 |  val i = np.zeros(3.5)            // error
+   |                       ^
+   |    No given instance of type np.IsShape[Double] was found for a context parameter of method zeros in object np.
+   |    I found:
+   |
+   |        np.IsShape.given_IsShape_T[T]
+   |
+   |    But given instance given_IsShape_T in object IsShape does not match type np.IsShape[Double].
+-- [E172] Type Error: tests/neg-py/np-shape-mismatch.scala:45:24 -------------------------------------------------------
+45 |  val j = np.zeros(true)           // error
+   |                        ^
+   |   No given instance of type np.IsShape[Boolean] was found for a context parameter of method zeros in object np.
+   |   I found:
+   |
+   |       np.IsShape.given_IsShape_T[T]
+   |
+   |   But given instance given_IsShape_T in object IsShape does not match type np.IsShape[Boolean].
+there was 1 feature warning; re-run with -feature for details

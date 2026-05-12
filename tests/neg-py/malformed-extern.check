@@ -1,0 +1,4 @@
+-- Error: tests/neg-py/malformed-extern.scala:7:4 ----------------------------------------------------------------------
+7 |def someFunc(): Unit = native // error
+  |    ^
+  |`@extern` annotation requires at least one string literal argument (the Python module name); computed or non-literal arguments are not supported

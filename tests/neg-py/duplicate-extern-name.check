@@ -1,0 +1,6 @@
+-- Error: tests/neg-py/duplicate-extern-name.scala:9:6 -----------------------------------------------------------------
+9 |  def second(value: Any): Unit = native // error
+  |      ^
+  |      Facade member method second resolves to Python name 'print',
+  |      which collides with method first in the same facade.
+  |      Python has no overloading; use `@name` to disambiguate.

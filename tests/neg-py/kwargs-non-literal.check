@@ -1,0 +1,4 @@
+-- Error: tests/neg-py/kwargs-non-literal.scala:12:43 ------------------------------------------------------------------
+12 |  d.applyDynamicNamed("print")(("", "hi"), (keyName, "!!")) // error
+   |                                           ^^^^^^^^^^^^^^^
+   |scala.python.PyDynamic.applyDynamicNamed requires literal-string keyword names; runtime-computed names are not supported.
