@@ -1,0 +1,5 @@
+first(a,2):3
+first(a,99):-1
+first(b,0):1
+sum(a):19
+sum(b):6

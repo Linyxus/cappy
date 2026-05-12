@@ -1,0 +1,12 @@
+bump:zero
+vp(0):20
+calls-after-vp0:1
+bump:other
+vp(7):60
+calls-after-vp7:1
+bump:s-zero
+stmt:100
+calls-after-sp0:1
+bump:s-other
+stmt:200
+calls-after-sp5:1

@@ -1,0 +1,15 @@
+int(0):7
+int(9):11
+long(0):7
+long(9):9000000000
+double(0):1.5
+double(9):-2.25
+bool(0):true
+bool(9):false
+str(0):zero
+str(9):other
+nul(0)-is-null:true
+nul(9)-is-null:false
+nul(9):non-null
+cc(0):0,0
+cc(9):1,2
