@@ -1,0 +1,6 @@
+cappy> Map("a" -> 1, "b" -> 2)
+val res0: Map[String, Int] = Map(a -> 1, b -> 2)
+cappy> Map("a" -> 1).get("a")
+val res1: Option[Int] = Some(1)
+cappy> Map("a" -> 1).size
+val res2: Int = 1

@@ -1,0 +1,6 @@
+cappy> Set(1, 2, 3)
+val res0: Set[Int] = Set(1, 2, 3)
+cappy> Set(1, 2, 3).contains(2)
+val res1: Boolean = true
+cappy> Set(1, 2, 3).size
+val res2: Int = 3

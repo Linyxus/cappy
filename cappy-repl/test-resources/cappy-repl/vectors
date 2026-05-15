@@ -1,0 +1,6 @@
+cappy> Vector(1, 2, 3)
+val res0: Vector[Int] = Vector(1, 2, 3)
+cappy> Vector(1, 2, 3).head
+val res1: Int = 1
+cappy> Vector(1, 2, 3).length
+val res2: Int = 3

@@ -1,0 +1,8 @@
+cappy> (1, 2)
+val res0: (Int, Int) = (1,2)
+cappy> (1, "two", 3.0)
+val res1: (Int, String, Double) = (1,two,3.0)
+cappy> (1, 2)._1
+val res2: Int = 1
+cappy> (1, 2)._2
+val res3: Int = 2

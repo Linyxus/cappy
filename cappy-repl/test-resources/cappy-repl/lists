@@ -1,0 +1,10 @@
+cappy> List(1, 2, 3)
+val res0: List[Int] = List(1, 2, 3)
+cappy> List(1, 2, 3).map(_ * 2)
+val res1: List[Int] = List(2, 4, 6)
+cappy> List(1, 2, 3).head
+val res2: Int = 1
+cappy> List(1, 2, 3).length
+val res3: Int = 3
+cappy> Nil
+val res4: collection.immutable.Nil.type = List()

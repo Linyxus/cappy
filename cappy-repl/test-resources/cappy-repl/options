@@ -1,0 +1,4 @@
+cappy> Some(5)
+val res0: Some[Int] = Some(5)
+cappy> None
+val res1: None.type = None
