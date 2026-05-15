@@ -1,0 +1,3 @@
+cappy> import java.util.ArrayList
+cappy> new ArrayList[Int]()
+val res0: ArrayList[Int] = []

@@ -41,10 +41,15 @@ class CappyReplCompiler extends Compiler:
   // Use a no-op placeholder so the pre-parsed tree we attached in
   // `compile()` (block-stat-seq + ReplState attachment) survives into
   // CappyReplPhase. Same trick scala3-repl uses (`repl.Parser`).
+  //
+  // `CappyCollectTopLevelImports` runs right after Typer to harvest
+  // user-typed `import` statements from the wrapper module; the driver
+  // re-applies them in subsequent runs' root context.
   override protected def frontendPhases: List[List[Phase]] = List(
     List(new CappyParserPlaceholder),
     List(new CappyReplPhase),
     List(new TyperPhase(addRootImports = false)),
+    List(new CappyCollectTopLevelImports),
     List(new PostTyper),
   )
 
@@ -57,17 +62,25 @@ class CappyReplCompiler extends Compiler:
           .withRootImports
           .fresh.setOwner(defn.EmptyPackageClass): Context
         state.validObjectIndexes.foldLeft(rootCtx)((c, i) =>
-          importWrapper(i)(using c))
+          importWrapper(i, state)(using c))
     run.suppressions.initSuspendedMessages(state.context.run)
     run
 
-  /** Add `import cappy_line_<id>.*` to the given context. */
-  private def importWrapper(id: Int)(using Context): Context =
+  /** Add `import cappy_line_<id>.*` to the given context, then re-apply
+   *  every user-typed `import` we saw inside that wrapper (recovered
+   *  by `CappyCollectTopLevelImports` at compile time and stored on
+   *  the state). */
+  private def importWrapper(id: Int, state: CappyReplState)(using Context): Context =
     val name = CappyReplCompiler.wrapperTermName(id)
     val path = nme.EMPTY_PACKAGE ++ "." ++ name
-    ctx.fresh
+    val ctxWithWrapper = ctx.fresh
       .setNewScope
       .withRootImports(RootRef(() => requiredModuleRef(path)) :: Nil)
+    val userImports = state.imports.getOrElse(id, Nil)
+    if userImports.isEmpty then ctxWithWrapper
+    else userImports.foldLeft(ctxWithWrapper.fresh.setNewScope) { (c, imp) =>
+      c.importContext(imp, imp.symbol(using c))
+    }
 
   /** Compile one input. The parsed trees are attached to the unit; the
    *  `CappyReplPhase` reads the [[CappyReplCompiler.ReplStateKey]]
@@ -182,3 +195,31 @@ final class CappyReplPhase extends Phase:
     val emptyPkg = Ident(nme.EMPTY_PACKAGE).withSpan(span)
     PackageDef(emptyPkg, List(mod)).withSpan(span)
 end CappyReplPhase
+
+/** Post-Typer phase: harvest user-typed `import` statements from the
+ *  wrapper module's body so the driver can re-apply them in the next
+ *  run's root context. Ported from `dotty.tools.repl.CollectTopLevelImports`. */
+final class CappyCollectTopLevelImports extends Phase:
+  import dotty.tools.dotc.ast.tpd.*
+
+  override def phaseName: String = "cappyCollectTopLevelImports"
+
+  private var myImports: List[Import] = Nil
+  def imports: List[Import] = myImports
+
+  override def run(using Context): Unit =
+    val tree = ctx.compilationUnit.tpdTree
+    myImports = tree match
+      case PackageDef(_, stats) =>
+        // The wrapper is an `object cappy_line_N`; post-typer expands
+        // it to a `ValDef` (the module's term side) and a `TypeDef`
+        // for the module class. Walk the module class's Template body
+        // and collect every top-level `Import` tree.
+        stats.flatMap {
+          case td: TypeDef => td.rhs match
+            case tmpl: Template => tmpl.body.collect { case imp: Import => imp }
+            case _              => Nil
+          case _ => Nil
+        }
+      case _ => Nil
+end CappyCollectTopLevelImports

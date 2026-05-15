@@ -205,7 +205,16 @@ class CappyReplDriver(
         case Left(errs) =>
           (formatErrors(errs, runCtx), state)
 
-        case Right((unit, newState)) =>
+        case Right((unit, newState0)) =>
+          // Collect any user-typed `import X` statements from the just-
+          // compiled wrapper so the next run sees them at root scope.
+          val collectedImports = collectImportsFrom(runCtx)
+          val newState =
+            if collectedImports.isEmpty then newState0
+            else newState0.copy(
+              imports = newState0.imports + (newState0.objectIndex -> collectedImports)
+            )
+
           val wrapperPyClass = sinkBuffer.toList match
             case Nil =>
               // Nothing emitted: e.g. user typed only an import or
@@ -252,7 +261,54 @@ class CappyReplDriver(
             catch case ex: dotty.tools.backend.python.PyLinkingException =>
               return (s"link error:\n${ex.getMessage}", state)
 
-          val newClasses = bundle.classes.filterNot(c => emittedClasses.contains(c.name))
+          // Restore each kept class's methods/fields from its original
+          // input form. The linker's method-level DCE is too aggressive
+          // for the REPL: input N may emit a class with only the
+          // methods it used, then input M > N references a different
+          // method and runtime-fails. Restoring full methods means a
+          // class is emitted once with all its members; Python only
+          // resolves method bodies at call time, so methods that
+          // reference classes not in this bundle are harmless until
+          // actually invoked.
+          //
+          // BUT: clinit (static field initializer) bodies run at emit
+          // time via the `# -- @static field initializers --` block,
+          // which DOES trigger NameErrors if their body references
+          // unbundled classes. So we restore everything EXCEPT
+          // resurrecting clinits that the linker pruned: if the
+          // linker's `keptCls` lacked a clinit method, we strip the
+          // clinit from the restored methods too.
+          val allInputClasses: Map[
+            dotty.tools.backend.python.ir.pyir.PyClassName, PyClassDef
+          ] =
+            (allClasses.iterator ++ supportInputs.iterator.flatMap(_.classes))
+              .map(c => c.name -> c).toMap
+
+          import dotty.tools.backend.python.ir.pyir.{PyMethodDef, PyMemberNamespace}
+          def isInitTime(m: PyMethodDef): Boolean =
+            m.name.simple.isStaticInit ||
+              m.flags.namespace == PyMemberNamespace.Constructor
+
+          // Restore non-init-time methods (regular instance/static
+          // methods). Init-time methods — constructors and `<clinit>` —
+          // are kept ONLY in the linker-pruned form, because their
+          // bodies run via `_scpy_ensure` at module-load time; if we
+          // restored their unreached references, those would NameError
+          // immediately. Non-init methods only resolve their references
+          // at call time, so restored unreached bodies stay harmless
+          // unless the user actually invokes them.
+          val expanded: List[PyClassDef] = bundle.classes.map { keptCls =>
+            allInputClasses.get(keptCls.name) match
+              case Some(original) =>
+                val keptInitTime = keptCls.methods.filter(isInitTime)
+                val restoredRegular = original.methods.filterNot(isInitTime)
+                val mergedMethods = keptInitTime ++ restoredRegular
+                keptCls.copy(methods = mergedMethods, fields = original.fields)
+              case None => keptCls
+          }
+          val alreadyEmitted: Set[dotty.tools.backend.python.ir.pyir.PyClassName] =
+            emittedClasses.keysIterator.toSet
+          val newClasses = expanded.filterNot(c => alreadyEmitted.contains(c.name))
           // Closure carriers reference `scala.FunctionN` classes. Emit
           // them once on the first increment that brings any FunctionN
           // arity in, then never again — re-emitting would shadow
@@ -265,12 +321,21 @@ class CappyReplDriver(
           val needsCarriers = incomingFunctionN && !closureCarriersEmitted
           if needsCarriers then closureCarriersEmitted = true
 
+          // Pass the FULL bundle so the emitter's
+          // `classByName` / `routeToModuleVar` sees every class —
+          // critical for `_scpy_mod_<name>__` references on classes
+          // emitted in earlier inputs. `skipDefinitionsFor` tells the
+          // emitter to skip class-def / singleton-binding / clinit
+          // emission for classes already in Python.
           val emittedPy = PyIREmitter.emitToString(
-            newClasses,
+            expanded,
             mainEntry              = None,
             includePreamble        = false,
-            includeClosureCarriers = needsCarriers
+            includeClosureCarriers = needsCarriers,
+            skipDefinitionsFor     = alreadyEmitted
           )
+
+
           for c <- newClasses do emittedClasses(c.name) = c
 
           // Locate the wrapper symbol so rendering can read its info.
@@ -296,6 +361,14 @@ class CappyReplDriver(
     val (output, newState) = run(input)
     if output.nonEmpty then out.println(output)
     newState
+
+  /** Pull the typed imports out of the most recent run's
+   *  [[CappyCollectTopLevelImports]] phase. Returns Nil if the phase
+   *  didn't run (e.g. the compile aborted) or saw no imports. */
+  private def collectImportsFrom(runCtx: Context): List[tpd.Import] =
+    dotty.tools.dotc.core.Phases.unfusedPhases(using runCtx).collectFirst {
+      case p: CappyCollectTopLevelImports => p.imports
+    }.getOrElse(Nil)
 
   private def findWrapperSymbol(tpdTree: tpd.Tree, objectIndex: Int)(using Context): Option[Symbol] =
     val wrapperName = CappyReplCompiler.wrapperTermName(objectIndex)
@@ -341,11 +414,16 @@ class CappyReplDriver(
        |def _cappy_lookup_accessor(mod, simple_name):
        |    # Scala val accessors compile to a Python method named
        |    # `<simple>__<paramRefs>__<resultRef>` (empty paramRefs for vals).
-       |    # Find the no-arg accessor by simple-name prefix.
+       |    # The val also leaves a raw field with the simple name on the
+       |    # instance. We prefer the encoded getter so we go through the
+       |    # JVM-style accessor (which respects lazy initialization,
+       |    # unboxing, etc.) and only fall back to the raw field when no
+       |    # encoded getter exists.
        |    inst = _scpy_module_value(mod)
        |    prefix = simple_name + '__'
+       |    # First pass: encoded suffixed getter (preferred).
        |    for n in dir(inst):
-       |        if n == simple_name or n.startswith(prefix):
+       |        if n.startswith(prefix):
        |            attr = getattr(inst, n, None)
        |            if callable(attr):
        |                try:
@@ -354,6 +432,15 @@ class CappyReplDriver(
        |                    continue
        |            else:
        |                return attr
+       |    # Second pass: bare simple name (raw field / dunder-name method).
+       |    if simple_name in dir(inst):
+       |        attr = getattr(inst, simple_name, None)
+       |        if callable(attr):
+       |            try:
+       |                return attr()
+       |            except TypeError:
+       |                return None
+       |        return attr
        |    return None
        |
        |def _cappy_render_val(dcl, mod, simple_name):

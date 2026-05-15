@@ -1,0 +1,2 @@
+cappy> import scala.collection.mutable.Buffer; Buffer(1, 2, 3)
+val res0: collection.mutable.Buffer[Int] = ArrayBuffer(1, 2, 3)

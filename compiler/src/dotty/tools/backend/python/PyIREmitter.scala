@@ -36,18 +36,31 @@ object PyIREmitter:
   val Prefix: String = "_scpy_"
 
   /** True iff `cls` will receive a `_scpy_mod_*_` singleton binding in
-   *  the emitted bundle. The singleton is only allocatable when the
-   *  module class has a no-arg constructor — inner module classes (e.g.
-   *  `object Branch` inside a trait) take an `_outer` argument and so
-   *  have no top-level singleton instance. The `emitPreamble` filter,
-   *  the `PySelectStatic` / `PyApplyStatic` / `PyLoadModule` routing in
-   *  this emitter, and the static-forwarder generation in GenPython all
-   *  must agree on this predicate, otherwise the bundle ends up with
-   *  references to `_scpy_mod_*_` names that nothing binds. */
+   *  the emitted bundle.
+   *
+   *  Eligibility: `cls` is a `ModuleClass` AND has no constructor that
+   *  requires arguments. The "no arg-taking ctor" form excludes inner
+   *  module classes (e.g. `object Branch` inside a trait) which take an
+   *  `_outer` argument and therefore have no allocatable singleton; it
+   *  INCLUDES top-level module classes whether their no-arg `<init>`
+   *  has been kept or pruned by the linker — `_scpy_ensure` (in
+   *  `PyIRRuntime.content`) gracefully no-ops when the no-arg ctor
+   *  helper is absent, so a binding without a ctor still produces a
+   *  valid lazy module proxy (its members come from the synthesized
+   *  `__init__` JVM-style field zero-init alone). Emitting the binding
+   *  unconditionally for top-level module classes is required for the
+   *  Cappy REPL's incremental emission: an early input may keep a
+   *  module class with a pruned ctor; a later input then references
+   *  `_scpy_mod_<name>_`, which must already be defined.
+   *
+   *  The `PySelectStatic` / `PyApplyStatic` / `PyLoadModule` routing in
+   *  this emitter, the static-forwarder generation in GenPython, and
+   *  the runtime preamble all agree on this predicate; the bundle is
+   *  guaranteed to bind every `_scpy_mod_*_` name it references. */
   def hasModuleSingleton(cls: PyClassDef): Boolean =
     cls.kind == PyClassKind.ModuleClass &&
-      cls.methods.exists(m =>
-        m.flags.namespace == PyMemberNamespace.Constructor && m.args.isEmpty
+      !cls.methods.exists(m =>
+        m.flags.namespace == PyMemberNamespace.Constructor && m.args.nonEmpty
       )
 
   /** Entry point for a "main" method: the class where it lives plus
@@ -79,9 +92,10 @@ object PyIREmitter:
       mainEntry:              Option[MainEntry],
       out:                    PrintWriter,
       includePreamble:        Boolean = true,
-      includeClosureCarriers: Boolean = true
+      includeClosureCarriers: Boolean = true,
+      skipDefinitionsFor:     Set[PyClassName] = Set.empty
   ): Unit =
-    val e = new Emitter(out, includePreamble, includeClosureCarriers)
+    val e = new Emitter(out, includePreamble, includeClosureCarriers, skipDefinitionsFor)
     e.emitBundle(classes, mainEntry)
 
   /** Convenience for producing the Python source as a `String`. */
@@ -89,11 +103,12 @@ object PyIREmitter:
       classes:                List[PyClassDef],
       mainEntry:              Option[MainEntry],
       includePreamble:        Boolean = true,
-      includeClosureCarriers: Boolean = true
+      includeClosureCarriers: Boolean = true,
+      skipDefinitionsFor:     Set[PyClassName] = Set.empty
   ): String =
     val buf = new java.io.StringWriter()
     val pw  = new PrintWriter(buf)
-    try emit(classes, mainEntry, pw, includePreamble, includeClosureCarriers)
+    try emit(classes, mainEntry, pw, includePreamble, includeClosureCarriers, skipDefinitionsFor)
     finally pw.flush()
     buf.toString
 
@@ -104,7 +119,8 @@ object PyIREmitter:
   private class Emitter(
       out:                    PrintWriter,
       includePreamble:        Boolean = true,
-      includeClosureCarriers: Boolean = true
+      includeClosureCarriers: Boolean = true,
+      skipDefinitionsFor:     Set[PyClassName] = Set.empty
   ):
     private var indentLevel: Int = 0
     private val indentStr: String = "    "
@@ -169,11 +185,15 @@ object PyIREmitter:
       // resolves `Bar` by name — forward references fail with
       // `NameError`.
       for cls <- orderedClasses do
-        line(s"# -- ${cls.name.nameString} --")
-        emptyLine()
-        emitClassDef(cls)
-        emitClassRegistration(cls)
-        emptyLine()
+        // `skipDefinitionsFor` lets the REPL pass the full bundle for
+        // routing/name-resolution while suppressing re-emission of class
+        // skeletons it has already sent to the live subprocess.
+        if !skipDefinitionsFor.contains(cls.name) then
+          line(s"# -- ${cls.name.nameString} --")
+          emptyLine()
+          emitClassDef(cls)
+          emitClassRegistration(cls)
+          emptyLine()
 
       // The `_scpy_FnN` carriers extend `_scpy_Fn` (defined in the
       // preamble) plus the nominal `scala.FunctionN`. In REPL-increment
@@ -215,7 +235,9 @@ object PyIREmitter:
       // argument and can't be instantiated without one. Detect by
       // looking for a no-arg constructor — top-level Scala objects have
       // one; inner objects don't.
-      val moduleClasses = orderedClasses.filter(PyIREmitter.hasModuleSingleton)
+      val moduleClasses = orderedClasses
+        .filter(PyIREmitter.hasModuleSingleton)
+        .filterNot(c => skipDefinitionsFor.contains(c.name))
 
       if moduleClasses.nonEmpty then
         // Lazy module init: every singleton is allocated via `__new__`
@@ -246,9 +268,11 @@ object PyIREmitter:
       // module-singleton pass: the bundle is in steady state, so any
       // static-init reference resolves cleanly through the normal
       // lazy-module path.
-      val classesNeedingStaticInit = orderedClasses.flatMap { cls =>
-        staticInitMethodOf(cls).map(m => (cls, m))
-      }
+      val classesNeedingStaticInit = orderedClasses
+        .filterNot(c => skipDefinitionsFor.contains(c.name))
+        .flatMap { cls =>
+          staticInitMethodOf(cls).map(m => (cls, m))
+        }
       if classesNeedingStaticInit.nonEmpty then
         line("# -- @static field initializers --")
         emptyLine()

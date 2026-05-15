@@ -1,0 +1,3 @@
+cappy> import scala.collection.mutable.{Buffer as Buf}
+cappy> Buf(1)
+val res0: Buf[Int] = ArrayBuffer(1)
