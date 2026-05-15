@@ -270,6 +270,10 @@ object PyIRPrinter:
       case PyDictValue(entries) =>
         val pairs = entries.map((k, v) => s"${exprString(k)}: ${exprString(v)}")
         s"dict(${pairs.mkString(", ")})"
+      case PyListValue(elems) =>
+        s"list(${elems.map(exprString).mkString(", ")})"
+      case PyRawTupleValue(elems) =>
+        s"pytuple(${elems.map(exprString).mkString(", ")})"
       // Operators
       case PyUnaryOp(op, lhs) =>
         s"$op(${exprString(lhs)})"

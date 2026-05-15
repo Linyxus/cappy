@@ -50,8 +50,13 @@ object PyIRFormat:
    *  module + dotted path) so a Scala class can extend an `@extern`
    *  Python class. Older readers will reject `.pyir` containing the
    *  new discriminator.
+   *
+   *  Bumped to 4 when `PyListValue` (`0x55`) and `PyRawTupleValue`
+   *  (`0x56`) were added so the Python backend can lower
+   *  `scala.python.PyList` and `scala.python.PyTuple` factory calls to
+   *  Python list and bare tuple literals.
    */
-  final val MinorVersion: Int = 3
+  final val MinorVersion: Int = 4
 
   /** Packed `(major << 8) | minor`, written as a big-endian u16. */
   final val FormatVersion: Int = (MajorVersion << 8) | MinorVersion

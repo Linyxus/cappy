@@ -233,6 +233,120 @@ final class PyDefinitions:
   def PyMap_values(using Context): Symbol       = PyMap_valuesR.symbol
   def PyMap_items(using Context): Symbol        = PyMap_itemsR.symbol
 
+  // ---------------------------------------------------------------
+  //  PyList intrinsics
+  //
+  //  When `-scalapy` is on, the backend lowers `scala.python.PyList`
+  //  values to native Python lists. The symbols below identify the
+  //  call sites that get rewritten in `GenPython.genPyListCallOpt`.
+  // ---------------------------------------------------------------
+
+  @threadUnsafe lazy val PyListClassType: TypeRef = requiredClassRef("scala.python.PyList")
+  def PyListClass(using Context): ClassSymbol = PyListClassType.symbol.asClass
+
+  @threadUnsafe lazy val PyListModuleRef = requiredModuleRef("scala.python.PyList")
+  def PyListModule(using Context): Symbol = PyListModuleRef.symbol
+
+  private def pyListClassMethod(name: String)(using Context): TermRef =
+    PyListClass.requiredMethodRef(name)
+  private def pyListModuleMethod(name: String)(using Context): TermRef =
+    PyListModule.requiredMethodRef(name)
+
+  @threadUnsafe lazy val PyList_emptyR        = pyListModuleMethod("empty")
+  @threadUnsafe lazy val PyList_applyFactoryR = pyListModuleMethod("apply")
+  @threadUnsafe lazy val PyList_sizeR         = pyListClassMethod("size")
+  @threadUnsafe lazy val PyList_isEmptyR      = pyListClassMethod("isEmpty")
+  @threadUnsafe lazy val PyList_nonEmptyR     = pyListClassMethod("nonEmpty")
+  @threadUnsafe lazy val PyList_applyR        = pyListClassMethod("apply")
+  @threadUnsafe lazy val PyList_updateR       = pyListClassMethod("update")
+  @threadUnsafe lazy val PyList_appendR       = pyListClassMethod("append")
+  @threadUnsafe lazy val PyList_prependR      = pyListClassMethod("prepend")
+  @threadUnsafe lazy val PyList_insertR       = pyListClassMethod("insert")
+  @threadUnsafe lazy val PyList_removeAtR     = pyListClassMethod("removeAt")
+  @threadUnsafe lazy val PyList_removeR       = pyListClassMethod("remove")
+  @threadUnsafe lazy val PyList_clearR        = pyListClassMethod("clear")
+  @threadUnsafe lazy val PyList_extendR       = pyListClassMethod("extend")
+  @threadUnsafe lazy val PyList_containsR     = pyListClassMethod("contains")
+  @threadUnsafe lazy val PyList_indexOfR      = pyListClassMethod("indexOf")
+  @threadUnsafe lazy val PyList_countR        = pyListClassMethod("count")
+  @threadUnsafe lazy val PyList_copyR         = pyListClassMethod("copy")
+  @threadUnsafe lazy val PyList_concatR       = pyListClassMethod("concat")
+  @threadUnsafe lazy val PyList_sliceR        = pyListClassMethod("slice")
+  @threadUnsafe lazy val PyList_sortR         = pyListClassMethod("sort")
+  @threadUnsafe lazy val PyList_reverseR      = pyListClassMethod("reverse")
+  @threadUnsafe lazy val PyList_iteratorR     = pyListClassMethod("iterator")
+
+  def PyList_empty(using Context): Symbol        = PyList_emptyR.symbol
+  def PyList_applyFactory(using Context): Symbol = PyList_applyFactoryR.symbol
+  def PyList_size(using Context): Symbol         = PyList_sizeR.symbol
+  def PyList_isEmpty(using Context): Symbol      = PyList_isEmptyR.symbol
+  def PyList_nonEmpty(using Context): Symbol     = PyList_nonEmptyR.symbol
+  def PyList_apply(using Context): Symbol        = PyList_applyR.symbol
+  def PyList_update(using Context): Symbol       = PyList_updateR.symbol
+  def PyList_append(using Context): Symbol       = PyList_appendR.symbol
+  def PyList_prepend(using Context): Symbol      = PyList_prependR.symbol
+  def PyList_insert(using Context): Symbol       = PyList_insertR.symbol
+  def PyList_removeAt(using Context): Symbol     = PyList_removeAtR.symbol
+  def PyList_remove(using Context): Symbol       = PyList_removeR.symbol
+  def PyList_clear(using Context): Symbol        = PyList_clearR.symbol
+  def PyList_extend(using Context): Symbol       = PyList_extendR.symbol
+  def PyList_contains(using Context): Symbol     = PyList_containsR.symbol
+  def PyList_indexOf(using Context): Symbol      = PyList_indexOfR.symbol
+  def PyList_count(using Context): Symbol        = PyList_countR.symbol
+  def PyList_copy(using Context): Symbol         = PyList_copyR.symbol
+  def PyList_concat(using Context): Symbol       = PyList_concatR.symbol
+  def PyList_slice(using Context): Symbol        = PyList_sliceR.symbol
+  def PyList_sort(using Context): Symbol         = PyList_sortR.symbol
+  def PyList_reverse(using Context): Symbol      = PyList_reverseR.symbol
+  def PyList_iterator(using Context): Symbol     = PyList_iteratorR.symbol
+
+  // ---------------------------------------------------------------
+  //  PyTuple intrinsics
+  //
+  //  When `-scalapy` is on, the backend lowers `scala.python.PyTuple`
+  //  values to native (bare) Python tuples. The symbols below identify
+  //  the call sites that get rewritten in `GenPython.genPyTupleCallOpt`.
+  //  Distinct from Scala `TupleN` lowering (which wraps in
+  //  `_scpy_ScalaTuple`).
+  // ---------------------------------------------------------------
+
+  @threadUnsafe lazy val PyTupleClassType: TypeRef = requiredClassRef("scala.python.PyTuple")
+  def PyTupleClass(using Context): ClassSymbol = PyTupleClassType.symbol.asClass
+
+  @threadUnsafe lazy val PyTupleModuleRef = requiredModuleRef("scala.python.PyTuple")
+  def PyTupleModule(using Context): Symbol = PyTupleModuleRef.symbol
+
+  private def pyTupleClassMethod(name: String)(using Context): TermRef =
+    PyTupleClass.requiredMethodRef(name)
+  private def pyTupleModuleMethod(name: String)(using Context): TermRef =
+    PyTupleModule.requiredMethodRef(name)
+
+  @threadUnsafe lazy val PyTuple_emptyR        = pyTupleModuleMethod("empty")
+  @threadUnsafe lazy val PyTuple_applyFactoryR = pyTupleModuleMethod("apply")
+  @threadUnsafe lazy val PyTuple_sizeR         = pyTupleClassMethod("size")
+  @threadUnsafe lazy val PyTuple_isEmptyR      = pyTupleClassMethod("isEmpty")
+  @threadUnsafe lazy val PyTuple_nonEmptyR     = pyTupleClassMethod("nonEmpty")
+  @threadUnsafe lazy val PyTuple_applyR        = pyTupleClassMethod("apply")
+  @threadUnsafe lazy val PyTuple_containsR     = pyTupleClassMethod("contains")
+  @threadUnsafe lazy val PyTuple_indexOfR      = pyTupleClassMethod("indexOf")
+  @threadUnsafe lazy val PyTuple_countR        = pyTupleClassMethod("count")
+  @threadUnsafe lazy val PyTuple_concatR       = pyTupleClassMethod("concat")
+  @threadUnsafe lazy val PyTuple_sliceR        = pyTupleClassMethod("slice")
+  @threadUnsafe lazy val PyTuple_iteratorR     = pyTupleClassMethod("iterator")
+
+  def PyTuple_empty(using Context): Symbol        = PyTuple_emptyR.symbol
+  def PyTuple_applyFactory(using Context): Symbol = PyTuple_applyFactoryR.symbol
+  def PyTuple_size(using Context): Symbol         = PyTuple_sizeR.symbol
+  def PyTuple_isEmpty(using Context): Symbol      = PyTuple_isEmptyR.symbol
+  def PyTuple_nonEmpty(using Context): Symbol     = PyTuple_nonEmptyR.symbol
+  def PyTuple_apply(using Context): Symbol        = PyTuple_applyR.symbol
+  def PyTuple_contains(using Context): Symbol     = PyTuple_containsR.symbol
+  def PyTuple_indexOf(using Context): Symbol      = PyTuple_indexOfR.symbol
+  def PyTuple_count(using Context): Symbol        = PyTuple_countR.symbol
+  def PyTuple_concat(using Context): Symbol       = PyTuple_concatR.symbol
+  def PyTuple_slice(using Context): Symbol        = PyTuple_sliceR.symbol
+  def PyTuple_iterator(using Context): Symbol     = PyTuple_iteratorR.symbol
+
   /** True iff `sym` is the class of a tuple instance.
    *
    *  Scala 3's `Tuple1..22` only extend `Product{N}` — they do NOT
@@ -336,6 +450,45 @@ final class PyDefinitions:
     requireReal(PyMap_keys, "scala.python.PyMap.keys")
     requireReal(PyMap_values, "scala.python.PyMap.values")
     requireReal(PyMap_items, "scala.python.PyMap.items")
+    requireReal(PyListClass, "scala.python.PyList")
+    requireReal(PyListModule, "scala.python.PyList (module)")
+    requireReal(PyList_empty, "scala.python.PyList.empty")
+    requireReal(PyList_applyFactory, "scala.python.PyList.apply (module)")
+    requireReal(PyList_size, "scala.python.PyList.size")
+    requireReal(PyList_isEmpty, "scala.python.PyList.isEmpty")
+    requireReal(PyList_nonEmpty, "scala.python.PyList.nonEmpty")
+    requireReal(PyList_apply, "scala.python.PyList.apply")
+    requireReal(PyList_update, "scala.python.PyList.update")
+    requireReal(PyList_append, "scala.python.PyList.append")
+    requireReal(PyList_prepend, "scala.python.PyList.prepend")
+    requireReal(PyList_insert, "scala.python.PyList.insert")
+    requireReal(PyList_removeAt, "scala.python.PyList.removeAt")
+    requireReal(PyList_remove, "scala.python.PyList.remove")
+    requireReal(PyList_clear, "scala.python.PyList.clear")
+    requireReal(PyList_extend, "scala.python.PyList.extend")
+    requireReal(PyList_contains, "scala.python.PyList.contains")
+    requireReal(PyList_indexOf, "scala.python.PyList.indexOf")
+    requireReal(PyList_count, "scala.python.PyList.count")
+    requireReal(PyList_copy, "scala.python.PyList.copy")
+    requireReal(PyList_concat, "scala.python.PyList.concat")
+    requireReal(PyList_slice, "scala.python.PyList.slice")
+    requireReal(PyList_sort, "scala.python.PyList.sort")
+    requireReal(PyList_reverse, "scala.python.PyList.reverse")
+    requireReal(PyList_iterator, "scala.python.PyList.iterator")
+    requireReal(PyTupleClass, "scala.python.PyTuple")
+    requireReal(PyTupleModule, "scala.python.PyTuple (module)")
+    requireReal(PyTuple_empty, "scala.python.PyTuple.empty")
+    requireReal(PyTuple_applyFactory, "scala.python.PyTuple.apply (module)")
+    requireReal(PyTuple_size, "scala.python.PyTuple.size")
+    requireReal(PyTuple_isEmpty, "scala.python.PyTuple.isEmpty")
+    requireReal(PyTuple_nonEmpty, "scala.python.PyTuple.nonEmpty")
+    requireReal(PyTuple_apply, "scala.python.PyTuple.apply")
+    requireReal(PyTuple_contains, "scala.python.PyTuple.contains")
+    requireReal(PyTuple_indexOf, "scala.python.PyTuple.indexOf")
+    requireReal(PyTuple_count, "scala.python.PyTuple.count")
+    requireReal(PyTuple_concat, "scala.python.PyTuple.concat")
+    requireReal(PyTuple_slice, "scala.python.PyTuple.slice")
+    requireReal(PyTuple_iterator, "scala.python.PyTuple.iterator")
 
   private def requireReal(sym: Symbol, desc: String)(using Context): Unit =
     if !sym.exists then

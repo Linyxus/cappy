@@ -774,6 +774,14 @@ object PyReachability:
           walkTree(k); walkTree(v)
         }
 
+      case t: PyListValue =>
+        fromType(t.tpe)
+        t.elems.foreach(walkTree)
+
+      case t: PyRawTupleValue =>
+        fromType(t.tpe)
+        t.elems.foreach(walkTree)
+
       case t: PyUnaryOp =>
         walkTree(t.lhs)
 
@@ -922,6 +930,8 @@ object PyReachability:
         t.entries.foreach { case (k, v) =>
           seedModuleAccessorsInClosure(k); seedModuleAccessorsInClosure(v)
         }
+      case t: PyListValue       => t.elems.foreach(seedModuleAccessorsInClosure)
+      case t: PyRawTupleValue   => t.elems.foreach(seedModuleAccessorsInClosure)
       case t: PyUnaryOp         => seedModuleAccessorsInClosure(t.lhs)
       case t: PyBinaryOp        => seedModuleAccessorsInClosure(t.lhs); seedModuleAccessorsInClosure(t.rhs)
       case t: PyClosure         => seedModuleAccessorsInClosure(t.body)

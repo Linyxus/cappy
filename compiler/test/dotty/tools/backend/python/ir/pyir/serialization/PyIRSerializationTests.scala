@@ -452,6 +452,30 @@ class PyIRSerializationTests:
     for t <- List[PyTree](empty, single, mixed, nested) do
       assertEquals(t, roundTripTree(t))
 
+  @Test def listValueRoundTrip(): Unit =
+    val listType = PyClassType(PyClassName("scala.python.PyList"))
+    val empty    = PyListValue(Nil)(listType, NoPos)
+    val single   = PyListValue(List(PyIntLit(7)(NoPos)))(listType, NoPos)
+    val mixed    = PyListValue(
+      List(PyIntLit(1)(NoPos), PyStringLit("x")(NoPos), PyBooleanLit(true)(NoPos))
+    )(listType, NoPos)
+    val nested   = PyListValue(List(mixed, empty))(listType, NoPos)
+
+    for t <- List[PyTree](empty, single, mixed, nested) do
+      assertEquals(t, roundTripTree(t))
+
+  @Test def rawTupleValueRoundTrip(): Unit =
+    val tupType = PyClassType(PyClassName("scala.python.PyTuple"))
+    val empty   = PyRawTupleValue(Nil)(tupType, NoPos)
+    val single  = PyRawTupleValue(List(PyIntLit(7)(NoPos)))(tupType, NoPos)
+    val mixed   = PyRawTupleValue(
+      List(PyIntLit(1)(NoPos), PyStringLit("x")(NoPos), PyBooleanLit(true)(NoPos))
+    )(tupType, NoPos)
+    val nested  = PyRawTupleValue(List(mixed, empty))(tupType, NoPos)
+
+    for t <- List[PyTree](empty, single, mixed, nested) do
+      assertEquals(t, roundTripTree(t))
+
   // ---------------------------------------------------------------
   //  Operators
   // ---------------------------------------------------------------

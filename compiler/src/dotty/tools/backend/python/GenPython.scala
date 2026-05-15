@@ -1984,6 +1984,14 @@ private class PyCodeGen()(using genCtx: Context):
           case Some(tree) => break(tree)
           case None       => ()
 
+        genPyListCallOpt(app, pos) match
+          case Some(tree) => break(tree)
+          case None       => ()
+
+        genPyTupleCallOpt(app, pos) match
+          case Some(tree) => break(tree)
+          case None       => ()
+
         if !isStaticTarget && sym.name == nme.clone_ then
           app.fun match
             case Select(receiver, _) =>
@@ -2617,6 +2625,133 @@ private class PyCodeGen()(using genCtx: Context):
     else if sym == pyDefn.PyMap_keys         then Some(ext("_scpy_dict_keys_iter",     List(recv)))
     else if sym == pyDefn.PyMap_values       then Some(ext("_scpy_dict_values_iter",   List(recv)))
     else if sym == pyDefn.PyMap_items        then Some(ext("_scpy_dict_items_iter",    List(recv)))
+    else None
+
+  /** Lower a `scala.python.PyList` call to native Python `list` ops.
+   *
+   *  Three call shapes:
+   *    1. `PyList.empty[T]()` factory — lower to `PyListValue(Nil)`.
+   *    2. `PyList(a, b, c)` varargs factory — args arrive as a single
+   *       repeated argument (possibly wrapped in `wrap{T}Array`);
+   *       `extractRepeatedArgs` peels the wrapping. Lower to
+   *       `PyListValue(elems)`.
+   *    3. Instance methods on a `PyList`-typed receiver — dispatch to
+   *       a `_scpy_list_*` runtime helper.
+   */
+  private def genPyListCallOpt(app: Apply, pos: PyPosition): Option[PyTree] =
+    val sym = app.fun.symbol
+    if !sym.exists then return None
+
+    if pyDefn.PyListModule.exists && sym == pyDefn.PyList_empty then
+      return Some(PyListValue(Nil)(encoding.encodeType(app.tpe), pos))
+
+    if pyDefn.PyListModule.exists && sym == pyDefn.PyList_applyFactory then
+      app.args match
+        case List(repeated) =>
+          val elems = extractRepeatedArgs(repeated).map(genExpr)
+          return Some(PyListValue(elems)(encoding.encodeType(app.tpe), pos))
+        case _ =>
+          return None
+
+    app.fun match
+      case Select(receiver, _) if isPyListReceiverType(receiver.tpe) =>
+        genPyListInstanceCall(sym, receiver, app.args, app.tpe, pos)
+      case _ =>
+        None
+
+  private def isPyListReceiverType(tpe: Type): Boolean =
+    if !pyDefn.PyListClass.exists then return false
+    tpe.widenDealias.typeSymbol == pyDefn.PyListClass
+
+  private def genPyListInstanceCall(
+      sym: Symbol,
+      receiver: Tree,
+      args: List[Tree],
+      resultScalaTpe: Type,
+      pos: PyPosition
+  ): Option[PyTree] =
+    val resultTpe = encoding.encodeType(resultScalaTpe)
+    def recv: PyTree = genExpr(receiver)
+    def ext(name: String, ts: List[PyTree]): PyTree =
+      PyApplyExternal(PyExternalName(name), ts)(resultTpe, pos)
+    def arg(i: Int): PyTree = genExpr(args(i))
+
+    if      sym == pyDefn.PyList_size      then Some(ext("_scpy_list_size",         List(recv)))
+    else if sym == pyDefn.PyList_isEmpty   then Some(ext("_scpy_list_is_empty",     List(recv)))
+    else if sym == pyDefn.PyList_nonEmpty  then Some(ext("_scpy_list_non_empty",    List(recv)))
+    else if sym == pyDefn.PyList_apply     then Some(ext("_scpy_list_get",          List(recv, arg(0))))
+    else if sym == pyDefn.PyList_update    then Some(ext("_scpy_list_set",          List(recv, arg(0), arg(1))))
+    else if sym == pyDefn.PyList_append    then Some(ext("_scpy_list_append",       List(recv, arg(0))))
+    else if sym == pyDefn.PyList_prepend   then Some(ext("_scpy_list_prepend",      List(recv, arg(0))))
+    else if sym == pyDefn.PyList_insert    then Some(ext("_scpy_list_insert",       List(recv, arg(0), arg(1))))
+    else if sym == pyDefn.PyList_removeAt  then Some(ext("_scpy_list_remove_at",    List(recv, arg(0))))
+    else if sym == pyDefn.PyList_remove    then Some(ext("_scpy_list_remove_value", List(recv, arg(0))))
+    else if sym == pyDefn.PyList_clear     then Some(ext("_scpy_list_clear",        List(recv)))
+    else if sym == pyDefn.PyList_extend    then Some(ext("_scpy_list_extend",       List(recv, arg(0))))
+    else if sym == pyDefn.PyList_contains  then Some(ext("_scpy_list_contains",     List(recv, arg(0))))
+    else if sym == pyDefn.PyList_indexOf   then Some(ext("_scpy_list_index_of",     List(recv, arg(0))))
+    else if sym == pyDefn.PyList_count     then Some(ext("_scpy_list_count",        List(recv, arg(0))))
+    else if sym == pyDefn.PyList_copy      then Some(ext("_scpy_list_copy",         List(recv)))
+    else if sym == pyDefn.PyList_concat    then Some(ext("_scpy_list_concat",       List(recv, arg(0))))
+    else if sym == pyDefn.PyList_slice     then Some(ext("_scpy_list_slice",        List(recv, arg(0), arg(1))))
+    else if sym == pyDefn.PyList_sort      then Some(ext("_scpy_list_sort",         List(recv)))
+    else if sym == pyDefn.PyList_reverse   then Some(ext("_scpy_list_reverse",      List(recv)))
+    else if sym == pyDefn.PyList_iterator  then Some(ext("_scpy_list_iter",         List(recv)))
+    else None
+
+  /** Lower a `scala.python.PyTuple` call to native bare-Python-tuple
+   *  ops. Mirrors `genPyListCallOpt` but routes to `_scpy_pytuple_*`
+   *  helpers and emits `PyRawTupleValue` (NOT `PyTupleValue`, which
+   *  wraps in `_scpy_ScalaTuple`).
+   */
+  private def genPyTupleCallOpt(app: Apply, pos: PyPosition): Option[PyTree] =
+    val sym = app.fun.symbol
+    if !sym.exists then return None
+
+    if pyDefn.PyTupleModule.exists && sym == pyDefn.PyTuple_empty then
+      return Some(PyRawTupleValue(Nil)(encoding.encodeType(app.tpe), pos))
+
+    if pyDefn.PyTupleModule.exists && sym == pyDefn.PyTuple_applyFactory then
+      app.args match
+        case List(repeated) =>
+          val elems = extractRepeatedArgs(repeated).map(genExpr)
+          return Some(PyRawTupleValue(elems)(encoding.encodeType(app.tpe), pos))
+        case _ =>
+          return None
+
+    app.fun match
+      case Select(receiver, _) if isPyTupleReceiverType(receiver.tpe) =>
+        genPyTupleInstanceCall(sym, receiver, app.args, app.tpe, pos)
+      case _ =>
+        None
+
+  private def isPyTupleReceiverType(tpe: Type): Boolean =
+    if !pyDefn.PyTupleClass.exists then return false
+    tpe.widenDealias.typeSymbol == pyDefn.PyTupleClass
+
+  private def genPyTupleInstanceCall(
+      sym: Symbol,
+      receiver: Tree,
+      args: List[Tree],
+      resultScalaTpe: Type,
+      pos: PyPosition
+  ): Option[PyTree] =
+    val resultTpe = encoding.encodeType(resultScalaTpe)
+    def recv: PyTree = genExpr(receiver)
+    def ext(name: String, ts: List[PyTree]): PyTree =
+      PyApplyExternal(PyExternalName(name), ts)(resultTpe, pos)
+    def arg(i: Int): PyTree = genExpr(args(i))
+
+    if      sym == pyDefn.PyTuple_size      then Some(ext("_scpy_pytuple_size",      List(recv)))
+    else if sym == pyDefn.PyTuple_isEmpty   then Some(ext("_scpy_pytuple_is_empty",  List(recv)))
+    else if sym == pyDefn.PyTuple_nonEmpty  then Some(ext("_scpy_pytuple_non_empty", List(recv)))
+    else if sym == pyDefn.PyTuple_apply     then Some(ext("_scpy_pytuple_get",       List(recv, arg(0))))
+    else if sym == pyDefn.PyTuple_contains  then Some(ext("_scpy_pytuple_contains",  List(recv, arg(0))))
+    else if sym == pyDefn.PyTuple_indexOf   then Some(ext("_scpy_pytuple_index_of",  List(recv, arg(0))))
+    else if sym == pyDefn.PyTuple_count     then Some(ext("_scpy_pytuple_count",     List(recv, arg(0))))
+    else if sym == pyDefn.PyTuple_concat    then Some(ext("_scpy_pytuple_concat",    List(recv, arg(0))))
+    else if sym == pyDefn.PyTuple_slice     then Some(ext("_scpy_pytuple_slice",     List(recv, arg(0), arg(1))))
+    else if sym == pyDefn.PyTuple_iterator  then Some(ext("_scpy_pytuple_iter",      List(recv)))
     else None
 
   private def genStringStaticCall(

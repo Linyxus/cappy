@@ -1406,6 +1406,10 @@ object PyIREmitter:
           collectExternAliases(k)
           collectExternAliases(v)
         }
+      case tree: PyListValue =>
+        tree.elems.foreach(collectExternAliases)
+      case tree: PyRawTupleValue =>
+        tree.elems.foreach(collectExternAliases)
       case tree: PyUnaryOp =>
         collectExternAliases(tree.lhs)
       case tree: PyBinaryOp =>
@@ -1689,6 +1693,19 @@ object PyIREmitter:
         else
           val pairs = entries.map((k, v) => s"${exprToStr(k)}: ${exprToStr(v)}")
           s"{${pairs.mkString(", ")}}"
+
+      case PyListValue(elems) =>
+        if elems.isEmpty then "[]"
+        else s"[${elems.map(exprToStr).mkString(", ")}]"
+
+      case PyRawTupleValue(elems) =>
+        // Bare Python tuples — no `_scpy_ScalaTuple` wrapping. A 1-tuple
+        // needs the trailing comma to distinguish from a parenthesised
+        // expression.
+        elems match
+          case Nil      => "()"
+          case e :: Nil => s"(${exprToStr(e)},)"
+          case _        => s"(${elems.map(exprToStr).mkString(", ")})"
 
       // Operators
       case PyUnaryOp(op, lhs) =>

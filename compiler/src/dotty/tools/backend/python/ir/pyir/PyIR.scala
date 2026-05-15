@@ -313,6 +313,19 @@ final case class PyTupleValue(elems: List[PyTree])
 final case class PyDictValue(entries: List[(PyTree, PyTree)])
     (val tpe: PyType, val pos: PyPosition) extends PyTree
 
+/** Python list value. Lowers a `scala.python.PyList[T]` factory call
+ *  to a native Python list literal. The Scala `PyList` type erases
+ *  away — at runtime, a `PyList` value IS a Python `list`. */
+final case class PyListValue(elems: List[PyTree])
+    (val tpe: PyType, val pos: PyPosition) extends PyTree
+
+/** Bare Python tuple value. Lowers a `scala.python.PyTuple[T]` factory
+ *  call to a native Python tuple literal. Distinct from `PyTupleValue`,
+ *  which wraps elements in `_scpy_ScalaTuple(...)` to preserve
+ *  Scala-tuple semantics. */
+final case class PyRawTupleValue(elems: List[PyTree])
+    (val tpe: PyType, val pos: PyPosition) extends PyTree
+
 // ===================================================================
 //  Operators
 // ===================================================================
