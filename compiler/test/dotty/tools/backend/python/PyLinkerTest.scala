@@ -452,6 +452,7 @@ class PyLinkerTest:
     val bundle = PyLinker.link(
       List(userInput),
       List(supportInput),
+      mode = PyLinker.LinkMode.Bundle,
       maxReachabilityIterations = 2
     )
 
@@ -465,6 +466,7 @@ class PyLinkerTest:
       PyLinker.link(
         List(userInput),
         List(supportInput),
+        mode = PyLinker.LinkMode.Bundle,
         maxReachabilityIterations = 1
       )
     }

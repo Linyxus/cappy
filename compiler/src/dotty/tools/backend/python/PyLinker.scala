@@ -41,6 +41,23 @@ object PyLinker:
   enum InputSource:
     case User, Support
 
+  /** Linker output shape.
+   *
+   *  `Bundle` — default. Returns the standard reachable bundle: user
+   *  classes verbatim + DCE-pruned support classes. Used by the batch
+   *  Python backend (`GenPython` → one `.py` per CU).
+   *
+   *  `ReplIncrement` — used by the Cappy REPL for each user input. The
+   *  linker behaviour is currently identical to `Bundle`; the value is
+   *  retained as a documented call site so the driver can later
+   *  specialize (e.g. skip whole-bundle topological re-sort once the
+   *  subprocess's class graph is known). The driver itself filters the
+   *  emitted bundle against its `emittedClasses` set so support classes
+   *  already sent to the subprocess aren't re-emitted.
+   */
+  enum LinkMode:
+    case Bundle, ReplIncrement
+
   /** A link input.
    *
    *  `priority` orders Support × Support duplicates: when two Support
@@ -73,14 +90,22 @@ object PyLinker:
   )
 
   def link(userInputs: List[Input], supportInputs: List[Input]): LinkedBundle =
-    link(userInputs, supportInputs, MaxReachabilityIterations)
+    link(userInputs, supportInputs, LinkMode.Bundle)
+
+  def link(
+      userInputs:    List[Input],
+      supportInputs: List[Input],
+      mode:          LinkMode
+  ): LinkedBundle =
+    link(userInputs, supportInputs, mode, MaxReachabilityIterations)
 
   private[python] def link(
       userInputs:                 List[Input],
       supportInputs:              List[Input],
+      mode:                       LinkMode,
       maxReachabilityIterations:  Int
   ): LinkedBundle =
-    new Linker(userInputs, supportInputs, maxReachabilityIterations).link()
+    new Linker(userInputs, supportInputs, mode, maxReachabilityIterations).link()
 
   /** Convenience overload for callers that don't distinguish sources
    *  (e.g. unit tests). Inputs are partitioned by their `source` field. */
@@ -97,10 +122,14 @@ object PyLinker:
     PyIREmitter.emit(bundle.classes, bundle.mainEntry, out)
 
   private final class Linker(
-      userInputs:                List[Input],
-      supportInputs:             List[Input],
+      userInputs0:               List[Input],
+      supportInputs0:            List[Input],
+      mode:                      LinkMode,
       maxReachabilityIterations: Int
   ):
+    private val userInputs:    List[Input] = userInputs0
+    private val supportInputs: List[Input] = supportInputs0
+
     private val inputs = userInputs ++ supportInputs
     private val errors = mutable.ListBuffer.empty[PyLinkingError]
 

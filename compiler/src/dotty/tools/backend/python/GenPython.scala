@@ -85,6 +85,25 @@ object GenPython:
   val name: String = "genPython"
   val description: String = "generate Python source files"
 
+  /** REPL-mode sink. When installed on the compiler `Context` via
+   *  `ReplSinkKey`, `PyCodeGen.runWriteOnly` short-circuits: it skips
+   *  writing the `.pyir` file to disk and skips queueing a `PendingLink`
+   *  for link-and-emit. Instead it hands the in-memory `PyClassDef`s
+   *  straight to the sink, which the Cappy REPL uses to drive its own
+   *  per-input link + emit + send-to-subprocess flow.
+   *
+   *  Bundle (default) mode runs unchanged — no key set, no sink call.
+   */
+  trait PyReplSink:
+    def onCompiled(
+        sourceName: String,
+        classes:    List[PyClassDef],
+        mainEntry:  Option[PyIREmitter.MainEntry]
+    ): Unit
+
+  val ReplSinkKey: dotty.tools.dotc.util.Property.Key[PyReplSink] =
+    new dotty.tools.dotc.util.Property.Key[PyReplSink]
+
   /** Runtime-provided shim ancestors that pylib's concrete subclasses do NOT
    *  extend. Calls to these classes' members from a concrete pylib subclass
    *  must be re-anchored to the receiver's static type (see
@@ -436,17 +455,26 @@ private class PyCodeGen()(using genCtx: Context):
   def runWriteOnly(): Option[GenPython.PendingLink] =
     pyDefn.force()
     genCompilationUnit(genCtx.compilationUnit)
-    writeIRFile() match
-      case Some(irFile) if !genCtx.settings.scpyIrOnly.value =>
-        Some(new GenPython.PendingLink(
-          sourceName       = sourceNameOfCu,
-          sourceFile       = genCtx.compilationUnit.source,
-          outputDirectory  = genCtx.settings.outputDir.value,
-          irFile           = irFile,
-          generatedClasses = generatedClasses.toList,
-          mainEntry        = mainEntry
-        ))
-      case _ => None
+    // REPL mode: a `PyReplSink` on the Context short-circuits the disk
+    // write + link queue. The REPL driver runs its own link + emit cycle
+    // against the cached startup support inputs, so producing `.pyir`
+    // files in the (likely-shared) output directory would just be noise.
+    genCtx.property(GenPython.ReplSinkKey) match
+      case Some(sink) =>
+        sink.onCompiled(sourceNameOfCu, generatedClasses.toList, mainEntry)
+        None
+      case None =>
+        writeIRFile() match
+          case Some(irFile) if !genCtx.settings.scpyIrOnly.value =>
+            Some(new GenPython.PendingLink(
+              sourceName       = sourceNameOfCu,
+              sourceFile       = genCtx.compilationUnit.source,
+              outputDirectory  = genCtx.settings.outputDir.value,
+              irFile           = irFile,
+              generatedClasses = generatedClasses.toList,
+              mainEntry        = mainEntry
+            ))
+          case _ => None
 
   private def sourceNameOfCu: String =
     genCtx.compilationUnit.source.file.name.stripSuffix(".scala")

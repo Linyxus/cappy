@@ -66,23 +66,34 @@ object PyIREmitter:
    *  `main` (by simple name) on the given class and synthesizes an
    *  `if __name__ == "__main__":` guard calling it with `sys.argv[1:]`
    *  iff it takes any parameters.
+   *
+   *  `includePreamble` and `includeClosureCarriers` are `true` by default
+   *  (bundled `.py` output). The Cappy REPL turns them off for per-input
+   *  increments: the persistent Python subprocess already has the
+   *  `PyIRRuntime.content` prelude and the `_scpy_FnN` carriers in scope
+   *  from the startup bundle, so re-emitting them would redefine module
+   *  state and clobber any closures handed out earlier.
    */
   def emit(
-      classes:   List[PyClassDef],
-      mainEntry: Option[MainEntry],
-      out:       PrintWriter
+      classes:                List[PyClassDef],
+      mainEntry:              Option[MainEntry],
+      out:                    PrintWriter,
+      includePreamble:        Boolean = true,
+      includeClosureCarriers: Boolean = true
   ): Unit =
-    val e = new Emitter(out)
+    val e = new Emitter(out, includePreamble, includeClosureCarriers)
     e.emitBundle(classes, mainEntry)
 
   /** Convenience for producing the Python source as a `String`. */
   def emitToString(
-      classes:   List[PyClassDef],
-      mainEntry: Option[MainEntry]
+      classes:                List[PyClassDef],
+      mainEntry:              Option[MainEntry],
+      includePreamble:        Boolean = true,
+      includeClosureCarriers: Boolean = true
   ): String =
     val buf = new java.io.StringWriter()
     val pw  = new PrintWriter(buf)
-    try emit(classes, mainEntry, pw)
+    try emit(classes, mainEntry, pw, includePreamble, includeClosureCarriers)
     finally pw.flush()
     buf.toString
 
@@ -90,7 +101,11 @@ object PyIREmitter:
   //  Private emitter state machine
   // ===============================================================
 
-  private class Emitter(out: PrintWriter):
+  private class Emitter(
+      out:                    PrintWriter,
+      includePreamble:        Boolean = true,
+      includeClosureCarriers: Boolean = true
+  ):
     private var indentLevel: Int = 0
     private val indentStr: String = "    "
     private val externAliases = mutable.LinkedHashMap.empty[ExternImport, String]
@@ -136,8 +151,13 @@ object PyIREmitter:
       emptyLine()
 
       // Runtime preamble - defines numeric wrappers, Predef, etc.
-      out.print(PyIRRuntime.content)
-      emptyLine()
+      // Suppressed in REPL-increment emission: the persistent subprocess
+      // already has `PyIRRuntime.content` in scope from the startup
+      // bundle, and re-running it would re-bind helpers (clobbering
+      // closures/instances captured by prior inputs).
+      if includePreamble then
+        out.print(PyIRRuntime.content)
+        emptyLine()
 
       emitExternImports()
       if externAliases.nonEmpty then
@@ -155,7 +175,14 @@ object PyIREmitter:
         emitClassRegistration(cls)
         emptyLine()
 
-      emitClosureCarriers()
+      // The `_scpy_FnN` carriers extend `_scpy_Fn` (defined in the
+      // preamble) plus the nominal `scala.FunctionN`. In REPL-increment
+      // mode the carriers were emitted at startup and re-emitting would
+      // (a) shadow any `_scpy_FnN` instance captured by prior inputs and
+      // (b) re-import a now-different `_scpy_Fn` if the preamble was
+      // suppressed but FunctionN is in this increment.
+      if includeClosureCarriers then
+        emitClosureCarriers()
 
       // Instantiate Scala `object`s only after every class body in the
       // bundle has been defined. Module constructors can reference

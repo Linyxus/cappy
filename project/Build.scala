@@ -2871,6 +2871,54 @@ object Build {
       }.value,
     )
 
+  /** Experimental TUI REPL prototype for the Python backend (scala-py branch).
+   *
+   *  The driver embeds `scala3-compiler-bootstrapped` and drives a
+   *  persistent `uv run python` subprocess: startup loads the
+   *  `PyIRRuntime` preamble + all support `.pyir`; each user input is
+   *  compiled to PyIR in-memory (via a `PyReplSink` on the Context),
+   *  linked in `LinkMode.ReplIncrement`, emitted without preamble, and
+   *  piped into the live subprocess. See `cappy-repl/src/.../CappyReplDriver.scala`.
+   *
+   *  The `cappy.classpath` / `cappy.repoRoot` system properties pin the
+   *  same support classpath the test harness uses, so the REPL behaves
+   *  identically under `sbt run` and `sbt test`.
+   */
+  lazy val `cappy-repl` = project.in(file("cappy-repl"))
+    .dependsOn(`scala3-compiler-bootstrapped`)
+    .settings(commonBootstrappedSettings)
+    .settings(
+      bootstrappedScalaInstanceSettings,
+      publish / skip := true,
+      bspEnabled := false,
+      Compile / mainClass := Some("dotty.tools.cappyrepl.Main"),
+      run / fork := true,
+      run / connectInput := true,
+      libraryDependencies += "xyz.matthieucourt" %% "layoutz" % "0.7.0",
+      Compile / run / javaOptions ++= Seq(
+        s"-Dcappy.repoRoot=${(ThisBuild / baseDirectory).value.getAbsolutePath}",
+        s"-Dcappy.classpath=${
+          Seq(
+            (`scala-library-bootstrapped` / Compile / packageBin).value,
+            (`scala-pylib-py` / Compile / packageBin).value,
+            (`scala-library-py` / Compile / packageBin).value,
+          ).map(_.getAbsolutePath).mkString(java.io.File.pathSeparator)
+        }",
+      ),
+      Test / fork := true,
+      Test / parallelExecution := false,
+      Test / javaOptions ++= Seq(
+        s"-Dcappy.repoRoot=${(ThisBuild / baseDirectory).value.getAbsolutePath}",
+        s"-Dcappy.classpath=${
+          Seq(
+            (`scala-library-bootstrapped` / Compile / packageBin).value,
+            (`scala-pylib-py` / Compile / packageBin).value,
+            (`scala-library-py` / Compile / packageBin).value,
+          ).map(_.getAbsolutePath).mkString(java.io.File.pathSeparator)
+        }",
+      ),
+    )
+
   val testcasesOutputDir = taskKey[Seq[String]]("Root directory where tests classes are generated")
   val testcasesSourceRoot = taskKey[String]("Root directory where tests sources are generated")
   val testDocumentationRoot = taskKey[String]("Root directory where tests documentation are stored")
