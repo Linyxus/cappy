@@ -22,6 +22,18 @@ object PyDefinitions:
       })
     }
 
+  /** Drop the cached `PyDefinitions` for a given `ContextBase`. Used by
+   *  the Cappy REPL between runs: each REPL input is its own `Run`, but
+   *  the `ContextBase` is shared across runs so the cached lazy vals
+   *  capture symbol denotations from the *first* run. Those denotations
+   *  expire on the next run boundary ("denotation class X invalid in
+   *  run N"), so the next force lookups fail. Invalidating between runs
+   *  keeps the cache honest. */
+  def invalidate(base: Contexts.ContextBase): Unit =
+    cache.synchronized {
+      cache.remove(base)
+    }
+
 final class PyDefinitions:
 
   private var initCtx: Context = uninitialized

@@ -1,0 +1,11 @@
+cappy> val x: Int = "oops"
+-- [E007] Type Mismatch Error: cappy_line_1.scala:1:13 -------------------------
+1 |val x: Int = "oops"
+  |             ^^^^^^
+  |             Found:    ("oops" : String)
+  |             Required: Int
+  |
+  | longer explanation available when compiling with `-explain`
+1 error found
+cappy> 1 + 1
+val res0: Int = 2

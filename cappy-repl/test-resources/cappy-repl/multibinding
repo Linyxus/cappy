@@ -1,0 +1,6 @@
+cappy> val a = 1
+val a: Int = 1
+cappy> val b = 2
+val b: Int = 2
+cappy> a + b
+val res0: Int = 3

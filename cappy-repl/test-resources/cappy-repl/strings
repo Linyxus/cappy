@@ -1,0 +1,6 @@
+cappy> val s = "hello"
+val s: String = hello
+cappy> s.length
+val res0: Int = 5
+cappy> s + " world"
+val res1: String = hello world

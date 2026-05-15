@@ -1,0 +1,4 @@
+cappy> val x = 5
+val x: Int = 5
+cappy> x + 10
+val res0: Int = 15

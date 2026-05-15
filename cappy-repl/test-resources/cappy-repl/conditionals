@@ -1,0 +1,6 @@
+cappy> if 1 < 2 then "less" else "more"
+val res0: String = less
+cappy> val n = 10
+val n: Int = 10
+cappy> if n % 2 == 0 then "even" else "odd"
+val res1: String = even

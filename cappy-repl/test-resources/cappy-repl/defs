@@ -1,0 +1,4 @@
+cappy> def foo(n: Int) = n * 2
+def foo(n: Int): Int
+cappy> foo(21)
+val res0: Int = 42

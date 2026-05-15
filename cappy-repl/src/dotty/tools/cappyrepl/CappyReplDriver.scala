@@ -17,7 +17,7 @@ import dotty.tools.dotc.reporting.{Diagnostic, MessageRendering, StoreReporter}
 import dotty.tools.dotc.util.SourceFile
 import dotty.tools.io.VirtualDirectory
 import dotty.tools.backend.python.{
-  GenPython, PyClasspathLoader, PyIREmitter, PyIRRuntime, PyLinker
+  GenPython, PyClasspathLoader, PyDefinitions, PyIREmitter, PyIRRuntime, PyLinker
 }
 import dotty.tools.backend.python.ir.pyir.PyClassDef
 
@@ -184,6 +184,15 @@ class CappyReplDriver(
   def run(input: String)(using state: CappyReplState): (String, CappyReplState) =
     if !initialized then resetToInitial()
     sinkBuffer.clear()
+
+    // `PyDefinitions` caches a single instance per `ContextBase` and
+    // captures the first `Context` it sees in its lazy vals. Across REPL
+    // runs the `ContextBase` is reused, but each run's symbol
+    // denotations are valid only for that run's period — so the second
+    // run's force of any lazy val ("Product.productArity", "TupleClass"
+    // ...) fails with "denotation invalid in run N". Drop the cache
+    // every run so PyDefinitions is re-initialized in the right Context.
+    PyDefinitions.invalidate(rootCtx.base)
 
     val source = SourceFile.virtual(s"cappy_line_${state.objectIndex + 1}.scala", input)
     val reporter = new StoreReporter(null)
