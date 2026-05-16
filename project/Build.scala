@@ -2907,16 +2907,24 @@ object Build {
       ),
       Test / fork := true,
       Test / parallelExecution := false,
-      Test / javaOptions ++= Seq(
-        s"-Dcappy.repoRoot=${(ThisBuild / baseDirectory).value.getAbsolutePath}",
-        s"-Dcappy.classpath=${
-          Seq(
-            (`scala-library-bootstrapped` / Compile / packageBin).value,
-            (`scala-pylib-py` / Compile / packageBin).value,
-            (`scala-library-py` / Compile / packageBin).value,
-          ).map(_.getAbsolutePath).mkString(java.io.File.pathSeparator)
-        }",
-      ),
+      // Reuse the Vulpix progress bar without depending on the full compiler test classpath.
+      Test / unmanagedSources +=
+        (`scala3-compiler-bootstrapped` / baseDirectory).value / "test/dotty/tools/vulpix/TestProgressMonitor.scala",
+      Test / javaOptions ++= {
+        val forwardedProps = Seq("cappy.tests.filter").flatMap { name =>
+          sys.props.get(name).map(value => s"-D$name=$value")
+        }
+        Seq(
+          s"-Dcappy.repoRoot=${(ThisBuild / baseDirectory).value.getAbsolutePath}",
+          s"-Dcappy.classpath=${
+            Seq(
+              (`scala-library-bootstrapped` / Compile / packageBin).value,
+              (`scala-pylib-py` / Compile / packageBin).value,
+              (`scala-library-py` / Compile / packageBin).value,
+            ).map(_.getAbsolutePath).mkString(java.io.File.pathSeparator)
+          }",
+        ) ++ forwardedProps
+      },
     )
 
   val testcasesOutputDir = taskKey[Seq[String]]("Root directory where tests classes are generated")

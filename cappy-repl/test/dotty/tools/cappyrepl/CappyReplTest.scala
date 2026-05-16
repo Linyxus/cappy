@@ -8,6 +8,7 @@ import scala.io.Source
 import scala.language.unsafeNulls
 import scala.util.Using
 
+import dotty.tools.vulpix.TestProgressMonitor
 import org.junit.{After, Before}
 import org.junit.Assert.fail
 
@@ -84,7 +85,30 @@ class CappyReplTest:
     testFiles(scriptFiles(dir))
 
   protected def testFiles(files: Array[JFile]): Unit =
-    val errors = files.iterator.flatMap(testFile).toList
+    val scripts = files.sortBy(_.getPath)
+    var completed = 0
+    var failed = 0
+    val progressMonitor = TestProgressMonitor(
+      total = scripts.length,
+      completed = () => completed,
+      failed = () => failed,
+    )
+    val errors =
+      progressMonitor.start()
+      try
+        scripts.iterator.flatMap: scriptFile =>
+          try
+            val error = testFile(scriptFile)
+            if error.isDefined then failed += 1
+            error
+          catch
+            case ex: Throwable =>
+              failed += 1
+              throw ex
+          finally
+            completed += 1
+        .toList
+      finally progressMonitor.finish()
     if errors.nonEmpty then fail(errors.mkString(EOL))
 
   private def scriptFiles(dir: String): Array[JFile] =

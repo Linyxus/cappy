@@ -5,11 +5,10 @@ package vulpix
 import scala.language.unsafeNulls
 
 import java.io.{File as JFile, PrintStream}
-import java.lang.management.ManagementFactory
 import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.nio.file.{Files, NoSuchFileException, Paths}
 import java.nio.charset.{Charset, StandardCharsets}
-import java.util.{HashMap, Timer, TimerTask}
+import java.util.HashMap
 import java.util.concurrent.{TimeUnit, TimeoutException, Executors => JExecutors}
 
 import scala.collection.mutable, mutable.ArrayBuffer, mutable.ListBuffer
@@ -482,23 +481,6 @@ trait ParallelTesting extends RunnerOrchestration with CoverageSupport:
       realStderr.println(msg + paddingRight)
     }
 
-    /** Print a progress bar for the current `Test` */
-    private def updateProgressMonitor(start: Long): Unit =
-      if testSourcesCompleted < sourceCount && !isUserDebugging then
-        realStdout.print(s"\r${makeProgressBar(start)}")
-
-    private def finishProgressMonitor(start: Long): Unit =
-      realStdout.println(s"\r${makeProgressBar(start)}")
-
-    private def makeProgressBar(start: Long): String =
-      val tCompiled = testSourcesCompleted
-      val timestamp = (System.currentTimeMillis - start) / 1000
-      val progress = (tCompiled.toDouble / sourceCount * 40).toInt
-      val past = "=" * math.max(progress - 1, 0)
-      val curr = if progress > 0 then ">" else ""
-      val next = " " * (40 - progress)
-      s"[$past$curr$next] completed ($tCompiled/$sourceCount, $failureCount failed, ${timestamp}s)"
-
     /** Wrapper function to make sure that the compiler itself did not crash -
      *  if it did, the test should automatically fail.
      */
@@ -773,11 +755,16 @@ trait ParallelTesting extends RunnerOrchestration with CoverageSupport:
       assert(testSourcesCompleted == 0, "not allowed to re-use a `CompileRun`")
       if filteredSources.nonEmpty then
         val pool = JExecutors.newWorkStealingPool(threadLimit.getOrElse(Runtime.getRuntime.availableProcessors()))
-        val timer = new Timer()
         val logProgress = isInteractive && !suppressAllOutput
-        val start = System.currentTimeMillis()
-        if logProgress then
-          timer.schedule((() => updateProgressMonitor(start)): TimerTask, 100/*ms*/, 200/*ms*/)
+        val progressMonitor = TestProgressMonitor(
+          sourceCount,
+          () => testSourcesCompleted,
+          () => failureCount,
+          realStdout,
+          isInteractive,
+          suppressAllOutput
+        )
+        if logProgress then progressMonitor.start()
 
         val eventualResults = for target <- filteredSources yield
           pool.submit(encapsulatedCompilation(target))
@@ -802,9 +789,7 @@ trait ParallelTesting extends RunnerOrchestration with CoverageSupport:
             System.err.println(ex.getMessage)
             ex.printStackTrace()
 
-        if logProgress then
-          timer.cancel()
-          finishProgressMonitor(start)
+        if logProgress then progressMonitor.finish()
 
         if didFail then
           reportFailed()
@@ -1892,9 +1877,7 @@ trait ParallelTesting extends RunnerOrchestration with CoverageSupport:
     }.getOrElse(StandardCharsets.UTF_8)
 
   /** checks if the current process is being debugged */
-  def isUserDebugging: Boolean =
-    val mxBean = ManagementFactory.getRuntimeMXBean
-    mxBean.getInputArguments.asScala.exists(_.contains("jdwp"))
+  def isUserDebugging: Boolean = TestProgressMonitor.isUserDebugging
 
 object ParallelTesting:
 
