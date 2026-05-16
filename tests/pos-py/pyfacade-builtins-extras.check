@@ -1,0 +1,47 @@
+repr-int:42
+repr-str:'hi'
+repr-list:[0, 1, 2]
+ascii-a:'a'
+fmt-spec:ff
+fmt-bare:42
+intOf-pi:3
+intOf-base:255
+strOf-num:123
+boolOf-0:false
+boolOf-1:true
+boolOf-empty:false
+len-list:5
+list-repr:[0, 1, 2, 3, 4]
+range-3-8:[3, 4, 5, 6, 7]
+tuple-repr:(0, 1, 2)
+dict-empty-len:0
+set-len:3
+reversed:[4, 3, 2, 1, 0]
+sorted-asc:[0, 1, 2, 3, 4]
+sorted-desc:[4, 3, 2, 1, 0]
+divmod-17-5:3,2
+pow-2-10:1024
+pow-mod:24
+pow-double:2.0
+sum-list:10
+sum-start:20
+any-0-1-2:true
+all-0-1-2:false
+all-1-4:true
+isinst-str:true
+isinst-not:false
+callable-append:true
+callable-int:false
+hasattr-upper:true
+hasattr-missing:false
+getattr-default:fallback
+zip:[(0, 10), (1, 11), (2, 12)]
+enum:[(0, 0), (1, 1), (2, 2)]
+ellipsis-repr:Ellipsis
+notimpl-repr:NotImplemented
+eval-1plus2:3
+exec-ran
+io-print-1
+io-print-2a io-print-2b
+io-no-nl|after
+io-sep<end>

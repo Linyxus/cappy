@@ -280,3 +280,266 @@ object PyBuiltins:
 
     def value(index: Int): Any =
       getItem(valueList, index)
+
+  // ============================================================
+  //  Public builtins facade
+  //  ----------------------
+  //  User-facing typed wrappers around Python's `builtins`. The
+  //  internal helpers above this point (snake_case, prefixed
+  //  with `is_`, `to_`, `_of`, etc.) are compiler/runtime callers
+  //  and stay as-is for back-compat. The API below mirrors
+  //  Python's `builtins` API surface in Scala camelCase, with
+  //  finite arity overloads for variadics and `applyDynamicNamed`
+  //  for the few kwarg-only forms (`sorted(reverse=)`, etc.).
+  // ============================================================
+
+  // --- I/O and display ----------------------------------------------
+
+  def printLine(): Unit = builtins.print()
+  def printLine(a: Any): Unit = builtins.print(a)
+  def printLine(a: Any, b: Any): Unit = builtins.print(a, b)
+  def printLine(a: Any, b: Any, c: Any): Unit = builtins.print(a, b, c)
+  def printLine(a: Any, b: Any, c: Any, d: Any): Unit = builtins.print(a, b, c, d)
+  def printLine(a: Any, b: Any, c: Any, d: Any, e: Any): Unit =
+    builtins.print(a, b, c, d, e)
+
+  /** Print one value with no trailing newline (Python `print(a, end="")`). */
+  def printNoLine(a: Any): Unit =
+    builtins.applyDynamicNamed("print")(("", a), ("end", ""))
+
+  /** Print one value with a custom separator and end string. */
+  def printWith(a: Any, sep: String, end: String): Unit =
+    builtins.applyDynamicNamed("print")(("", a), ("sep", sep), ("end", end))
+
+  def readInput(): String = builtins.input().asInstanceOf[String]
+  def readInput(prompt: String): String = builtins.input(prompt).asInstanceOf[String]
+
+  def repr(value: Any): String = builtins.repr(value).asInstanceOf[String]
+
+  def formatValue(value: Any): String = builtins.format(value).asInstanceOf[String]
+  def formatValue(value: Any, spec: String): String =
+    builtins.format(value, spec).asInstanceOf[String]
+
+  def ascii(value: Any): String = builtins.ascii(value).asInstanceOf[String]
+
+  def dirOf(value: Any): PyAny = builtins.dir(value).asInstanceOf[PyAny]
+  def dirOfLocals(): PyAny = builtins.dir().asInstanceOf[PyAny]
+
+  def varsOf(value: Any): PyAny = builtins.vars(value).asInstanceOf[PyAny]
+  def varsOfLocals(): PyAny = builtins.vars().asInstanceOf[PyAny]
+
+  def idOf(value: Any): Long = builtins.id(value).asInstanceOf[Long]
+  def hashOf(value: Any): Long = builtins.hash(value).asInstanceOf[Long]
+
+  // --- Type-constructor functions -----------------------------------
+
+  def intOf(value: Any): Long = builtins.int(value).asInstanceOf[Long]
+  def intOf(text: String, base: Int): Long =
+    builtins.int(text, base).asInstanceOf[Long]
+
+  def strOf(value: Any): String = builtins.str(value).asInstanceOf[String]
+
+  def boolOf(value: Any): Boolean = builtins.bool(value).asInstanceOf[Boolean]
+
+  def listOf(it: Any): PyAny = builtins.list(it).asInstanceOf[PyAny]
+  def listEmpty(): PyAny = builtins.list().asInstanceOf[PyAny]
+
+  def tupleOf(it: Any): PyAny = builtins.tuple(it).asInstanceOf[PyAny]
+  def tupleEmpty(): PyAny = builtins.tuple().asInstanceOf[PyAny]
+
+  def dictOf(it: Any): PyAny = builtins.dict(it).asInstanceOf[PyAny]
+  def dictEmpty(): PyAny = builtins.dict().asInstanceOf[PyAny]
+
+  def setOf(it: Any): PyAny = builtins.set(it).asInstanceOf[PyAny]
+  def setEmpty(): PyAny = builtins.set().asInstanceOf[PyAny]
+
+  def frozenSetOf(it: Any): PyAny = builtins.frozenset(it).asInstanceOf[PyAny]
+  def frozenSetEmpty(): PyAny = builtins.frozenset().asInstanceOf[PyAny]
+
+  def bytearrayOf(it: Any): PyAny = builtins.bytearray(it).asInstanceOf[PyAny]
+  def bytearrayEmpty(): PyAny = builtins.bytearray().asInstanceOf[PyAny]
+
+  def complexOf(real: Double): PyAny = builtins.complex(real).asInstanceOf[PyAny]
+  def complexOf(real: Double, imag: Double): PyAny =
+    builtins.complex(real, imag).asInstanceOf[PyAny]
+
+  def rangeOf(stop: Int): PyAny = builtins.range(stop).asInstanceOf[PyAny]
+  def rangeOf(start: Int, stop: Int): PyAny =
+    builtins.range(start, stop).asInstanceOf[PyAny]
+  def rangeOf(start: Int, stop: Int, step: Int): PyAny =
+    builtins.range(start, stop, step).asInstanceOf[PyAny]
+
+  def memoryViewOf(value: Any): PyAny =
+    builtins.memoryview(value).asInstanceOf[PyAny]
+
+  def enumerateOf(it: Any): PyAny = builtins.enumerate(it).asInstanceOf[PyAny]
+  def enumerateOf(it: Any, start: Int): PyAny =
+    builtins.enumerate(it, start).asInstanceOf[PyAny]
+
+  def reversedOf(seq: Any): PyAny = builtins.reversed(seq).asInstanceOf[PyAny]
+
+  def filterOf(f: Any, it: Any): PyAny = builtins.filter(f, it).asInstanceOf[PyAny]
+
+  def mapOf(f: Any, it: Any): PyAny = builtins.map(f, it).asInstanceOf[PyAny]
+  def mapOf(f: Any, a: Any, b: Any): PyAny =
+    builtins.map(f, a, b).asInstanceOf[PyAny]
+  def mapOf(f: Any, a: Any, b: Any, c: Any): PyAny =
+    builtins.map(f, a, b, c).asInstanceOf[PyAny]
+
+  def zipOf(a: Any, b: Any): PyAny = builtins.zip(a, b).asInstanceOf[PyAny]
+  def zipOf(a: Any, b: Any, c: Any): PyAny =
+    builtins.zip(a, b, c).asInstanceOf[PyAny]
+  def zipOf(a: Any, b: Any, c: Any, d: Any): PyAny =
+    builtins.zip(a, b, c, d).asInstanceOf[PyAny]
+
+  def iterOf(value: Any): PyAny = builtins.iter(value).asInstanceOf[PyAny]
+  def iterOf(callable: Any, sentinel: Any): PyAny =
+    builtins.iter(callable, sentinel).asInstanceOf[PyAny]
+
+  /** Python `type(obj)`. Routed through `applyDynamic` because `type`
+   *  is a Scala soft keyword that cannot appear as a `selectDynamic`
+   *  identifier in source. */
+  def typeOf(value: Any): PyAny =
+    builtins.applyDynamic("type")(value).asInstanceOf[PyAny]
+
+  def newSlice(stop: Int): PyAny = builtins.slice(stop).asInstanceOf[PyAny]
+  def newSlice(start: Int, stop: Int, step: Int): PyAny =
+    builtins.slice(start, stop, step).asInstanceOf[PyAny]
+
+  // --- Numeric -------------------------------------------------------
+
+  def divMod(a: Long, b: Long): (Long, Long) =
+    val pair = builtins.divmod(a, b)
+    (getItem(pair, 0).asInstanceOf[Long], getItem(pair, 1).asInstanceOf[Long])
+
+  def divMod(a: Double, b: Double): (Double, Double) =
+    val pair = builtins.divmod(a, b)
+    (getItem(pair, 0).asInstanceOf[Double], getItem(pair, 1).asInstanceOf[Double])
+
+  def powOf(base: Long, exp: Long): Long =
+    builtins.pow(base, exp).asInstanceOf[Long]
+  def powOf(base: Long, exp: Long, mod: Long): Long =
+    builtins.pow(base, exp, mod).asInstanceOf[Long]
+  def powOf(base: Double, exp: Double): Double =
+    builtins.pow(base, exp).asInstanceOf[Double]
+
+  def sumOf(it: Any): Long = builtins.sum(it).asInstanceOf[Long]
+  def sumOf(it: Any, start: Long): Long = builtins.sum(it, start).asInstanceOf[Long]
+  def sumDoubles(it: Any, start: Double): Double =
+    builtins.sum(it, start).asInstanceOf[Double]
+
+  // --- Sequence / iteration ------------------------------------------
+
+  /** Public alias for `length_of`. */
+  def lenOf(value: Any): Int = length_of(value)
+
+  def sortedOf(it: Any): PyAny = builtins.sorted(it).asInstanceOf[PyAny]
+  def sortedDesc(it: Any): PyAny =
+    builtins
+      .applyDynamicNamed("sorted")(("", it), ("reverse", true))
+      .asInstanceOf[PyAny]
+  def sortedBy(it: Any, key: Any): PyAny =
+    builtins
+      .applyDynamicNamed("sorted")(("", it), ("key", key))
+      .asInstanceOf[PyAny]
+  def sortedByDesc(it: Any, key: Any): PyAny =
+    builtins
+      .applyDynamicNamed("sorted")(("", it), ("key", key), ("reverse", true))
+      .asInstanceOf[PyAny]
+
+  def nextOf(it: Any): PyAny = builtins.next(it).asInstanceOf[PyAny]
+  def nextOrElse(it: Any, default: Any): PyAny =
+    builtins.next(it, default).asInstanceOf[PyAny]
+
+  def anyOf(it: Any): Boolean = builtins.any(it).asInstanceOf[Boolean]
+  def allOf(it: Any): Boolean = builtins.all(it).asInstanceOf[Boolean]
+
+  // --- Attribute access / introspection ------------------------------
+
+  def getAttr(obj: Any, name: String): Any = builtins.getattr(obj, name)
+  def getAttrOrElse(obj: Any, name: String, default: Any): Any =
+    builtins.getattr(obj, name, default)
+  def setAttr(obj: Any, name: String, value: Any): Unit =
+    builtins.setattr(obj, name, value)
+  def hasAttr(obj: Any, name: String): Boolean =
+    builtins.hasattr(obj, name).asInstanceOf[Boolean]
+  def delAttr(obj: Any, name: String): Unit =
+    builtins.delattr(obj, name)
+
+  /** Public alias of the private `isInstanceOf` helper. */
+  def isInstance(value: Any, ty: Any): Boolean = isInstanceOf(value, ty)
+
+  def isSubclass(cls: Any, classinfo: Any): Boolean =
+    builtins.issubclass(cls, classinfo).asInstanceOf[Boolean]
+
+  def isCallable(value: Any): Boolean =
+    builtins.callable(value).asInstanceOf[Boolean]
+
+  // --- Eval / exec / compile -----------------------------------------
+
+  def evalOf(source: String): Any = builtins.eval(source)
+  def execOf(source: String): Unit = builtins.exec(source)
+  def compileOf(source: String, filename: String, mode: String): PyAny =
+    builtins.compile(source, filename, mode).asInstanceOf[PyAny]
+  def globalsOf(): PyAny = builtins.globals().asInstanceOf[PyAny]
+  def localsOf(): PyAny = builtins.locals().asInstanceOf[PyAny]
+
+  // --- Misc ----------------------------------------------------------
+
+  /** Python `__import__(name)` — low-level module import. */
+  def importModule(moduleName: String): PyAny =
+    builtins.applyDynamic("__import__")(moduleName).asInstanceOf[PyAny]
+
+  // --- Constants -----------------------------------------------------
+
+  @extern("builtins", "Ellipsis")
+  private object ellipsisHandle extends PyAny
+
+  @extern("builtins", "NotImplemented")
+  private object notImplementedHandle extends PyAny
+
+  def ellipsis: PyAny = ellipsisHandle
+  def notImplemented: PyAny = notImplementedHandle
+
+  // --- Exception type facades ----------------------------------------
+  //
+  // Each class below is an `@extern` reference to the Python builtin
+  // exception of the same name. They are type-only handles intended
+  // for `isInstance` / `isSubclass` checks and for binding catch-all
+  // results — they intentionally extend `PyAny` (not `Throwable`) so
+  // they participate in the Python facade type system rather than
+  // the JVM exception hierarchy. Catching a specific Python exception
+  // type at a Scala `catch` site is not currently supported; user
+  // code that wants typed handling should `catch case _: Throwable`
+  // and use `isInstance` against these handles.
+
+  @extern("builtins", "BaseException") class BaseException extends PyAny
+  @extern("builtins", "Exception") class Exception extends PyAny
+  @extern("builtins", "ArithmeticError") class ArithmeticError extends PyAny
+  @extern("builtins", "ZeroDivisionError") class ZeroDivisionError extends PyAny
+  @extern("builtins", "OverflowError") class OverflowError extends PyAny
+  @extern("builtins", "FloatingPointError") class FloatingPointError extends PyAny
+  @extern("builtins", "AssertionError") class AssertionError extends PyAny
+  @extern("builtins", "AttributeError") class AttributeError extends PyAny
+  @extern("builtins", "ValueError") class ValueError extends PyAny
+  @extern("builtins", "TypeError") class TypeError extends PyAny
+  @extern("builtins", "LookupError") class LookupError extends PyAny
+  @extern("builtins", "KeyError") class KeyError extends PyAny
+  @extern("builtins", "IndexError") class IndexError extends PyAny
+  @extern("builtins", "NameError") class NameError extends PyAny
+  @extern("builtins", "RuntimeError") class RuntimeError extends PyAny
+  @extern("builtins", "NotImplementedError") class NotImplementedError extends PyAny
+  @extern("builtins", "RecursionError") class RecursionError extends PyAny
+  @extern("builtins", "ImportError") class ImportError extends PyAny
+  @extern("builtins", "ModuleNotFoundError") class ModuleNotFoundError extends PyAny
+  @extern("builtins", "OSError") class OSError extends PyAny
+  @extern("builtins", "FileNotFoundError") class FileNotFoundError extends PyAny
+  @extern("builtins", "MemoryError") class MemoryError extends PyAny
+  @extern("builtins", "StopIteration") class StopIteration extends PyAny
+  @extern("builtins", "StopAsyncIteration") class StopAsyncIteration extends PyAny
+  @extern("builtins", "KeyboardInterrupt") class KeyboardInterrupt extends PyAny
+  @extern("builtins", "SystemExit") class SystemExit extends PyAny
+  @extern("builtins", "GeneratorExit") class GeneratorExit extends PyAny
+  @extern("builtins", "UnicodeError") class UnicodeError extends PyAny
+  @extern("builtins", "UnicodeDecodeError") class UnicodeDecodeError extends PyAny
+  @extern("builtins", "UnicodeEncodeError") class UnicodeEncodeError extends PyAny
