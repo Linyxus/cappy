@@ -47,16 +47,20 @@ object PyLinker:
    *  classes verbatim + DCE-pruned support classes. Used by the batch
    *  Python backend (`GenPython` → one `.py` per CU).
    *
-   *  `ReplIncrement` — used by the Cappy REPL for each user input. The
-   *  linker behaviour is currently identical to `Bundle`; the value is
-   *  retained as a documented call site so the driver can later
-   *  specialize (e.g. skip whole-bundle topological re-sort once the
-   *  subprocess's class graph is known). The driver itself filters the
-   *  emitted bundle against its `emittedClasses` set so support classes
-   *  already sent to the subprocess aren't re-emitted.
+   *  `ReplSupportPreload` — used once at Cappy REPL startup. Skips DCE
+   *  entirely and returns the full collected class set (validated and
+   *  emission-ordered). The REPL ships the resulting bundle to the
+   *  Python subprocess up front, so per-input links never need to walk
+   *  the support classpath again.
+   *
+   *  `ReplIncrement` — used per Cappy REPL input. Skips DCE and
+   *  returns only the user-input classes (already validated against
+   *  the full support surface). The persistent subprocess already
+   *  carries every support class from the preload bundle, so the
+   *  driver only emits the new wrapper(s).
    */
   enum LinkMode:
-    case Bundle, ReplIncrement
+    case Bundle, ReplSupportPreload, ReplIncrement
 
   /** A link input.
    *
@@ -159,7 +163,12 @@ object PyLinker:
         methodsByName.get(method).exists(_.flags.namespace == PyMemberNamespace.Constructor) ||
           runtime.exists(_.hasConstructor(method))
 
-    def link(): LinkedBundle =
+    def link(): LinkedBundle = mode match
+      case LinkMode.Bundle         => linkBundle()
+      case LinkMode.ReplSupportPreload => linkReplSupportPreload()
+      case LinkMode.ReplIncrement  => linkReplIncrement()
+
+    private def linkBundle(): LinkedBundle =
       val allClasses = collectClasses()
       val mainEntry  = collectMainEntry()
 
@@ -183,6 +192,101 @@ object PyLinker:
       // classes so a class always appears after its superclass (when both
       // are bundled), preserving input order otherwise.
       LinkedBundle(orderForEmission(keptClasses), mainEntry)
+
+    /** Startup preload: no DCE; emits every support class whose
+     *  nominal references resolve. Classes with broken references are
+     *  silently dropped — that mirrors what Bundle-mode DCE does
+     *  implicitly (those classes are pruned because no user root
+     *  reaches them, masking the fact that they wouldn't link in
+     *  isolation). Dropping is iterated to a fixpoint so a class
+     *  whose superclass we just dropped goes too.
+     *
+     *  The support classpath legitimately contains such classes —
+     *  `scala.concurrent.impl.FutureConvertersImpl.CF` extends
+     *  `java.util.concurrent.CompletableFuture`, `scala.sys.process.*`
+     *  reaches into `java.lang.ProcessBuilder`, etc. — none of which
+     *  have a `.pyir` or [[PyIRRuntime]] entry. The REPL accepts the
+     *  same coverage that Bundle-mode covers in practice: anything
+     *  the user can actually reach via the supported Scala/Java
+     *  surface. */
+    private def linkReplSupportPreload(): LinkedBundle =
+      var current = collectClasses()
+
+      if errors.nonEmpty then
+        throw new PyLinkingException(errors.toList)
+
+      // Only the structural emit-time refs need to resolve: the
+      // Python `class Foo(Bar, IFace):` statement requires Bar and
+      // IFace to exist at definition time. Method bodies resolve
+      // their references lazily at call time, so we deliberately do
+      // NOT use the full `validateClass` here — it would drop e.g.
+      // `scala.Predef$` because some method body references a class
+      // not bundled.
+      def hasResolvedParents(
+          cls:        PyClassDef,
+          classInfos: Map[PyClassName, ClassInfo]
+      ): Boolean =
+        cls.superClassName.forall(classInfos.contains)
+          && cls.interfaces.forall(classInfos.contains)
+
+      var converged = false
+      while !converged do
+        val classInfos = buildClassInfos(current)
+        val kept = current.filter(hasResolvedParents(_, classInfos))
+        if kept.size == current.size then converged = true
+        else current = kept
+
+      // Resolve Python-identifier collisions. Two PyClassNames can
+      // mangle to the same Python identifier when one has a trailing
+      // `$` (case-object module class, sanitized to `_`) and the
+      // other's simple name is a Python keyword (also suffixed `_`).
+      // Example: `scala.None_` (module class, the case-object
+      // singleton with `toString` returning `"None"`) and `scala.None`
+      // (the static-forwarder companion) both encode to
+      // `scala_None_`. Bundle-mode DCE happens to drop the forwarder
+      // before emit; preload sees both. The second class statement
+      // would shadow the first, wiping the case-object's overrides.
+      //
+      // Prefer the [[PyClassKind.ModuleClass]] in each collision
+      // group — that carries the case-object semantics; the
+      // static-forwarder is generally redundant once the module
+      // class is in scope.
+      val byIdent = current.groupBy(c => PyIRRuntime.classIdentifier(c.name))
+      current = byIdent.iterator.flatMap { (_, group) =>
+        if group.sizeIs == 1 then group
+        else
+          val moduleClass = group.find(_.kind == PyClassKind.ModuleClass)
+          moduleClass.toList match
+            case Nil      => List(group.head)
+            case nonEmpty => nonEmpty
+      }.toList
+
+      // No main entry from support inputs (collectMainEntry only
+      // considers User inputs anyway). Order so each class appears
+      // after its bundled superclass.
+      LinkedBundle(orderForEmission(current), None)
+
+    /** Per-input link: no DCE; returns only the User classes. Support
+     *  classes are available as `classInfos` for nominal-reference
+     *  validation against the new user code, but are NOT re-emitted —
+     *  the persistent subprocess loaded them at preload time. */
+    private def linkReplIncrement(): LinkedBundle =
+      val allClasses = collectClasses()
+      val mainEntry  = collectMainEntry()
+      val userClassNames =
+        userInputs.iterator.flatMap(_.classes).map(_.name).toSet
+      val classInfos = buildClassInfos(allClasses)
+      // Only validate the new User classes; Support was validated
+      // already at preload (or, for phantom-support wrappers from
+      // prior REPL inputs, when those inputs were first compiled).
+      val userClasses = allClasses.filter(c => userClassNames.contains(c.name))
+      userClasses.foreach(validateClass(_, classInfos))
+      mainEntry.foreach(validateMainEntry(_, classInfos))
+
+      if errors.nonEmpty then
+        throw new PyLinkingException(errors.toList)
+
+      LinkedBundle(orderForEmission(userClasses), mainEntry)
 
     private def optimizeReachability(
         classes:        List[PyClassDef],

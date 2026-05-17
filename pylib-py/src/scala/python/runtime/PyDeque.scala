@@ -9,6 +9,8 @@ object PyDeque:
     @name("deque")
     def newDeque(): PyDynamic = native
 
+  @extern("builtins")
+  private object builtins extends PyAny:
     @name("len")
     def lengthOf(container: Any): Int = native
 
@@ -32,4 +34,4 @@ final class PyDeque[T] private[runtime] (private val underlying: PyDynamic):
     underlying.clear()
 
   def size(): Int =
-    PyDeque.collections.lengthOf(underlying)
+    PyDeque.builtins.lengthOf(underlying)

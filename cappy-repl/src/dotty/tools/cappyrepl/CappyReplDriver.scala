@@ -77,7 +77,6 @@ class CappyReplDriver(
     dotty.tools.backend.python.ir.pyir.PyClassName,
     PyClassDef
   ]
-  private var emittedClosureCarrierArities: Set[Int] = Set.empty
 
   // Output dir is a VirtualDirectory so each compile's class/tasty files
   // live in memory and survive across runs — the typer can resolve
@@ -130,7 +129,6 @@ class CappyReplDriver(
     if process != null && process.isAlive then process.shutdown()
     sinkBuffer.clear()
     emittedClasses.clear()
-    emittedClosureCarrierArities = Set.empty
     rootCtx = initialCtx()
     compiler = new CappyReplCompiler
     process = PythonProcess.start(repoRoot)
@@ -141,18 +139,40 @@ class CappyReplDriver(
   private def loadSupportInputs(ctx: Context): List[PyLinker.Input] =
     PyClasspathLoader.loadSupportInputs(excludeOutputFile = None)(using ctx)
 
-  /** Send the runtime preamble + REPL-side render helpers at startup.
+  /** Preload the runtime preamble, REPL render helpers, and every
+   *  support class on the classpath into the live Python subprocess.
+   *  After this, per-input links skip DCE and per-input emissions
+   *  only ship the new wrapper(s).
    *
-   *  Note: we deliberately do **not** pre-emit support classes here.
-   *  Forcing the support surface "all reachable" exposes references to
-   *  runtime-provided classes that the linker can't resolve outside the
-   *  normal DCE-driven walk (e.g. `scala.runtime.StructuralCallSite` ->
-   *  `java.lang.invoke.ConstantCallSite`). Instead each REPL input is
-   *  linked normally and the driver tracks which support classes have
-   *  already been sent, emitting only those new on this turn. */
+   *  The send is split into two chunks: the first (runtime preamble +
+   *  REPL helpers) is small and always succeeds; the second (support
+   *  bundle) is large and may surface partial failures. Tracebacks
+   *  from the support chunk are written to `out` so the user sees
+   *  them, but the REPL stays functional regardless. */
   private def sendStartupBundle(): Unit =
     val preamble = PyIRRuntime.content
     process.send(preamble + "\n" + replHelpersPython)
+
+    val supportBundle = PyLinker.link(
+      userInputs    = Nil,
+      supportInputs = supportInputs,
+      mode          = PyLinker.LinkMode.ReplSupportPreload
+    )
+    val supportPy = PyIREmitter.emitToString(
+      classes                = supportBundle.classes,
+      mainEntry              = None,
+      includePreamble        = false,
+      includeClosureCarriers = true,
+      skipDefinitionsFor     = Set.empty,
+      skipClosureCarriersFor = Set.empty
+    )
+    val supportOutput = process.send(supportPy)
+    if supportOutput.nonEmpty then
+      System.err.println("[cappy-repl] support preload produced output:")
+      System.err.println(supportOutput)
+    // Seed the "already emitted" cache so per-input emission skips
+    // everything that just landed in the subprocess.
+    for c <- supportBundle.classes do emittedClasses(c.name) = c
 
   /** Build the fresh initial State (objectIndex = 0). The first user
    *  input produces `cappy_line_1`. */
@@ -234,17 +254,18 @@ class CappyReplDriver(
           val allClasses    = sinkBuffer.toList.flatMap(_._2)
           val mainEntry     = sinkBuffer.toList.flatMap(_._3).headOption
 
-          // Link normally (Bundle); filter to "classes not yet emitted"
-          // afterwards so support classes the subprocess already has
-          // aren't redefined.
           val userInput = PyLinker.Input(
             classes   = allClasses,
             mainEntry = mainEntry,
             source    = PyLinker.InputSource.User
           )
-          // Include every class we've already emitted as a phantom
-          // Support input. This satisfies the linker's nominal-reference
-          // check when this input references a prior wrapper.
+          // `ReplIncrement` skips DCE and returns only the user
+          // classes; support classes (preloaded at startup) and
+          // previously-emitted wrappers are visible to the linker
+          // only for nominal-reference validation. We supply both:
+          // `supportInputs` so the linker sees the support surface;
+          // `phantomSupport` so a reference to `cappy_line_<K>.x`
+          // from a prior input resolves.
           val phantomSupport: List[PyLinker.Input] =
             if emittedClasses.isEmpty then Nil
             else List(PyLinker.Input(
@@ -262,78 +283,23 @@ class CappyReplDriver(
             catch case ex: dotty.tools.backend.python.PyLinkingException =>
               return (s"link error:\n${ex.getMessage}", state)
 
-          // Restore each kept class's methods/fields from its original
-          // input form. The linker's method-level DCE is too aggressive
-          // for the REPL: input N may emit a class with only the
-          // methods it used, then input M > N references a different
-          // method and runtime-fails. Restoring full methods means a
-          // class is emitted once with all its members; Python only
-          // resolves method bodies at call time, so methods that
-          // reference classes not in this bundle are harmless until
-          // actually invoked.
-          //
-          // BUT: clinit (static field initializer) bodies run at emit
-          // time via the `# -- @static field initializers --` block,
-          // which DOES trigger NameErrors if their body references
-          // unbundled classes. So we restore everything EXCEPT
-          // resurrecting clinits that the linker pruned: if the
-          // linker's `keptCls` lacked a clinit method, we strip the
-          // clinit from the restored methods too.
-          val allInputClasses: Map[
-            dotty.tools.backend.python.ir.pyir.PyClassName, PyClassDef
-          ] =
-            (allClasses.iterator ++ supportInputs.iterator.flatMap(_.classes))
-              .map(c => c.name -> c).toMap
+          // Filter out any class the subprocess already has (shouldn't
+          // happen given ReplIncrement returns only User classes, but
+          // keeps the cache authoritative if a user re-defines a name).
+          val alreadyEmitted: Set[PyClassName] = emittedClasses.keysIterator.toSet
+          val newClasses = bundle.classes.filterNot(c => alreadyEmitted.contains(c.name))
 
-          import dotty.tools.backend.python.ir.pyir.{PyMethodDef, PyMemberNamespace}
-          def isInitTime(m: PyMethodDef): Boolean =
-            m.name.simple.isStaticInit ||
-              m.flags.namespace == PyMemberNamespace.Constructor
-
-          // Restore non-init-time methods (regular instance/static
-          // methods). Init-time methods — constructors and `<clinit>` —
-          // are kept ONLY in the linker-pruned form, because their
-          // bodies run via `_scpy_ensure` at module-load time; if we
-          // restored their unreached references, those would NameError
-          // immediately. Non-init methods only resolve their references
-          // at call time, so restored unreached bodies stay harmless
-          // unless the user actually invokes them.
-          val expanded: List[PyClassDef] = bundle.classes.map { keptCls =>
-            allInputClasses.get(keptCls.name) match
-              case Some(original) =>
-                val keptInitTime = keptCls.methods.filter(isInitTime)
-                val restoredRegular = original.methods.filterNot(isInitTime)
-                val mergedMethods = keptInitTime ++ restoredRegular
-                keptCls.copy(methods = mergedMethods, fields = original.fields)
-              case None => keptCls
-          }
-          val alreadyEmitted: Set[PyClassName] =
-            emittedClasses.keysIterator.toSet
-          val newClasses = expanded.filterNot(c => alreadyEmitted.contains(c.name))
-          // Closure carriers reference `scala.FunctionN` classes. The
-          // emitter only generates carriers for arities present in this
-          // increment's known class set, so track arities individually:
-          // input 1 may install `_scpy_Fn0`, while input 2 may be the
-          // first one that needs `_scpy_Fn1`.
-          val knownFunctionArities = expanded.iterator.flatMap(functionArity).toSet
-          val missingCarrierArities = knownFunctionArities -- emittedClosureCarrierArities
-          val needsCarriers = missingCarrierArities.nonEmpty
-
-          // Pass the FULL bundle so the emitter's
-          // `classByName` / `routeToModuleVar` sees every class —
-          // critical for `_scpy_mod_<name>__` references on classes
-          // emitted in earlier inputs. `skipDefinitionsFor` tells the
-          // emitter to skip class-def / singleton-binding / clinit
-          // emission for classes already in Python.
+          // Closure carriers + the full support surface are all
+          // preloaded at startup; per-input emission only ships the
+          // new user wrapper.
           val emittedPy = PyIREmitter.emitToString(
-            expanded,
+            classes                = newClasses,
             mainEntry              = None,
             includePreamble        = false,
-            includeClosureCarriers = needsCarriers,
-            skipDefinitionsFor     = alreadyEmitted,
-            skipClosureCarriersFor = emittedClosureCarrierArities
+            includeClosureCarriers = false,
+            skipDefinitionsFor     = Set.empty,
+            skipClosureCarriersFor = Set.empty
           )
-
 
           for c <- newClasses do emittedClasses(c.name) = c
 
@@ -348,8 +314,6 @@ class CappyReplDriver(
           val output =
             try process.send(emittedPy + "\n" + renderPy)
             catch case ex: PythonProcessTerminated => ex.getMessage
-          if needsCarriers then
-            emittedClosureCarrierArities = emittedClosureCarrierArities ++ missingCarrierArities
 
           (output, newState.copy(context = runCtx))
     catch case NonFatal(ex) =>
@@ -386,13 +350,6 @@ class CappyReplDriver(
             td.symbol
         }
       case _ => None
-
-  private def functionArity(cls: PyClassDef): Option[Int] =
-    val prefix = "scala.Function"
-    val name = cls.name.nameString
-    if !name.startsWith(prefix) then None
-    else
-      name.drop(prefix.length).toIntOption.filter(arity => arity >= 0 && arity <= 22)
 
   private def formatErrors(errs: List[Diagnostic], ctx: Context): String =
     val mr = new MessageRendering {}
