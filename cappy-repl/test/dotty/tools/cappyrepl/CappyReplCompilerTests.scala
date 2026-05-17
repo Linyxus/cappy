@@ -43,4 +43,11 @@ class CappyReplCompilerTests extends CappyReplTest:
     val ok = feed("1 + 1")
     assertTrue(s"expected `res0: Int = 2` after recovery, got: $ok",
       ok.contains("res0: Int = 2"))
+
+  @Test def testMapAfterPriorExpression(): Unit =
+    val first = feed("1")
+    assertTrue(s"expected `res0: Int = 1`, got: $first", first.contains("res0: Int = 1"))
+    val second = feed("""Map("a" -> 1, "b" -> 2)""")
+    assertTrue(s"expected map literal after prior expression, got: $second",
+      second.contains("res1: Map[String, Int] = Map(a -> 1, b -> 2)"))
 end CappyReplCompilerTests

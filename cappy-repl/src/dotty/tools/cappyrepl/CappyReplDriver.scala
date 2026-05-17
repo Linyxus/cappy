@@ -19,7 +19,7 @@ import dotty.tools.io.VirtualDirectory
 import dotty.tools.backend.python.{
   GenPython, PyClasspathLoader, PyDefinitions, PyIREmitter, PyIRRuntime, PyLinker
 }
-import dotty.tools.backend.python.ir.pyir.PyClassDef
+import dotty.tools.backend.python.ir.pyir.{PyClassDef, PyClassName}
 
 /** Headless Cappy REPL driver.
  *
@@ -33,8 +33,9 @@ import dotty.tools.backend.python.ir.pyir.PyClassDef
  *       writing `.pyir`/`.py` to disk.
  *    3. Link with `LinkMode.ReplIncrement` against the cached support
  *       inputs — the bundle contains only the new user class(es).
- *    4. Emit with `includePreamble = false` / `includeClosureCarriers = false`
- *       — the subprocess already has those from startup.
+ *    4. Emit without the runtime preamble. Closure carriers are emitted
+ *       lazily by arity, the first time an increment's known classes can
+ *       support them.
  *    5. Append `_cappy_render_*` calls produced by [[CappyRendering]] so
  *       the live Python values are formatted as `val x: Int = 5`.
  *    6. `process.send(...)` pipes the chunk to Python and reads back
@@ -76,7 +77,7 @@ class CappyReplDriver(
     dotty.tools.backend.python.ir.pyir.PyClassName,
     PyClassDef
   ]
-  private var closureCarriersEmitted: Boolean = false
+  private var emittedClosureCarrierArities: Set[Int] = Set.empty
 
   // Output dir is a VirtualDirectory so each compile's class/tasty files
   // live in memory and survive across runs — the typer can resolve
@@ -129,7 +130,7 @@ class CappyReplDriver(
     if process != null && process.isAlive then process.shutdown()
     sinkBuffer.clear()
     emittedClasses.clear()
-    closureCarriersEmitted = false
+    emittedClosureCarrierArities = Set.empty
     rootCtx = initialCtx()
     compiler = new CappyReplCompiler
     process = PythonProcess.start(repoRoot)
@@ -306,20 +307,17 @@ class CappyReplDriver(
                 keptCls.copy(methods = mergedMethods, fields = original.fields)
               case None => keptCls
           }
-          val alreadyEmitted: Set[dotty.tools.backend.python.ir.pyir.PyClassName] =
+          val alreadyEmitted: Set[PyClassName] =
             emittedClasses.keysIterator.toSet
           val newClasses = expanded.filterNot(c => alreadyEmitted.contains(c.name))
-          // Closure carriers reference `scala.FunctionN` classes. Emit
-          // them once on the first increment that brings any FunctionN
-          // arity in, then never again — re-emitting would shadow
-          // `_scpy_FnN` instances captured by closures handed out by
-          // earlier inputs.
-          val incomingFunctionN = newClasses.exists(c =>
-            c.name.nameString.startsWith("scala.Function")
-            && c.name.nameString.drop("scala.Function".length).forall(_.isDigit)
-          )
-          val needsCarriers = incomingFunctionN && !closureCarriersEmitted
-          if needsCarriers then closureCarriersEmitted = true
+          // Closure carriers reference `scala.FunctionN` classes. The
+          // emitter only generates carriers for arities present in this
+          // increment's known class set, so track arities individually:
+          // input 1 may install `_scpy_Fn0`, while input 2 may be the
+          // first one that needs `_scpy_Fn1`.
+          val knownFunctionArities = expanded.iterator.flatMap(functionArity).toSet
+          val missingCarrierArities = knownFunctionArities -- emittedClosureCarrierArities
+          val needsCarriers = missingCarrierArities.nonEmpty
 
           // Pass the FULL bundle so the emitter's
           // `classByName` / `routeToModuleVar` sees every class —
@@ -332,7 +330,8 @@ class CappyReplDriver(
             mainEntry              = None,
             includePreamble        = false,
             includeClosureCarriers = needsCarriers,
-            skipDefinitionsFor     = alreadyEmitted
+            skipDefinitionsFor     = alreadyEmitted,
+            skipClosureCarriersFor = emittedClosureCarrierArities
           )
 
 
@@ -349,6 +348,8 @@ class CappyReplDriver(
           val output =
             try process.send(emittedPy + "\n" + renderPy)
             catch case ex: PythonProcessTerminated => ex.getMessage
+          if needsCarriers then
+            emittedClosureCarrierArities = emittedClosureCarrierArities ++ missingCarrierArities
 
           (output, newState.copy(context = runCtx))
     catch case NonFatal(ex) =>
@@ -385,6 +386,13 @@ class CappyReplDriver(
             td.symbol
         }
       case _ => None
+
+  private def functionArity(cls: PyClassDef): Option[Int] =
+    val prefix = "scala.Function"
+    val name = cls.name.nameString
+    if !name.startsWith(prefix) then None
+    else
+      name.drop(prefix.length).toIntOption.filter(arity => arity >= 0 && arity <= 22)
 
   private def formatErrors(errs: List[Diagnostic], ctx: Context): String =
     val mr = new MessageRendering {}

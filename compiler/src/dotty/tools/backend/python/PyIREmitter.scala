@@ -83,9 +83,9 @@ object PyIREmitter:
    *  `includePreamble` and `includeClosureCarriers` are `true` by default
    *  (bundled `.py` output). The Cappy REPL turns them off for per-input
    *  increments: the persistent Python subprocess already has the
-   *  `PyIRRuntime.content` prelude and the `_scpy_FnN` carriers in scope
-   *  from the startup bundle, so re-emitting them would redefine module
-   *  state and clobber any closures handed out earlier.
+   *  `PyIRRuntime.content` prelude in scope from the startup bundle.
+   *  Closure carriers can be emitted lazily as needed; re-emitting an
+   *  existing arity would clobber any closures handed out earlier.
    */
   def emit(
       classes:                List[PyClassDef],
@@ -93,9 +93,10 @@ object PyIREmitter:
       out:                    PrintWriter,
       includePreamble:        Boolean = true,
       includeClosureCarriers: Boolean = true,
-      skipDefinitionsFor:     Set[PyClassName] = Set.empty
+      skipDefinitionsFor:     Set[PyClassName] = Set.empty,
+      skipClosureCarriersFor: Set[Int] = Set.empty
   ): Unit =
-    val e = new Emitter(out, includePreamble, includeClosureCarriers, skipDefinitionsFor)
+    val e = new Emitter(out, includePreamble, includeClosureCarriers, skipDefinitionsFor, skipClosureCarriersFor)
     e.emitBundle(classes, mainEntry)
 
   /** Convenience for producing the Python source as a `String`. */
@@ -104,11 +105,12 @@ object PyIREmitter:
       mainEntry:              Option[MainEntry],
       includePreamble:        Boolean = true,
       includeClosureCarriers: Boolean = true,
-      skipDefinitionsFor:     Set[PyClassName] = Set.empty
+      skipDefinitionsFor:     Set[PyClassName] = Set.empty,
+      skipClosureCarriersFor: Set[Int] = Set.empty
   ): String =
     val buf = new java.io.StringWriter()
     val pw  = new PrintWriter(buf)
-    try emit(classes, mainEntry, pw, includePreamble, includeClosureCarriers, skipDefinitionsFor)
+    try emit(classes, mainEntry, pw, includePreamble, includeClosureCarriers, skipDefinitionsFor, skipClosureCarriersFor)
     finally pw.flush()
     buf.toString
 
@@ -120,7 +122,8 @@ object PyIREmitter:
       out:                    PrintWriter,
       includePreamble:        Boolean = true,
       includeClosureCarriers: Boolean = true,
-      skipDefinitionsFor:     Set[PyClassName] = Set.empty
+      skipDefinitionsFor:     Set[PyClassName] = Set.empty,
+      skipClosureCarriersFor: Set[Int] = Set.empty
   ):
     private var indentLevel: Int = 0
     private val indentStr: String = "    "
@@ -197,10 +200,9 @@ object PyIREmitter:
 
       // The `_scpy_FnN` carriers extend `_scpy_Fn` (defined in the
       // preamble) plus the nominal `scala.FunctionN`. In REPL-increment
-      // mode the carriers were emitted at startup and re-emitting would
-      // (a) shadow any `_scpy_FnN` instance captured by prior inputs and
-      // (b) re-import a now-different `_scpy_Fn` if the preamble was
-      // suppressed but FunctionN is in this increment.
+      // mode callers can suppress arities already emitted into the live
+      // process; re-emitting would shadow any `_scpy_FnN` class captured
+      // by prior inputs.
       if includeClosureCarriers then
         emitClosureCarriers()
 
@@ -315,7 +317,10 @@ object PyIREmitter:
      */
     private def emitClosureCarriers(): Unit =
       val objectRef = PyClassRef(PyClassName.ObjectClass)
-      val arities = (0 to 22).filter(n => knownClasses.contains(PyClassName(s"scala.Function$n")))
+      val arities = (0 to 22).filter(n =>
+        knownClasses.contains(PyClassName(s"scala.Function$n"))
+        && !skipClosureCarriersFor.contains(n)
+      )
       if arities.isEmpty then return
       line("# -- closure carriers (_scpy_Fn0.._scpy_Fn22) --")
       emptyLine()
@@ -1766,8 +1771,8 @@ object PyIREmitter:
         emitBinary(op, lhs, rhs)
 
       // Closures (simplified). Wrapped in an arity-specific
-      // `_scpy_FnN` subclass (defined in the runtime preamble for
-      // `N = 0..22`) that both inherits the `_scpy_Fn` `__call__` /
+      // `_scpy_FnN` subclass (emitted after the matching `FunctionN`
+      // class is available) that both inherits the `_scpy_Fn` `__call__` /
       // `apply*` forwarding and extends the matching nominal `FunctionN`
       // base, so runtime `_scpy_is_instance(closure, scala.FunctionN)`
       // succeeds at constructor-dispatch sites with a `FunctionN`
