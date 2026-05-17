@@ -1,0 +1,2 @@
+cappy> def id(x: PyAny): PyAny = x
+def id(x: PyAny): PyAny

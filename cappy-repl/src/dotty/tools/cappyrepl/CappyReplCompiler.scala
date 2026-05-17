@@ -57,9 +57,14 @@ class CappyReplCompiler extends Compiler:
   def newRun(initCtx: Context, state: CappyReplState): Run =
     val run = new Run(this, initCtx):
       override protected def rootContext(using Context): Context =
-        // Standard root setup: empty package + root imports.
+        // Standard root setup: empty package + root imports + an
+        // implicit `import scala.python.*` so REPL users can refer to
+        // `PyAny`, `@extern`, `Dynamic`, etc. without typing the
+        // qualifier each session. Resolved lazily so that the lookup
+        // runs in the per-call import context.
         val rootCtx = super.rootContext.fresh
           .withRootImports
+          .withRootImports(List(RootRef(() => requiredPackageRef("scala.python"))))
           .fresh.setOwner(defn.EmptyPackageClass): Context
         state.validObjectIndexes.foldLeft(rootCtx)((c, i) =>
           importWrapper(i, state)(using c))
