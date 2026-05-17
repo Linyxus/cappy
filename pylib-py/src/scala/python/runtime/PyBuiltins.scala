@@ -487,8 +487,8 @@ object PyBuiltins:
   // --- Misc ----------------------------------------------------------
 
   /** Python `__import__(name)` — low-level module import. */
-  def importModule(moduleName: String): PyAny =
-    builtins.applyDynamic("__import__")(moduleName).asInstanceOf[PyAny]
+  def importModule(moduleName: String): PyDynamic =
+    builtins.applyDynamic("__import__")(moduleName).asInstanceOf[PyDynamic]
 
   // --- Constants -----------------------------------------------------
 
