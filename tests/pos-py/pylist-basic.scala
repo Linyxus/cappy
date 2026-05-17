@@ -1,9 +1,9 @@
-// Pins `scala.python.PyList`'s single-shot operations. A `PyList[T]`
+// Pins `scala.python.runtime.PyList`'s single-shot operations. A `PyList[T]`
 // value at runtime IS a Python `list`; every method below is
 // intercepted in `GenPython.genPyListInstanceCall` and lowered to a
 // `_scpy_list_*` runtime helper or a Python list literal.
 
-import scala.python.PyList
+import scala.python.runtime.PyList
 
 @main def pylistBasic(): Unit =
   val xs = PyList.empty[Int]()

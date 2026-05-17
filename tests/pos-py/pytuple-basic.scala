@@ -1,8 +1,8 @@
-// Pins `scala.python.PyTuple`'s read-only operations. A `PyTuple[T]`
+// Pins `scala.python.runtime.PyTuple`'s read-only operations. A `PyTuple[T]`
 // value at runtime IS a bare Python `tuple` — NOT the same thing as a
 // Scala `Tuple{N}`, which lowers through `_scpy_ScalaTuple(...)`.
 
-import scala.python.PyTuple
+import scala.python.runtime.PyTuple
 
 @main def pytupleBasic(): Unit =
   val empty = PyTuple.empty[Int]()

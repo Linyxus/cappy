@@ -2,7 +2,7 @@
 // Sorted output keeps results deterministic regardless of dict
 // insertion order or Python version.
 
-import scala.python.PyMap
+import scala.python.runtime.PyMap
 
 @main def pymapViews(): Unit =
   val m = PyMap.empty[String, Int]()

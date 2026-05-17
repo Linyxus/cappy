@@ -2,9 +2,9 @@
 // PyMap with PyList / PyTuple as values, mutating an inner PyList
 // through an outer immutable PyTuple, and deep nesting.
 
-import scala.python.PyList
-import scala.python.PyTuple
-import scala.python.PyMap
+import scala.python.runtime.PyList
+import scala.python.runtime.PyTuple
+import scala.python.runtime.PyMap
 
 @main def pylistPytupleMixed(): Unit =
   // PyList of PyTuple

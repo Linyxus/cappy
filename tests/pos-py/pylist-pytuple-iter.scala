@@ -4,8 +4,8 @@
 // invisible. Scala `Iterator` defaults (`toList`, `map`, `foldLeft`,
 // `length`, …) come from the inherited `AbstractIterator`.
 
-import scala.python.PyList
-import scala.python.PyTuple
+import scala.python.runtime.PyList
+import scala.python.runtime.PyTuple
 
 @main def pylistPytupleIter(): Unit =
   // empty iterators

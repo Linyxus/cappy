@@ -1,9 +1,9 @@
-// Pins `scala.python.PyMap`'s single-shot operations. A `PyMap[K, V]`
+// Pins `scala.python.runtime.PyMap`'s single-shot operations. A `PyMap[K, V]`
 // value at runtime IS a Python `dict`; every method below is
 // intercepted in `GenPython.genPyMapInstanceCall` and lowered to a
 // `_scpy_dict_*` runtime helper or a Python dict literal.
 
-import scala.python.PyMap
+import scala.python.runtime.PyMap
 
 @main def pymapBasic(): Unit =
   val m = PyMap.empty[String, Int]()

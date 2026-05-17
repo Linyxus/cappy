@@ -1,11 +1,11 @@
-// Corner cases for `scala.python.PyList`: construction edges, Python
+// Corner cases for `scala.python.runtime.PyList`: construction edges, Python
 // indexing/slicing semantics, aliasing/mutation, side-effect ordering,
 // search edges, and stringification. These behaviours are intentional
 // (PyList is a thin handle on a Python `list`) — pin them so future
 // refactors notice if they shift.
 
-import scala.python.PyList
-import scala.python.PyMap
+import scala.python.runtime.PyList
+import scala.python.runtime.PyMap
 
 @main def pylistCorners(): Unit =
   // ---------------------------------------------------------------

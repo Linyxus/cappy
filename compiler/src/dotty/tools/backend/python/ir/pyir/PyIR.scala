@@ -307,19 +307,19 @@ final case class PyArraySelect(array: PyTree, index: PyTree)
 final case class PyTupleValue(elems: List[PyTree])
     (val tpe: PyType, val pos: PyPosition) extends PyTree
 
-/** Python dict value. Lowers a `scala.python.PyMap[K, V]` factory call
+/** Python dict value. Lowers a `scala.python.runtime.PyMap[K, V]` factory call
  *  to a native Python dict literal. The Scala `PyMap` type erases
  *  away — at runtime, a `PyMap` value IS a Python `dict`. */
 final case class PyDictValue(entries: List[(PyTree, PyTree)])
     (val tpe: PyType, val pos: PyPosition) extends PyTree
 
-/** Python list value. Lowers a `scala.python.PyList[T]` factory call
+/** Python list value. Lowers a `scala.python.runtime.PyList[T]` factory call
  *  to a native Python list literal. The Scala `PyList` type erases
  *  away — at runtime, a `PyList` value IS a Python `list`. */
 final case class PyListValue(elems: List[PyTree])
     (val tpe: PyType, val pos: PyPosition) extends PyTree
 
-/** Bare Python tuple value. Lowers a `scala.python.PyTuple[T]` factory
+/** Bare Python tuple value. Lowers a `scala.python.runtime.PyTuple[T]` factory
  *  call to a native Python tuple literal. Distinct from `PyTupleValue`,
  *  which wraps elements in `_scpy_ScalaTuple(...)` to preserve
  *  Scala-tuple semantics. */

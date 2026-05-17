@@ -41,7 +41,7 @@ object PyIRFormat:
    *  Older readers will reject `.pyir` containing the new tag.
    *
    *  Bumped to 2 when `PyDictValue` was added (tag `0x54`) so the
-   *  Python backend can lower `scala.python.PyMap` factory calls to
+   *  Python backend can lower `scala.python.runtime.PyMap` factory calls to
    *  Python dict literals.
    *
    *  Bumped to 3 when `PyClassDef.superClass` widened from
@@ -53,7 +53,7 @@ object PyIRFormat:
    *
    *  Bumped to 4 when `PyListValue` (`0x55`) and `PyRawTupleValue`
    *  (`0x56`) were added so the Python backend can lower
-   *  `scala.python.PyList` and `scala.python.PyTuple` factory calls to
+   *  `scala.python.runtime.PyList` and `scala.python.runtime.PyTuple` factory calls to
    *  Python list and bare tuple literals.
    */
   final val MinorVersion: Int = 4

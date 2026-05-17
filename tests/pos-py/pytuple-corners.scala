@@ -1,9 +1,9 @@
-// Corner cases for `scala.python.PyTuple`: 1-tuple trailing comma,
+// Corner cases for `scala.python.runtime.PyTuple`: 1-tuple trailing comma,
 // Python slicing/indexing edges, identity under concat (immutable
 // tuple semantics), and stringification.
 
-import scala.python.PyTuple
-import scala.python.PyMap
+import scala.python.runtime.PyTuple
+import scala.python.runtime.PyMap
 
 @main def pytupleCorners(): Unit =
   // ---------------------------------------------------------------

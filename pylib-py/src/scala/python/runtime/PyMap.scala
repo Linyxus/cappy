@@ -1,4 +1,6 @@
-package scala.python
+package scala.python.runtime
+
+import scala.python.native
 
 /** A Scala-typed handle on a Python `dict`.
  *

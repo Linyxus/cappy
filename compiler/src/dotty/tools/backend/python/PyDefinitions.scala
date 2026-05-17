@@ -183,15 +183,15 @@ final class PyDefinitions:
   // ---------------------------------------------------------------
   //  PyMap intrinsics
   //
-  //  When `-scalapy` is on, the backend lowers `scala.python.PyMap`
+  //  When `-scalapy` is on, the backend lowers `scala.python.runtime.PyMap`
   //  values to native Python dicts. The symbols below identify the
   //  call sites that get rewritten in `GenPython.genPyMapCallOpt`.
   // ---------------------------------------------------------------
 
-  @threadUnsafe lazy val PyMapClassType: TypeRef = requiredClassRef("scala.python.PyMap")
+  @threadUnsafe lazy val PyMapClassType: TypeRef = requiredClassRef("scala.python.runtime.PyMap")
   def PyMapClass(using Context): ClassSymbol = PyMapClassType.symbol.asClass
 
-  @threadUnsafe lazy val PyMapModuleRef = requiredModuleRef("scala.python.PyMap")
+  @threadUnsafe lazy val PyMapModuleRef = requiredModuleRef("scala.python.runtime.PyMap")
   def PyMapModule(using Context): Symbol = PyMapModuleRef.symbol
 
   private def pyMapClassMethod(name: String)(using Context): TermRef =
@@ -248,15 +248,15 @@ final class PyDefinitions:
   // ---------------------------------------------------------------
   //  PyList intrinsics
   //
-  //  When `-scalapy` is on, the backend lowers `scala.python.PyList`
+  //  When `-scalapy` is on, the backend lowers `scala.python.runtime.PyList`
   //  values to native Python lists. The symbols below identify the
   //  call sites that get rewritten in `GenPython.genPyListCallOpt`.
   // ---------------------------------------------------------------
 
-  @threadUnsafe lazy val PyListClassType: TypeRef = requiredClassRef("scala.python.PyList")
+  @threadUnsafe lazy val PyListClassType: TypeRef = requiredClassRef("scala.python.runtime.PyList")
   def PyListClass(using Context): ClassSymbol = PyListClassType.symbol.asClass
 
-  @threadUnsafe lazy val PyListModuleRef = requiredModuleRef("scala.python.PyList")
+  @threadUnsafe lazy val PyListModuleRef = requiredModuleRef("scala.python.runtime.PyList")
   def PyListModule(using Context): Symbol = PyListModuleRef.symbol
 
   private def pyListClassMethod(name: String)(using Context): TermRef =
@@ -315,17 +315,17 @@ final class PyDefinitions:
   // ---------------------------------------------------------------
   //  PyTuple intrinsics
   //
-  //  When `-scalapy` is on, the backend lowers `scala.python.PyTuple`
+  //  When `-scalapy` is on, the backend lowers `scala.python.runtime.PyTuple`
   //  values to native (bare) Python tuples. The symbols below identify
   //  the call sites that get rewritten in `GenPython.genPyTupleCallOpt`.
   //  Distinct from Scala `TupleN` lowering (which wraps in
   //  `_scpy_ScalaTuple`).
   // ---------------------------------------------------------------
 
-  @threadUnsafe lazy val PyTupleClassType: TypeRef = requiredClassRef("scala.python.PyTuple")
+  @threadUnsafe lazy val PyTupleClassType: TypeRef = requiredClassRef("scala.python.runtime.PyTuple")
   def PyTupleClass(using Context): ClassSymbol = PyTupleClassType.symbol.asClass
 
-  @threadUnsafe lazy val PyTupleModuleRef = requiredModuleRef("scala.python.PyTuple")
+  @threadUnsafe lazy val PyTupleModuleRef = requiredModuleRef("scala.python.runtime.PyTuple")
   def PyTupleModule(using Context): Symbol = PyTupleModuleRef.symbol
 
   private def pyTupleClassMethod(name: String)(using Context): TermRef =
@@ -438,69 +438,69 @@ final class PyDefinitions:
     requireReal(Tuples_isInstanceOfTuple, "scala.runtime.Tuples.isInstanceOfTuple")
     requireReal(Tuples_isInstanceOfEmptyTuple, "scala.runtime.Tuples.isInstanceOfEmptyTuple")
     requireReal(Tuples_isInstanceOfNonEmptyTuple, "scala.runtime.Tuples.isInstanceOfNonEmptyTuple")
-    requireReal(PyMapClass, "scala.python.PyMap")
-    requireReal(PyMapModule, "scala.python.PyMap (module)")
-    requireReal(PyMap_empty, "scala.python.PyMap.empty")
-    requireReal(PyMap_size, "scala.python.PyMap.size")
-    requireReal(PyMap_isEmpty, "scala.python.PyMap.isEmpty")
-    requireReal(PyMap_nonEmpty, "scala.python.PyMap.nonEmpty")
-    requireReal(PyMap_apply, "scala.python.PyMap.apply")
-    requireReal(PyMap_get, "scala.python.PyMap.get")
-    requireReal(PyMap_getOrElse, "scala.python.PyMap.getOrElse")
-    requireReal(PyMap_update, "scala.python.PyMap.update")
-    requireReal(PyMap_delete, "scala.python.PyMap.delete")
-    requireReal(PyMap_setDefault, "scala.python.PyMap.setDefault")
-    requireReal(PyMap_pop, "scala.python.PyMap.pop")
-    requireReal(PyMap_popOrElse, "scala.python.PyMap.popOrElse")
-    requireReal(PyMap_popItem, "scala.python.PyMap.popItem")
-    requireReal(PyMap_clear, "scala.python.PyMap.clear")
-    requireReal(PyMap_updateAll, "scala.python.PyMap.updateAll")
-    requireReal(PyMap_contains, "scala.python.PyMap.contains")
-    requireReal(PyMap_copy, "scala.python.PyMap.copy")
-    requireReal(PyMap_merged, "scala.python.PyMap.merged")
-    requireReal(PyMap_mergeInPlace, "scala.python.PyMap.mergeInPlace")
-    requireReal(PyMap_keys, "scala.python.PyMap.keys")
-    requireReal(PyMap_values, "scala.python.PyMap.values")
-    requireReal(PyMap_items, "scala.python.PyMap.items")
-    requireReal(PyListClass, "scala.python.PyList")
-    requireReal(PyListModule, "scala.python.PyList (module)")
-    requireReal(PyList_empty, "scala.python.PyList.empty")
-    requireReal(PyList_applyFactory, "scala.python.PyList.apply (module)")
-    requireReal(PyList_size, "scala.python.PyList.size")
-    requireReal(PyList_isEmpty, "scala.python.PyList.isEmpty")
-    requireReal(PyList_nonEmpty, "scala.python.PyList.nonEmpty")
-    requireReal(PyList_apply, "scala.python.PyList.apply")
-    requireReal(PyList_update, "scala.python.PyList.update")
-    requireReal(PyList_append, "scala.python.PyList.append")
-    requireReal(PyList_prepend, "scala.python.PyList.prepend")
-    requireReal(PyList_insert, "scala.python.PyList.insert")
-    requireReal(PyList_removeAt, "scala.python.PyList.removeAt")
-    requireReal(PyList_remove, "scala.python.PyList.remove")
-    requireReal(PyList_clear, "scala.python.PyList.clear")
-    requireReal(PyList_extend, "scala.python.PyList.extend")
-    requireReal(PyList_contains, "scala.python.PyList.contains")
-    requireReal(PyList_indexOf, "scala.python.PyList.indexOf")
-    requireReal(PyList_count, "scala.python.PyList.count")
-    requireReal(PyList_copy, "scala.python.PyList.copy")
-    requireReal(PyList_concat, "scala.python.PyList.concat")
-    requireReal(PyList_slice, "scala.python.PyList.slice")
-    requireReal(PyList_sort, "scala.python.PyList.sort")
-    requireReal(PyList_reverse, "scala.python.PyList.reverse")
-    requireReal(PyList_iterator, "scala.python.PyList.iterator")
-    requireReal(PyTupleClass, "scala.python.PyTuple")
-    requireReal(PyTupleModule, "scala.python.PyTuple (module)")
-    requireReal(PyTuple_empty, "scala.python.PyTuple.empty")
-    requireReal(PyTuple_applyFactory, "scala.python.PyTuple.apply (module)")
-    requireReal(PyTuple_size, "scala.python.PyTuple.size")
-    requireReal(PyTuple_isEmpty, "scala.python.PyTuple.isEmpty")
-    requireReal(PyTuple_nonEmpty, "scala.python.PyTuple.nonEmpty")
-    requireReal(PyTuple_apply, "scala.python.PyTuple.apply")
-    requireReal(PyTuple_contains, "scala.python.PyTuple.contains")
-    requireReal(PyTuple_indexOf, "scala.python.PyTuple.indexOf")
-    requireReal(PyTuple_count, "scala.python.PyTuple.count")
-    requireReal(PyTuple_concat, "scala.python.PyTuple.concat")
-    requireReal(PyTuple_slice, "scala.python.PyTuple.slice")
-    requireReal(PyTuple_iterator, "scala.python.PyTuple.iterator")
+    requireReal(PyMapClass, "scala.python.runtime.PyMap")
+    requireReal(PyMapModule, "scala.python.runtime.PyMap (module)")
+    requireReal(PyMap_empty, "scala.python.runtime.PyMap.empty")
+    requireReal(PyMap_size, "scala.python.runtime.PyMap.size")
+    requireReal(PyMap_isEmpty, "scala.python.runtime.PyMap.isEmpty")
+    requireReal(PyMap_nonEmpty, "scala.python.runtime.PyMap.nonEmpty")
+    requireReal(PyMap_apply, "scala.python.runtime.PyMap.apply")
+    requireReal(PyMap_get, "scala.python.runtime.PyMap.get")
+    requireReal(PyMap_getOrElse, "scala.python.runtime.PyMap.getOrElse")
+    requireReal(PyMap_update, "scala.python.runtime.PyMap.update")
+    requireReal(PyMap_delete, "scala.python.runtime.PyMap.delete")
+    requireReal(PyMap_setDefault, "scala.python.runtime.PyMap.setDefault")
+    requireReal(PyMap_pop, "scala.python.runtime.PyMap.pop")
+    requireReal(PyMap_popOrElse, "scala.python.runtime.PyMap.popOrElse")
+    requireReal(PyMap_popItem, "scala.python.runtime.PyMap.popItem")
+    requireReal(PyMap_clear, "scala.python.runtime.PyMap.clear")
+    requireReal(PyMap_updateAll, "scala.python.runtime.PyMap.updateAll")
+    requireReal(PyMap_contains, "scala.python.runtime.PyMap.contains")
+    requireReal(PyMap_copy, "scala.python.runtime.PyMap.copy")
+    requireReal(PyMap_merged, "scala.python.runtime.PyMap.merged")
+    requireReal(PyMap_mergeInPlace, "scala.python.runtime.PyMap.mergeInPlace")
+    requireReal(PyMap_keys, "scala.python.runtime.PyMap.keys")
+    requireReal(PyMap_values, "scala.python.runtime.PyMap.values")
+    requireReal(PyMap_items, "scala.python.runtime.PyMap.items")
+    requireReal(PyListClass, "scala.python.runtime.PyList")
+    requireReal(PyListModule, "scala.python.runtime.PyList (module)")
+    requireReal(PyList_empty, "scala.python.runtime.PyList.empty")
+    requireReal(PyList_applyFactory, "scala.python.runtime.PyList.apply (module)")
+    requireReal(PyList_size, "scala.python.runtime.PyList.size")
+    requireReal(PyList_isEmpty, "scala.python.runtime.PyList.isEmpty")
+    requireReal(PyList_nonEmpty, "scala.python.runtime.PyList.nonEmpty")
+    requireReal(PyList_apply, "scala.python.runtime.PyList.apply")
+    requireReal(PyList_update, "scala.python.runtime.PyList.update")
+    requireReal(PyList_append, "scala.python.runtime.PyList.append")
+    requireReal(PyList_prepend, "scala.python.runtime.PyList.prepend")
+    requireReal(PyList_insert, "scala.python.runtime.PyList.insert")
+    requireReal(PyList_removeAt, "scala.python.runtime.PyList.removeAt")
+    requireReal(PyList_remove, "scala.python.runtime.PyList.remove")
+    requireReal(PyList_clear, "scala.python.runtime.PyList.clear")
+    requireReal(PyList_extend, "scala.python.runtime.PyList.extend")
+    requireReal(PyList_contains, "scala.python.runtime.PyList.contains")
+    requireReal(PyList_indexOf, "scala.python.runtime.PyList.indexOf")
+    requireReal(PyList_count, "scala.python.runtime.PyList.count")
+    requireReal(PyList_copy, "scala.python.runtime.PyList.copy")
+    requireReal(PyList_concat, "scala.python.runtime.PyList.concat")
+    requireReal(PyList_slice, "scala.python.runtime.PyList.slice")
+    requireReal(PyList_sort, "scala.python.runtime.PyList.sort")
+    requireReal(PyList_reverse, "scala.python.runtime.PyList.reverse")
+    requireReal(PyList_iterator, "scala.python.runtime.PyList.iterator")
+    requireReal(PyTupleClass, "scala.python.runtime.PyTuple")
+    requireReal(PyTupleModule, "scala.python.runtime.PyTuple (module)")
+    requireReal(PyTuple_empty, "scala.python.runtime.PyTuple.empty")
+    requireReal(PyTuple_applyFactory, "scala.python.runtime.PyTuple.apply (module)")
+    requireReal(PyTuple_size, "scala.python.runtime.PyTuple.size")
+    requireReal(PyTuple_isEmpty, "scala.python.runtime.PyTuple.isEmpty")
+    requireReal(PyTuple_nonEmpty, "scala.python.runtime.PyTuple.nonEmpty")
+    requireReal(PyTuple_apply, "scala.python.runtime.PyTuple.apply")
+    requireReal(PyTuple_contains, "scala.python.runtime.PyTuple.contains")
+    requireReal(PyTuple_indexOf, "scala.python.runtime.PyTuple.indexOf")
+    requireReal(PyTuple_count, "scala.python.runtime.PyTuple.count")
+    requireReal(PyTuple_concat, "scala.python.runtime.PyTuple.concat")
+    requireReal(PyTuple_slice, "scala.python.runtime.PyTuple.slice")
+    requireReal(PyTuple_iterator, "scala.python.runtime.PyTuple.iterator")
 
   private def requireReal(sym: Symbol, desc: String)(using Context): Unit =
     if !sym.exists then

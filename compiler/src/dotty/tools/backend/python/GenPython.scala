@@ -2588,7 +2588,7 @@ private class PyCodeGen()(using genCtx: Context):
     else
       None
 
-  /** Lower a `scala.python.PyMap` call to native Python `dict` ops.
+  /** Lower a `scala.python.runtime.PyMap` call to native Python `dict` ops.
    *
    *  Two call shapes:
    *    1. `PyMap.empty[K, V]()` factory — lower to `PyDictValue(Nil)`.
@@ -2655,7 +2655,7 @@ private class PyCodeGen()(using genCtx: Context):
     else if sym == pyDefn.PyMap_items        then Some(ext("_scpy_dict_items_iter",    List(recv)))
     else None
 
-  /** Lower a `scala.python.PyList` call to native Python `list` ops.
+  /** Lower a `scala.python.runtime.PyList` call to native Python `list` ops.
    *
    *  Three call shapes:
    *    1. `PyList.empty[T]()` factory — lower to `PyListValue(Nil)`.
@@ -2727,7 +2727,7 @@ private class PyCodeGen()(using genCtx: Context):
     else if sym == pyDefn.PyList_iterator  then Some(ext("_scpy_list_iter",         List(recv)))
     else None
 
-  /** Lower a `scala.python.PyTuple` call to native bare-Python-tuple
+  /** Lower a `scala.python.runtime.PyTuple` call to native bare-Python-tuple
    *  ops. Mirrors `genPyListCallOpt` but routes to `_scpy_pytuple_*`
    *  helpers and emits `PyRawTupleValue` (NOT `PyTupleValue`, which
    *  wraps in `_scpy_ScalaTuple`).

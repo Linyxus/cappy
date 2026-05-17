@@ -433,7 +433,7 @@ class PyIRSerializationTests:
       assertEquals(t, roundTripTree(t))
 
   @Test def dictValueRoundTrip(): Unit =
-    val mapType = PyClassType(PyClassName("scala.python.PyMap"))
+    val mapType = PyClassType(PyClassName("scala.python.runtime.PyMap"))
     val empty   = PyDictValue(Nil)(mapType, NoPos)
     val single  = PyDictValue(
       List((PyStringLit("a")(NoPos), PyIntLit(1)(NoPos)))
@@ -453,7 +453,7 @@ class PyIRSerializationTests:
       assertEquals(t, roundTripTree(t))
 
   @Test def listValueRoundTrip(): Unit =
-    val listType = PyClassType(PyClassName("scala.python.PyList"))
+    val listType = PyClassType(PyClassName("scala.python.runtime.PyList"))
     val empty    = PyListValue(Nil)(listType, NoPos)
     val single   = PyListValue(List(PyIntLit(7)(NoPos)))(listType, NoPos)
     val mixed    = PyListValue(
@@ -465,7 +465,7 @@ class PyIRSerializationTests:
       assertEquals(t, roundTripTree(t))
 
   @Test def rawTupleValueRoundTrip(): Unit =
-    val tupType = PyClassType(PyClassName("scala.python.PyTuple"))
+    val tupType = PyClassType(PyClassName("scala.python.runtime.PyTuple"))
     val empty   = PyRawTupleValue(Nil)(tupType, NoPos)
     val single  = PyRawTupleValue(List(PyIntLit(7)(NoPos)))(tupType, NoPos)
     val mixed   = PyRawTupleValue(

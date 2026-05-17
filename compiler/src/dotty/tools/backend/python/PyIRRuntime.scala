@@ -113,18 +113,18 @@ object PyIRRuntime:
   private val ScalaTupleNClasses: List[PyClassName] =
     (1 to 22).map(n => PyClassName(s"scala.Tuple$n")).toList
 
-  // `scala.python.PyMap` lowers to a bare Python `dict`. The compiled
+  // `scala.python.runtime.PyMap` lowers to a bare Python `dict`. The compiled
   // `.pyir` for the Scala-side class is dropped at link time; every
   // call site is intercepted in `GenPython.genPyMapCallOpt`.
-  private val ScalaPythonPyMapClass = PyClassName("scala.python.PyMap")
+  private val ScalaPythonPyMapClass = PyClassName("scala.python.runtime.PyMap")
 
-  // `scala.python.PyList` / `scala.python.PyTuple` follow the same
+  // `scala.python.runtime.PyList` / `scala.python.runtime.PyTuple` follow the same
   // pattern: the wrapper class has no body of its own — at runtime
   // a `PyList` IS a Python `list`, and a `PyTuple` IS a bare Python
   // `tuple`. Call sites are intercepted in
   // `GenPython.genPyListCallOpt` and `genPyTupleCallOpt`.
-  private val ScalaPythonPyListClass  = PyClassName("scala.python.PyList")
-  private val ScalaPythonPyTupleClass = PyClassName("scala.python.PyTuple")
+  private val ScalaPythonPyListClass  = PyClassName("scala.python.runtime.PyList")
+  private val ScalaPythonPyTupleClass = PyClassName("scala.python.runtime.PyTuple")
 
   private val ObjectCtor =
     PyMethodName(
@@ -1833,23 +1833,23 @@ object PyIRRuntime:
        |            if tail.isdigit():
        |                return len(value) == int(tail)
        |        return False
-       |    # `scala.python.PyMap` lowers to a bare Python `dict`. The
+       |    # `scala.python.runtime.PyMap` lowers to a bare Python `dict`. The
        |    # `case _: PyMap[?, ?]` pattern lands here.
        |    if isinstance(value, dict):
        |        name = getattr(clazz, "_scpy_name", None)
-       |        if name == "scala.python.PyMap":
+       |        if name == "scala.python.runtime.PyMap":
        |            return True
-       |    # `scala.python.PyList` lowers to a bare Python `list`.
+       |    # `scala.python.runtime.PyList` lowers to a bare Python `list`.
        |    if isinstance(value, list):
        |        name = getattr(clazz, "_scpy_name", None)
-       |        if name == "scala.python.PyList":
+       |        if name == "scala.python.runtime.PyList":
        |            return True
-       |    # `scala.python.PyTuple` lowers to a bare Python `tuple`. A
+       |    # `scala.python.runtime.PyTuple` lowers to a bare Python `tuple`. A
        |    # `_scpy_ScalaTuple` is also a `tuple` subclass — exclude it
        |    # so Scala `Tuple{N}` values don't match `PyTuple[?]`.
        |    if isinstance(value, tuple) and not isinstance(value, _scpy_ScalaTuple):
        |        name = getattr(clazz, "_scpy_name", None)
-       |        if name == "scala.python.PyTuple":
+       |        if name == "scala.python.runtime.PyTuple":
        |            return True
        |    return _scpy_is_instance(value, clazz)
        |
@@ -2307,14 +2307,14 @@ object PyIRRuntime:
        |_scpy_register_class(None, "scala.Tuple20", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
        |_scpy_register_class(None, "scala.Tuple21", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
        |_scpy_register_class(None, "scala.Tuple22", "class", "java.lang.Object", ("scala._times_colon", "scala.NonEmptyTuple"))
-       |# `scala.python.PyMap` is a Python `dict` at runtime. Register so
+       |# `scala.python.runtime.PyMap` is a Python `dict` at runtime. Register so
        |# `case _: PyMap[?, ?]` and reflection lookups have a class entry.
-       |_scpy_register_class(None, "scala.python.PyMap", "class", "java.lang.Object")
-       |# `scala.python.PyList` is a Python `list` at runtime. Same idea.
-       |_scpy_register_class(None, "scala.python.PyList", "class", "java.lang.Object")
-       |# `scala.python.PyTuple` is a bare Python `tuple` at runtime.
+       |_scpy_register_class(None, "scala.python.runtime.PyMap", "class", "java.lang.Object")
+       |# `scala.python.runtime.PyList` is a Python `list` at runtime. Same idea.
+       |_scpy_register_class(None, "scala.python.runtime.PyList", "class", "java.lang.Object")
+       |# `scala.python.runtime.PyTuple` is a bare Python `tuple` at runtime.
        |# Distinct from `scala.Tuple{N}` (which is `_scpy_ScalaTuple`).
-       |_scpy_register_class(None, "scala.python.PyTuple", "class", "java.lang.Object")
+       |_scpy_register_class(None, "scala.python.runtime.PyTuple", "class", "java.lang.Object")
        |
        |# -- lazy module init --
        |# Wraps a module class so its `__init__` runs at most once on
@@ -2569,7 +2569,7 @@ object PyIRRuntime:
        |    # Python's native repr (e.g. `np.shape == (2, 3)`).
        |    if isinstance(x, _scpy_ScalaTuple):
        |        return _scpy_tuple_to_str(x)
-       |    # `scala.python.PyMap` lowers to a bare Python `dict` (no
+       |    # `scala.python.runtime.PyMap` lowers to a bare Python `dict` (no
        |    # marker subclass — `PyMap` and foreign dicts are
        |    # indistinguishable by design). Format Scala-style:
        |    # `Map(k -> v, k -> v)`.
@@ -3763,7 +3763,7 @@ object PyIRRuntime:
        |
        |# `Tuples.isInstanceOfTuple` etc. resolve `case _: scala.Tuple` /
        |# `case _: EmptyTuple` / `case _: NonEmptyTuple`. They must NOT
-       |# match bare Python tuples (those come from `scala.python.PyTuple`
+       |# match bare Python tuples (those come from `scala.python.runtime.PyTuple`
        |# or `@extern` facades and are distinct from Scala tuples).
        |def _scpy_isinstance_tuple(x):
        |    return isinstance(x, _scpy_ScalaTuple)
@@ -3807,7 +3807,7 @@ object PyIRRuntime:
        |    return p.${m("productElementName", I)(StrRef)}(n)
        |
        |# ---- dict helpers ------------------------------------------------
-       |# `scala.python.PyMap[K, V]` lowers to a bare Python `dict`. These
+       |# `scala.python.runtime.PyMap[K, V]` lowers to a bare Python `dict`. These
        |# helpers back the GenPython intercepts in `genPyMapInstanceCall`.
        |# `apply` and `pop` raise Python `KeyError` on a miss — the Scala
        |# API documents this; null-tolerant variants go through `get` /
@@ -3851,7 +3851,7 @@ object PyIRRuntime:
        |    # same as if the pair had been constructed in Scala.
        |    return _scpy_tuple_iter(tuple(_scpy_ScalaTuple(it) for it in d.items()))
        |""".stripMargin +
-    raw"""|# `scala.python.PyList[T]` lowers to a bare Python `list`. These
+    raw"""|# `scala.python.runtime.PyList[T]` lowers to a bare Python `list`. These
        |# helpers back the GenPython intercepts in `genPyListInstanceCall`.
        |# `apply` raises Python `IndexError` on out-of-range indexing —
        |# the Scala API documents this.
@@ -3897,7 +3897,7 @@ object PyIRRuntime:
        |    # `scala.collection.Iterator`.
        |    return _scpy_tuple_iter(tuple(xs))
        |
-       |# `scala.python.PyTuple[T]` lowers to a bare Python `tuple`.
+       |# `scala.python.runtime.PyTuple[T]` lowers to a bare Python `tuple`.
        |# Separate namespace from `_scpy_tuple_*` (those operate on
        |# `_scpy_ScalaTuple` instances and carry Scala-tuple semantics).
        |

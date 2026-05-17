@@ -9,8 +9,8 @@
 //     in `PyIRRuntime.scala` excludes non-`_scpy_ScalaTuple` tuples
 //     from `scala.Tuple*` membership)
 
-import scala.python.PyList
-import scala.python.PyTuple
+import scala.python.runtime.PyList
+import scala.python.runtime.PyTuple
 
 def tagOf(x: Any): String = x match
   case _: PyList[?]  => "pylist"
