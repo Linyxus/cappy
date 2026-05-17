@@ -43,6 +43,14 @@ object Main extends LayoutzApp[Main.State, Main.Msg]:
   case class MoveCursor(newPos: Int) extends Msg
   case object Submit extends Msg
   case object InsertNewline extends Msg
+  /** Delete from cursor to end of current line (Ctrl-K). If the cursor
+   *  is already at end-of-line, joins with the next line by deleting
+   *  the trailing newline. */
+  case object KillToLineEnd extends Msg
+  /** Delete from start of current line to cursor (Ctrl-U). */
+  case object KillToLineStart extends Msg
+  /** Delete the word before the cursor (Ctrl-W). */
+  case object KillWordBack extends Msg
   case class Done(input: String, output: String) extends Msg
   case object Quit extends Msg
   case object HistoryPrev extends Msg
@@ -135,6 +143,38 @@ object Main extends LayoutzApp[Main.State, Main.Msg]:
          draft = "",
        ), Cmd.none)
 
+    case KillToLineEnd if s.busy => (s, Cmd.none)
+    case KillToLineEnd =>
+      val (_, lineEnd) = lineBoundsAt(s.buffer, s.cursorPos)
+      // If we're already at end-of-line and there's more buffer
+      // afterwards, eat the newline too (standard readline behavior).
+      val cut = if s.cursorPos == lineEnd && lineEnd < s.buffer.length then lineEnd + 1
+                else lineEnd
+      val newBuf = s.buffer.substring(0, s.cursorPos) + s.buffer.substring(cut)
+      (s.copy(buffer = newBuf, historyIdx = None, draft = ""), Cmd.none)
+
+    case KillToLineStart if s.busy => (s, Cmd.none)
+    case KillToLineStart =>
+      val (lineStart, _) = lineBoundsAt(s.buffer, s.cursorPos)
+      val newBuf = s.buffer.substring(0, lineStart) + s.buffer.substring(s.cursorPos)
+      (s.copy(
+         buffer = newBuf,
+         cursorPos = lineStart,
+         historyIdx = None,
+         draft = "",
+       ), Cmd.none)
+
+    case KillWordBack if s.busy => (s, Cmd.none)
+    case KillWordBack =>
+      // Skip trailing whitespace before the cursor, then delete back to
+      // the next whitespace or buffer start. Mirrors bash's Ctrl-W.
+      val buf = s.buffer
+      var i = s.cursorPos
+      while i > 0 && buf.charAt(i - 1).isWhitespace do i -= 1
+      while i > 0 && !buf.charAt(i - 1).isWhitespace do i -= 1
+      val newBuf = buf.substring(0, i) + buf.substring(s.cursorPos)
+      (s.copy(buffer = newBuf, cursorPos = i, historyIdx = None, draft = ""), Cmd.none)
+
     case Done(in, out) =>
       val trimmed = out.stripTrailing()
       (s.copy(history = s.history :+ Entry(in, trimmed), busy = false, inFlight = None),
@@ -223,12 +263,12 @@ object Main extends LayoutzApp[Main.State, Main.Msg]:
           Some(EditBuffer(before + after.drop(1), s.cursorPos))
 
       def cursorMsg: PartialFunction[Key, Msg] =
-        case Key.Left  => MoveCursor(s.cursorPos - 1)
-        case Key.Right => MoveCursor(s.cursorPos + 1)
-        case Key.Home  =>
+        case Key.Left  | Key.Ctrl('B') => MoveCursor(s.cursorPos - 1)
+        case Key.Right | Key.Ctrl('F') => MoveCursor(s.cursorPos + 1)
+        case Key.Home  | Key.Ctrl('A') =>
           val (lineStart, _) = lineBoundsAt(s.buffer, s.cursorPos)
           MoveCursor(lineStart)
-        case Key.End =>
+        case Key.End | Key.Ctrl('E') =>
           val (_, lineEnd) = lineBoundsAt(s.buffer, s.cursorPos)
           MoveCursor(lineEnd)
 
@@ -242,10 +282,18 @@ object Main extends LayoutzApp[Main.State, Main.Msg]:
       // key left to bind "insert newline" to. This is the documented
       // multiline shortcut; in a REPL Escape has no other natural
       // meaning.
+      //
+      // Ctrl-Enter is *not* distinguishable from plain Enter: the
+      // KeyParser maps both `\n` (0x0a) and `\r` (0x0d) to Key.Enter
+      // and the terminal does not emit a separate sequence for
+      // Ctrl-Enter without kitty / modifyOtherKeys protocol support.
       val terminalMsg: Option[Msg] = k match
         case Key.Enter     => Some(Submit)
         case Key.Ctrl('D') => Some(Quit)
         case Key.Escape    => Some(InsertNewline)
+        case Key.Ctrl('K') => Some(KillToLineEnd)
+        case Key.Ctrl('U') => Some(KillToLineStart)
+        case Key.Ctrl('W') => Some(KillWordBack)
         case _             => None
 
       navMsg
@@ -341,7 +389,7 @@ object Main extends LayoutzApp[Main.State, Main.Msg]:
         renderActiveBuffer(s.buffer, s.cursorPos)
 
     val header = "─── Cappy REPL ───".color(Color.Cyan).style(Style.Bold).render
-    val hint   = "Enter to evaluate  ·  ←/→ move cursor  ·  Esc for newline  ·  ↑/↓ history  ·  :quit / Ctrl-D"
+    val hint   = "Enter to evaluate  ·  Esc / Alt-Enter for newline  ·  ↑/↓ history  ·  Ctrl-A/E line · Ctrl-K/U/W kill  ·  :quit / Ctrl-D"
                    .style(Style.Dim).render
 
     val body: Seq[Element] = transcriptLines ++ currentBlock
