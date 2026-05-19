@@ -790,6 +790,7 @@ object PyIRRuntime:
        |import struct
        |import weakref as _scpy_weakref
        |import builtins as _builtins
+       |import inspect as _scpy_inspect
        |from typing import Any
        |
        |_scpy_len = _builtins.len
@@ -2576,9 +2577,23 @@ object PyIRRuntime:
        |    if isinstance(x, dict):
        |        parts = [_scpy_to_str(k) + " -> " + _scpy_to_str(v) for k, v in x.items()]
        |        return "Map(" + ", ".join(parts) + ")"
-       |    to_string = getattr(x, "${m("toString")(StrRef)}", None)
-       |    if to_string is not None:
-       |        return to_string()
+       |    # Probe for a Scala-side `toString` without triggering side
+       |    # effects. `getattr` would invoke `__getattr__` hooks — most
+       |    # notably `_scpy_LazyModule.__getattr__`, which forces module
+       |    # initialization, which on uninitialized modules in `globals()`
+       |    # can transitively raise (e.g. reflective `getDeclaredField` on
+       |    # `scala.runtime.LazyVals`). `inspect.getattr_static` walks the
+       |    # MRO directly and never invokes descriptor / __getattr__ logic.
+       |    # We also guard with `isinstance(x, type)` because for class
+       |    # objects, the MRO walk would still find the inherited function
+       |    # but calling it with the class as `self` is meaningless.
+       |    if not isinstance(x, type):
+       |        try:
+       |            to_string = _scpy_inspect.getattr_static(x, "${m("toString")(StrRef)}")
+       |        except AttributeError:
+       |            to_string = None
+       |        if to_string is not None and callable(to_string):
+       |            return to_string(x)
        |    # Boxed Doubles arrive here as plain Python floats. Java's
        |    # `Double.toString` differs from Python's `repr` on exponent
        |    # thresholds, exponent capitalisation, and integer-valued

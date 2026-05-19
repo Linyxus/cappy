@@ -477,7 +477,7 @@ object PyBuiltins:
 
   // --- Eval / exec / compile -----------------------------------------
 
-  def eval(source: String): PyDynamic = builtins.eval(source).asInstanceOf
+  def eval(source: String): PyDynamic = builtins.eval(source)
   def exec(source: String): Unit = builtins.exec(source)
   def compile(source: String, filename: String, mode: String): PyAny =
     builtins.compile(source, filename, mode).asInstanceOf[PyAny]
