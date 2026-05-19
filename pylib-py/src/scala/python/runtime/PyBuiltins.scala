@@ -322,14 +322,14 @@ object PyBuiltins:
 
   def ascii(value: Any): String = builtins.ascii(value).asInstanceOf[String]
 
-  def dirOf(value: Any): PyAny = builtins.dir(value).asInstanceOf[PyAny]
-  def dirOfLocals(): PyAny = builtins.dir().asInstanceOf[PyAny]
+  def dir(value: Any): PyAny = builtins.dir(value).asInstanceOf[PyAny]
+  def dirLocals(): PyAny = builtins.dir().asInstanceOf[PyAny]
 
-  def varsOf(value: Any): PyAny = builtins.vars(value).asInstanceOf[PyAny]
-  def varsOfLocals(): PyAny = builtins.vars().asInstanceOf[PyAny]
+  def vars(value: Any): PyAny = builtins.vars(value).asInstanceOf[PyAny]
+  def varsLocals(): PyAny = builtins.vars().asInstanceOf[PyAny]
 
-  def idOf(value: Any): Long = builtins.id(value).asInstanceOf[Long]
-  def hashOf(value: Any): Long = builtins.hash(value).asInstanceOf[Long]
+  def id(value: Any): Long = builtins.id(value).asInstanceOf[Long]
+  def hash(value: Any): Long = builtins.hash(value).asInstanceOf[Long]
 
   // --- Type-constructor functions -----------------------------------
 
@@ -416,22 +416,22 @@ object PyBuiltins:
     val pair = builtins.divmod(a, b)
     (getItem(pair, 0).asInstanceOf[Double], getItem(pair, 1).asInstanceOf[Double])
 
-  def powOf(base: Long, exp: Long): Long =
+  def pow(base: Long, exp: Long): Long =
     builtins.pow(base, exp).asInstanceOf[Long]
-  def powOf(base: Long, exp: Long, mod: Long): Long =
+  def pow(base: Long, exp: Long, mod: Long): Long =
     builtins.pow(base, exp, mod).asInstanceOf[Long]
-  def powOf(base: Double, exp: Double): Double =
+  def pow(base: Double, exp: Double): Double =
     builtins.pow(base, exp).asInstanceOf[Double]
 
-  def sumOf(it: Any): Long = builtins.sum(it).asInstanceOf[Long]
-  def sumOf(it: Any, start: Long): Long = builtins.sum(it, start).asInstanceOf[Long]
+  def sum(it: Any): Long = builtins.sum(it).asInstanceOf[Long]
+  def sum(it: Any, start: Long): Long = builtins.sum(it, start).asInstanceOf[Long]
   def sumDoubles(it: Any, start: Double): Double =
     builtins.sum(it, start).asInstanceOf[Double]
 
   // --- Sequence / iteration ------------------------------------------
 
   /** Public alias for `length_of`. */
-  def lenOf(value: Any): Int = length_of(value)
+  def len(value: Any): Int = length_of(value)
 
   def sortedOf(it: Any): PyAny = builtins.sorted(it).asInstanceOf[PyAny]
   def sortedDesc(it: Any): PyAny =
@@ -451,8 +451,8 @@ object PyBuiltins:
   def nextOrElse(it: Any, default: Any): PyAny =
     builtins.next(it, default).asInstanceOf[PyAny]
 
-  def anyOf(it: Any): Boolean = builtins.any(it).asInstanceOf[Boolean]
-  def allOf(it: Any): Boolean = builtins.all(it).asInstanceOf[Boolean]
+  def any(it: Any): Boolean = builtins.any(it).asInstanceOf[Boolean]
+  def all(it: Any): Boolean = builtins.all(it).asInstanceOf[Boolean]
 
   // --- Attribute access / introspection ------------------------------
 
@@ -477,12 +477,12 @@ object PyBuiltins:
 
   // --- Eval / exec / compile -----------------------------------------
 
-  def evalOf(source: String): Any = builtins.eval(source)
-  def execOf(source: String): Unit = builtins.exec(source)
-  def compileOf(source: String, filename: String, mode: String): PyAny =
+  def eval(source: String): PyDynamic = builtins.eval(source).asInstanceOf
+  def exec(source: String): Unit = builtins.exec(source)
+  def compile(source: String, filename: String, mode: String): PyAny =
     builtins.compile(source, filename, mode).asInstanceOf[PyAny]
-  def globalsOf(): PyAny = builtins.globals().asInstanceOf[PyAny]
-  def localsOf(): PyAny = builtins.locals().asInstanceOf[PyAny]
+  def globals(): PyAny = builtins.globals().asInstanceOf[PyAny]
+  def locals(): PyMap[String, PyDynamic] = builtins.locals().asInstanceOf
 
   // --- Misc ----------------------------------------------------------
 

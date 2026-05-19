@@ -32,16 +32,16 @@ private def _takesStopIteration(e: PyBuiltins.StopIteration): Unit = ()
 
   // --- list / tuple / dict / set -----------------------------------
   val xs = PyBuiltins.listOf(PyBuiltins.rangeOf(5))
-  println("len-list:" + PyBuiltins.lenOf(xs))
+  println("len-list:" + PyBuiltins.len(xs))
   println("list-repr:" + PyBuiltins.repr(xs))
   val nums = PyBuiltins.listOf(PyBuiltins.rangeOf(3, 8))
   println("range-3-8:" + PyBuiltins.repr(nums))
   val tup = PyBuiltins.tupleOf(PyBuiltins.rangeOf(3))
   println("tuple-repr:" + PyBuiltins.repr(tup))
   val dd = PyBuiltins.dictEmpty()
-  println("dict-empty-len:" + PyBuiltins.lenOf(dd))
+  println("dict-empty-len:" + PyBuiltins.len(dd))
   val ss = PyBuiltins.setOf(PyBuiltins.rangeOf(3))
-  println("set-len:" + PyBuiltins.lenOf(ss))
+  println("set-len:" + PyBuiltins.len(ss))
 
   // --- sorted / reversed -------------------------------------------
   val reversedList = PyBuiltins.listOf(PyBuiltins.reversedOf(PyBuiltins.listOf(PyBuiltins.rangeOf(5))))
@@ -52,16 +52,16 @@ private def _takesStopIteration(e: PyBuiltins.StopIteration): Unit = ()
   // --- Numeric ------------------------------------------------------
   val dm = PyBuiltins.divMod(17L, 5L)
   println("divmod-17-5:" + dm._1 + "," + dm._2)
-  println("pow-2-10:" + PyBuiltins.powOf(2L, 10L))
-  println("pow-mod:" + PyBuiltins.powOf(2L, 10L, 1000L))
-  println("pow-double:" + PyBuiltins.powOf(4.0, 0.5))
-  println("sum-list:" + PyBuiltins.sumOf(PyBuiltins.listOf(PyBuiltins.rangeOf(5))))
-  println("sum-start:" + PyBuiltins.sumOf(PyBuiltins.listOf(PyBuiltins.rangeOf(5)), 10L))
+  println("pow-2-10:" + PyBuiltins.pow(2L, 10L))
+  println("pow-mod:" + PyBuiltins.pow(2L, 10L, 1000L))
+  println("pow-double:" + PyBuiltins.pow(4.0, 0.5))
+  println("sum-list:" + PyBuiltins.sum(PyBuiltins.listOf(PyBuiltins.rangeOf(5))))
+  println("sum-start:" + PyBuiltins.sum(PyBuiltins.listOf(PyBuiltins.rangeOf(5)), 10L))
 
   // --- any / all ----------------------------------------------------
-  println("any-0-1-2:" + PyBuiltins.anyOf(PyBuiltins.listOf(PyBuiltins.rangeOf(3))))
-  println("all-0-1-2:" + PyBuiltins.allOf(PyBuiltins.listOf(PyBuiltins.rangeOf(3))))
-  println("all-1-4:" + PyBuiltins.allOf(PyBuiltins.tupleOf(PyBuiltins.rangeOf(1, 5))))
+  println("any-0-1-2:" + PyBuiltins.any(PyBuiltins.listOf(PyBuiltins.rangeOf(3))))
+  println("all-0-1-2:" + PyBuiltins.all(PyBuiltins.listOf(PyBuiltins.rangeOf(3))))
+  println("all-1-4:" + PyBuiltins.all(PyBuiltins.tupleOf(PyBuiltins.rangeOf(1, 5))))
 
   // --- isInstance / isSubclass / isCallable ------------------------
   println("isinst-str:" + PyBuiltins.isInstance("hi", PyBuiltins.typeOf("")))
@@ -86,6 +86,6 @@ private def _takesStopIteration(e: PyBuiltins.StopIteration): Unit = ()
   println("notimpl-repr:" + PyBuiltins.repr(PyBuiltins.notImplemented))
 
   // --- eval / exec ------------------------------------------------
-  println("eval-1plus2:" + PyBuiltins.strOf(PyBuiltins.evalOf("1 + 2")))
-  PyBuiltins.execOf("pass")
+  println("eval-1plus2:" + PyBuiltins.strOf(PyBuiltins.eval("1 + 2")))
+  PyBuiltins.exec("pass")
   println("exec-ran")

@@ -11,4 +11,11 @@ object py:
   val  Tuple: scala.python.runtime.PyTuple.type = scala.python.runtime.PyTuple
 
   val builtins: scala.python.runtime.PyBuiltins.type = scala.python.runtime.PyBuiltins
-  export scala.python.runtime.PyBuiltins.importModule
+  export scala.python.runtime.PyBuiltins.{
+    importModule,
+    eval,
+    exec,
+    compile,
+    globals,
+    locals
+  }
