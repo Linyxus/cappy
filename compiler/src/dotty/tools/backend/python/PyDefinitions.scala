@@ -3,6 +3,7 @@ package dotty.tools.backend.python
 import scala.annotation.threadUnsafe
 import scala.collection.mutable
 import scala.compiletime.uninitialized
+import scala.util.boundary, boundary.break
 
 import dotty.tools.dotc.core.*
 import Contexts.*
@@ -369,9 +370,9 @@ final class PyDefinitions:
    *  case object's class, `TupleXXL`, and anything that derives from
    *  the `*:` cons class (which catches specialized forms such as
    *  `Tuple2$mcII$sp`). */
-  def isTupleClass(sym: Symbol)(using Context): Boolean =
-    if !sym.exists || !sym.isClass then return false
-    if defn.isTupleClass(sym) then return true
+  def isTupleClass(sym: Symbol)(using Context): Boolean = boundary:
+    if !sym.exists || !sym.isClass then break(false)
+    if defn.isTupleClass(sym) then break(true)
     val cs = sym.asClass
     cs == TupleClass
       || cs == NonEmptyTupleClass

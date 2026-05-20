@@ -5,6 +5,7 @@ import dotty.tools.backend.python.ir.pyir.*
 import java.io.PrintWriter
 
 import scala.collection.mutable
+import scala.util.boundary, boundary.break
 
 final case class PyLinkingError(message: String, pos: PyPosition)
 
@@ -292,7 +293,7 @@ object PyLinker:
         classes:        List[PyClassDef],
         mainEntry:      Option[PyIREmitter.MainEntry],
         userClassNames: Set[PyClassName]
-    ): List[PyClassDef] =
+    ): List[PyClassDef] = boundary:
       var current = classes
       var reach = analyzeReachability(current, mainEntry, userClassNames)
       var iteration = 0
@@ -305,7 +306,7 @@ object PyLinker:
           analyzeReachability(rewrittenClasses, mainEntry, userClassNames)
 
         if nextReach == reach then
-          return applyReachability(rewrittenClasses, nextReach, userClassNames)
+          break(applyReachability(rewrittenClasses, nextReach, userClassNames))
 
         current = rewrittenClasses
         reach = nextReach

@@ -136,7 +136,7 @@ object GenPython:
 
     private val savedCtx: Context = ctx
 
-    def linkAndEmit(): Unit =
+    def linkAndEmit(): Unit = boundary:
       given Context = savedCtx
       val userInput = PyLinker.Input(
         classes   = generatedClasses,
@@ -152,7 +152,7 @@ object GenPython:
             err.errors.foreach { e =>
               report.error(e.message, sourcePosOf(e.pos))
             }
-            return
+            break()
 
       val outfile = outputDirectory.fileNamed(sourceName + ".py")
       val output = outfile.bufferedOutput
@@ -1036,13 +1036,13 @@ private class PyCodeGen()(using genCtx: Context):
 
   // --- Method generation ---------------------------------------------
 
-  private def genMethod(dd: DefDef): Option[PyMethodDef] =
+  private def genMethod(dd: DefDef): Option[PyMethodDef] = boundary:
     val sym = dd.symbol
 
     // Skip primitives. Bridge methods are kept: erased Closures
     // sometimes point at a synthetic `$anonfun$adapted$N` bridge that
     // adapts boxed `Object` args to a specialised primitive lambda body.
-    if primitives.isPrimitive(sym) then return None
+    if primitives.isPrimitive(sym) then break(None)
 
     currentMethodSym = sym
     val pos = posOf(dd)
@@ -1224,22 +1224,22 @@ private class PyCodeGen()(using genCtx: Context):
     * only known synthesis paths that produce a static method whose
     * body needs the receiver — so we never demote genuinely
     * captureless statics. See `notes/issue-anonfun-static-self-unbound.md`. */
-  private def needsSelfDespiteStatic(dd: DefDef): Boolean =
+  private def needsSelfDespiteStatic(dd: DefDef): Boolean = boundary:
     val sym = dd.symbol
     val isSynthetic =
       sym.isAnonymousFunction
         || sym.name.toString.contains("superArg$")
-    if !isSynthetic then return false
+    if !isSynthetic then break(false)
     val enclosing = sym.owner
-    if !enclosing.is(ModuleClass) then return false
-    if dd.rhs.isEmpty then return false
+    if !enclosing.is(ModuleClass) then break(false)
+    if dd.rhs.isEmpty then break(false)
 
     val paramSyms: Set[Symbol] = dd.termParamss.flatten.map(_.symbol).toSet
     var found = false
 
     val walker = new TreeTraverser:
-      override def traverse(tree: Tree)(using Context): Unit =
-        if found then return
+      override def traverse(tree: Tree)(using Context): Unit = boundary:
+        if found then break()
         tree match
           // Don't descend into nested method/class definitions — they
           // have their own `self` scope; their bodies can't make the
@@ -1712,7 +1712,7 @@ private class PyCodeGen()(using genCtx: Context):
 
   // --- Apply dispatch ------------------------------------------------
 
-  private def genApply(app: Apply): PyTree =
+  private def genApply(app: Apply): PyTree = boundary:
     val pos = posOf(app)
 
     // `throw <expr>` is encoded as `Apply(<special-ops>.throw, [expr])`
@@ -1720,20 +1720,20 @@ private class PyCodeGen()(using genCtx: Context):
     // class with no Python representation, so we lower the call to a
     // PyIR Throw unary op.
     if app.fun.symbol == defn.throwMethod then
-      return PyUnaryOp(PyUnaryCode.Throw, genExpr(app.args.head))(pos)
+      break(PyUnaryOp(PyUnaryCode.Throw, genExpr(app.args.head))(pos))
 
     genArrayFactoryApply(app, pos) match
       case Some(arrayValue) =>
-        return arrayValue
+        break(arrayValue)
       case None =>
         ()
 
     if app.fun.symbol == defn.newArrayMethod then
-      return genRuntimeNewArray(app, pos)
+      break(genRuntimeNewArray(app, pos))
 
     genReflectArrayNewInstance(app, pos) match
       case Some(tree) =>
-        return tree
+        break(tree)
       case None =>
         ()
 
@@ -1843,7 +1843,7 @@ private class PyCodeGen()(using genCtx: Context):
     sym.exists && sym.owner == defn.BoxesRunTimeModule.moduleClass &&
       sym.name.mangledString == "unboxToChar"
 
-  private def genSuperCall(app: Apply, pos: PyPosition): PyTree =
+  private def genSuperCall(app: Apply, pos: PyPosition): PyTree = boundary:
     val sym = app.fun.symbol
     val args = genArgsPreservingOrder(app.args)
     val tpe = encoding.encodeType(sym.info.finalResultType)
@@ -1861,7 +1861,7 @@ private class PyCodeGen()(using genCtx: Context):
             binding.path :+ "__init__"
           )(PyAnyType, pos)
           val self = PyThis()(classTpe, pos)
-          return PyApplyDynamic(initRef, self :: args, Nil)(tpe, pos)
+          break(PyApplyDynamic(initRef, self :: args, Nil)(tpe, pos))
         case None =>
           // Malformed extern — fall through to the nominal path; the
           // facade-binding error is already reported.
@@ -2412,22 +2412,22 @@ private class PyCodeGen()(using genCtx: Context):
    *  `Product`/`Any`-typed receivers fall through to the regular
    *  dispatch (out of scope per the plan).
    */
-  private def genTupleCallOpt(app: Apply, pos: PyPosition): Option[PyTree] =
+  private def genTupleCallOpt(app: Apply, pos: PyPosition): Option[PyTree] = boundary:
     val sym = app.fun.symbol
-    if !sym.exists then return None
+    if !sym.exists then break(None)
 
     // (1) `Tuple{N}.apply(...)` on the case-class companion module.
     if isTupleCompanionApply(sym) then
       val args = genArgsPreservingOrder(app.args)
       val tpe  = encoding.encodeType(app.tpe)
-      return Some(PyTupleValue(args)(tpe, pos))
+      break(Some(PyTupleValue(args)(tpe, pos)))
 
     // (2) `runtime.Tuples.*` static helpers.
     if pyDefn.RuntimeTuplesModule.exists
         && sym.owner == pyDefn.RuntimeTuplesModule.moduleClass
     then
       genTuplesStaticCall(sym, app.args, app.tpe, pos) match
-        case s @ Some(_) => return s
+        case s @ Some(_) => break(s)
         case None        => ()
 
     // (3) Polymorphic `Product` methods. Erasure can collapse a tuple
@@ -2439,7 +2439,7 @@ private class PyCodeGen()(using genCtx: Context):
     app.fun match
       case Select(receiver, _) =>
         genProductPolyfill(sym, receiver, app.args, app.tpe, pos) match
-          case s @ Some(_) => return s
+          case s @ Some(_) => break(s)
           case None        => ()
       case _ =>
         ()
@@ -2485,8 +2485,8 @@ private class PyCodeGen()(using genCtx: Context):
    *  like `Append[Tuple22, 23]` and singleton-tuple selections need
    *  `widenDealias` to surface their underlying `*:` chain.
    *  `tupleElementTypes` is dotc's authoritative tuple-shape check. */
-  private def isTupleReceiverType(tpe: Type): Boolean =
-    if tpe.tupleElementTypes.isDefined then return true
+  private def isTupleReceiverType(tpe: Type): Boolean = boundary:
+    if tpe.tupleElementTypes.isDefined then break(true)
     pyDefn.isTupleClass(tpe.widenDealias.typeSymbol)
 
   /** True for a fixed-arity tuple class (`Tuple1..22` and specialized
@@ -2495,9 +2495,9 @@ private class PyCodeGen()(using genCtx: Context):
    *  Deliberately excludes `Tuple` (trait), `NonEmptyTuple` (trait),
    *  `*:` (cons class — distinct shape), `EmptyTuple$`, and
    *  `TupleXXL` (variadic-arity, kept as a real Scala class). */
-  private def isFixedArityTupleClass(sym: Symbol): Boolean =
-    if !sym.exists || !sym.isClass then return false
-    if defn.isTupleClass(sym) then return true
+  private def isFixedArityTupleClass(sym: Symbol): Boolean = boundary:
+    if !sym.exists || !sym.isClass then break(false)
+    if defn.isTupleClass(sym) then break(true)
     val cs = sym.asClass
     cs != pyDefn.PairClass && cs.derivesFrom(pyDefn.PairClass) && cs != pyDefn.TupleXXLClass
 
@@ -2509,10 +2509,10 @@ private class PyCodeGen()(using genCtx: Context):
    *  variadic / collection-shaped factories (`Tuple.apply(Seq)`,
    *  `TupleXXL.apply(Seq)`) whose single Seq argument is NOT the
    *  tuple's element list and would be miscompiled as a 1-tuple. */
-  private def isTupleCompanionApply(sym: Symbol): Boolean =
-    if sym.name != nme.apply then return false
+  private def isTupleCompanionApply(sym: Symbol): Boolean = boundary:
+    if sym.name != nme.apply then break(false)
     val owner = sym.owner
-    if !owner.is(ModuleClass) then return false
+    if !owner.is(ModuleClass) then break(false)
     val companionClass = owner.linkedClass
     isFixedArityTupleClass(companionClass)
 
@@ -2558,7 +2558,7 @@ private class PyCodeGen()(using genCtx: Context):
       args: List[Tree],
       resultScalaTpe: Type,
       pos: PyPosition
-  ): Option[PyTree] =
+  ): Option[PyTree] = boundary:
     val resultTpe = encoding.encodeType(resultScalaTpe)
     val name = sym.name.toString
     def recv: PyTree = genExpr(receiver)
@@ -2569,7 +2569,7 @@ private class PyCodeGen()(using genCtx: Context):
     if name.length >= 2 && name.charAt(0) == '_' && name.tail.forall(_.isDigit) then
       val n = name.tail.toInt
       if n >= 1 && n <= 22 && args.isEmpty then
-        return Some(ext("_scpy_tuple_get", List(recv, PyIntLit(n - 1)(pos))))
+        break(Some(ext("_scpy_tuple_get", List(recv, PyIntLit(n - 1)(pos)))))
 
     if sym == pyDefn.Tuple2_swap then
       Some(ext("_scpy_tuple_reverse", List(recv)))
@@ -2599,12 +2599,12 @@ private class PyCodeGen()(using genCtx: Context):
    *  with `Tuple`/`Product`/`Any`-typed call sites that we'd want to
    *  miss), so the receiver-type check is purely static.
    */
-  private def genPyMapCallOpt(app: Apply, pos: PyPosition): Option[PyTree] =
+  private def genPyMapCallOpt(app: Apply, pos: PyPosition): Option[PyTree] = boundary:
     val sym = app.fun.symbol
-    if !sym.exists then return None
+    if !sym.exists then break(None)
 
     if pyDefn.PyMapModule.exists && sym == pyDefn.PyMap_empty then
-      return Some(PyDictValue(Nil)(encoding.encodeType(app.tpe), pos))
+      break(Some(PyDictValue(Nil)(encoding.encodeType(app.tpe), pos)))
 
     app.fun match
       case Select(receiver, _) if isPyMapReceiverType(receiver.tpe) =>
@@ -2612,8 +2612,8 @@ private class PyCodeGen()(using genCtx: Context):
       case _ =>
         None
 
-  private def isPyMapReceiverType(tpe: Type): Boolean =
-    if !pyDefn.PyMapClass.exists then return false
+  private def isPyMapReceiverType(tpe: Type): Boolean = boundary:
+    if !pyDefn.PyMapClass.exists then break(false)
     tpe.widenDealias.typeSymbol == pyDefn.PyMapClass
 
   private def genPyMapInstanceCall(
@@ -2666,20 +2666,20 @@ private class PyCodeGen()(using genCtx: Context):
    *    3. Instance methods on a `PyList`-typed receiver — dispatch to
    *       a `_scpy_list_*` runtime helper.
    */
-  private def genPyListCallOpt(app: Apply, pos: PyPosition): Option[PyTree] =
+  private def genPyListCallOpt(app: Apply, pos: PyPosition): Option[PyTree] = boundary:
     val sym = app.fun.symbol
-    if !sym.exists then return None
+    if !sym.exists then break(None)
 
     if pyDefn.PyListModule.exists && sym == pyDefn.PyList_empty then
-      return Some(PyListValue(Nil)(encoding.encodeType(app.tpe), pos))
+      break(Some(PyListValue(Nil)(encoding.encodeType(app.tpe), pos)))
 
     if pyDefn.PyListModule.exists && sym == pyDefn.PyList_applyFactory then
       app.args match
         case List(repeated) =>
           val elems = extractRepeatedArgs(repeated).map(genExpr)
-          return Some(PyListValue(elems)(encoding.encodeType(app.tpe), pos))
+          break(Some(PyListValue(elems)(encoding.encodeType(app.tpe), pos)))
         case _ =>
-          return None
+          break(None)
 
     app.fun match
       case Select(receiver, _) if isPyListReceiverType(receiver.tpe) =>
@@ -2687,8 +2687,8 @@ private class PyCodeGen()(using genCtx: Context):
       case _ =>
         None
 
-  private def isPyListReceiverType(tpe: Type): Boolean =
-    if !pyDefn.PyListClass.exists then return false
+  private def isPyListReceiverType(tpe: Type): Boolean = boundary:
+    if !pyDefn.PyListClass.exists then break(false)
     tpe.widenDealias.typeSymbol == pyDefn.PyListClass
 
   private def genPyListInstanceCall(
@@ -2732,20 +2732,20 @@ private class PyCodeGen()(using genCtx: Context):
    *  helpers and emits `PyRawTupleValue` (NOT `PyTupleValue`, which
    *  wraps in `_scpy_ScalaTuple`).
    */
-  private def genPyTupleCallOpt(app: Apply, pos: PyPosition): Option[PyTree] =
+  private def genPyTupleCallOpt(app: Apply, pos: PyPosition): Option[PyTree] = boundary:
     val sym = app.fun.symbol
-    if !sym.exists then return None
+    if !sym.exists then break(None)
 
     if pyDefn.PyTupleModule.exists && sym == pyDefn.PyTuple_empty then
-      return Some(PyRawTupleValue(Nil)(encoding.encodeType(app.tpe), pos))
+      break(Some(PyRawTupleValue(Nil)(encoding.encodeType(app.tpe), pos)))
 
     if pyDefn.PyTupleModule.exists && sym == pyDefn.PyTuple_applyFactory then
       app.args match
         case List(repeated) =>
           val elems = extractRepeatedArgs(repeated).map(genExpr)
-          return Some(PyRawTupleValue(elems)(encoding.encodeType(app.tpe), pos))
+          break(Some(PyRawTupleValue(elems)(encoding.encodeType(app.tpe), pos)))
         case _ =>
-          return None
+          break(None)
 
     app.fun match
       case Select(receiver, _) if isPyTupleReceiverType(receiver.tpe) =>
@@ -2753,8 +2753,8 @@ private class PyCodeGen()(using genCtx: Context):
       case _ =>
         None
 
-  private def isPyTupleReceiverType(tpe: Type): Boolean =
-    if !pyDefn.PyTupleClass.exists then return false
+  private def isPyTupleReceiverType(tpe: Type): Boolean = boundary:
+    if !pyDefn.PyTupleClass.exists then break(false)
     tpe.widenDealias.typeSymbol == pyDefn.PyTupleClass
 
   private def genPyTupleInstanceCall(
@@ -3018,7 +3018,7 @@ private class PyCodeGen()(using genCtx: Context):
     val prefix = receiverLocals :+ monitorDef :+ acquire
     PyBlock(prefix, syncStmt)(pos)
 
-  private def genSynchronizedExpr(app: Apply): PyTree =
+  private def genSynchronizedExpr(app: Apply): PyTree = boundary:
     val pos = posOf(app)
     val Apply(fun, List(body)) = app: @unchecked
     val receiver = qualifierOf(fun)
@@ -3065,7 +3065,7 @@ private class PyCodeGen()(using genCtx: Context):
           prefix,
           PyTryFinally(genAssignFromExpr(resultVar, body, pos), release)(pos)
         )(pos)
-        return resultVar
+        break(resultVar)
 
     pendingLocalDefs += PyBlock(prefix, PyTryFinally(syncBody, release)(pos))(pos)
     PyUnitLit()(pos)
@@ -3075,7 +3075,7 @@ private class PyCodeGen()(using genCtx: Context):
 
   private def genSimpleOp(
       receiver: Tree, args: List[Tree], code: Int, pos: PyPosition
-  ): PyTree =
+  ): PyTree = boundary:
     import PyBinaryCode.*
     import PyUnaryCode.*
 
@@ -3110,7 +3110,7 @@ private class PyCodeGen()(using genCtx: Context):
         if code == ZAND || code == ZOR then
           val (rhsLocals, rhsExprS) = genExprWithPending(rhs)
           if rhsLocals.isEmpty then
-            return PyBinaryOp(if code == ZAND then BoolAnd else BoolOr, lhs, rhsExprS)(pos)
+            break(PyBinaryOp(if code == ZAND then BoolAnd else BoolOr, lhs, rhsExprS)(pos))
           else
             val resultTpe = encoding.encodeType(defn.BooleanType)
             // `a && b`  =>  if a then b else False
@@ -3118,9 +3118,9 @@ private class PyCodeGen()(using genCtx: Context):
             val falseLit = PyBooleanLit(false)(pos)
             val trueLit  = PyBooleanLit(true)(pos)
             if code == ZAND then
-              return hoistValueIf(lhs, rhsLocals, rhsExprS, Nil, falseLit, resultTpe, pos)
+              break(hoistValueIf(lhs, rhsLocals, rhsExprS, Nil, falseLit, resultTpe, pos))
             else
-              return hoistValueIf(lhs, Nil, trueLit, rhsLocals, rhsExprS, resultTpe, pos)
+              break(hoistValueIf(lhs, Nil, trueLit, rhsLocals, rhsExprS, resultTpe, pos))
         val rhsExpr = genExpr(rhs)
         val usesUniversalEquality =
           !encoding.isIntType(receiverType) &&
@@ -3130,9 +3130,9 @@ private class PyCodeGen()(using genCtx: Context):
             !encoding.isBooleanType(receiverType) &&
             !encoding.isStringType(receiverType)
         if code == EQ && usesUniversalEquality then
-          return genBoxesRunTimeEquals(lhs, rhsExpr, pos)
+          break(genBoxesRunTimeEquals(lhs, rhsExpr, pos))
         if code == NE && usesUniversalEquality then
-          return PyUnaryOp(BoolNot, genBoxesRunTimeEquals(lhs, rhsExpr, pos))(pos)
+          break(PyUnaryOp(BoolNot, genBoxesRunTimeEquals(lhs, rhsExpr, pos))(pos))
         // For arithmetic and comparison, Scala/JVM promotes Int→Long→Float→Double
         // based on the widest operand. Using only the receiver type produces
         // `int / 2.0 → int // int = int`, so derive a dominant type from both sides.

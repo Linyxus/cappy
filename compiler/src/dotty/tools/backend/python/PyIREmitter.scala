@@ -4,6 +4,7 @@ import dotty.tools.backend.python.ir.pyir.*
 
 import java.io.PrintWriter
 import scala.collection.mutable
+import scala.util.boundary, boundary.break
 
 /** Emits Python source text from a list of `PyClassDef`s.
  *
@@ -315,13 +316,13 @@ object PyIREmitter:
      *  name is computed via `PyMethodName` (single source of truth
      *  for the encoding rule).
      */
-    private def emitClosureCarriers(): Unit =
+    private def emitClosureCarriers(): Unit = boundary:
       val objectRef = PyClassRef(PyClassName.ObjectClass)
       val arities = (0 to 22).filter(n =>
         knownClasses.contains(PyClassName(s"scala.Function$n"))
         && !skipClosureCarriersFor.contains(n)
       )
-      if arities.isEmpty then return
+      if arities.isEmpty then break()
       line("# -- closure carriers (_scpy_Fn0.._scpy_Fn22) --")
       emptyLine()
       // Only emit a carrier when the corresponding `scala.FunctionN`
@@ -459,7 +460,7 @@ object PyIREmitter:
      *  via MRO, which is fine, but we don't return it here so callers
      *  default to `_scpy_Object`/`PyClassName.ObjectClass` only when
      *  nothing better exists). */
-    private def findAncestorWithHash(cls: PyClassDef): Option[PyClassName] =
+    private def findAncestorWithHash(cls: PyClassDef): Option[PyClassName] = boundary:
       val seen = mutable.Set.empty[PyClassName]
       val queue = mutable.Queue.empty[PyClassName]
       // Seed with direct parents in the bases-list order so the choice
@@ -471,7 +472,7 @@ object PyIREmitter:
       while queue.nonEmpty do
         val n = queue.dequeue()
         if seen.add(n) then
-          if classDefinesHash(n) then return Some(n)
+          if classDefinesHash(n) then break(Some(n))
           classByName.get(n) match
             case Some(c) =>
               c.superClassName.foreach(queue.enqueue)
@@ -623,11 +624,11 @@ object PyIREmitter:
       import scala.jdk.CollectionConverters.*
       order.values().asScala.toList
 
-    private def buildBasesList(cls: PyClassDef): List[String] =
+    private def buildBasesList(cls: PyClassDef): List[String] = boundary:
       if cls.name == PyClassName.ThrowableClass then
         // A source-ported `java.lang.Throwable` must remain a real Python
         // exception or `raise` / `except Exception` stop working.
-        return List("Exception")
+        break(List("Exception"))
 
       // Foreign Python parent: render via the existing extern-import
       // alias mechanism. The resulting `<alias>` (or `<alias>.<sub>`)
@@ -639,7 +640,7 @@ object PyIREmitter:
           val externBase = externClassRefExpr(mod, path)
           val ifaceBases = cls.interfaces.filter(knownClasses.contains).map(classIdentifier)
           val bases = externBase :: ifaceBases
-          return bases.distinct
+          break(bases.distinct)
         case _ => ()
 
       // Scala superclass plus any interface whose Python class actually

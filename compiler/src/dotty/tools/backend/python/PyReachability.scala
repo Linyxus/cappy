@@ -3,6 +3,7 @@ package dotty.tools.backend.python
 import dotty.tools.backend.python.ir.pyir.*
 
 import scala.collection.mutable
+import scala.util.boundary, boundary.break
 
 /** Link-time reachability analysis for PyIR.
  *
@@ -301,10 +302,10 @@ object PyReachability:
     private def isRuntimeProvided(cls: PyClassName): Boolean =
       PyIRRuntime.providedClass(cls).isDefined
 
-    private def reachClass(cls: PyClassName): Unit =
-      if isRuntimeProvided(cls) then return
+    private def reachClass(cls: PyClassName): Unit = boundary:
+      if isRuntimeProvided(cls) then break()
       val s = stateOf(cls)
-      if s.isReachable then return
+      if s.isReachable then break()
       s.isReachable = true
       classByName.get(cls).foreach { cd =>
         cd.superClassName.foreach(sc => enqueue(Work.ReachClass(sc)))
@@ -316,10 +317,10 @@ object PyReachability:
           enqueue(Work.AnalyzeMethod(cls, m.name))
       }
 
-    private def instantiate(cls: PyClassName): Unit =
-      if isRuntimeProvided(cls) then return
+    private def instantiate(cls: PyClassName): Unit = boundary:
+      if isRuntimeProvided(cls) then break()
       val s = stateOf(cls)
-      if s.isInstantiated then return
+      if s.isInstantiated then break()
       s.isInstantiated = true
       enqueue(Work.ReachClass(cls))
       // Three classes of methods must be kept on any instantiated class
@@ -385,10 +386,10 @@ object PyReachability:
             }
         }
 
-    private def analyzeMethod(owner: PyClassName, method: PyMethodName): Unit =
-      if isRuntimeProvided(owner) then return
+    private def analyzeMethod(owner: PyClassName, method: PyMethodName): Unit = boundary:
+      if isRuntimeProvided(owner) then break()
       val s = stateOf(owner)
-      if !s.reachableMethods.add(method) then return
+      if !s.reachableMethods.add(method) then break()
       enqueue(Work.ReachClass(owner))
       classByName.get(owner).flatMap(_.methods.find(_.name == method)) match
         case Some(mdef) => mdef.body.foreach(walkTree)
@@ -407,10 +408,10 @@ object PyReachability:
 
     private def reachField(owner: PyClassName, field: PyFieldName)(
         select: MutableState => mutable.HashSet[PyFieldName]
-    ): Unit =
-      if isRuntimeProvided(owner) then return
+    ): Unit = boundary:
+      if isRuntimeProvided(owner) then break()
       val s = stateOf(owner)
-      if !select(s).add(field) then return
+      if !select(s).add(field) then break()
       enqueue(Work.ReachClass(owner))
 
     // --- Virtual dispatch -------------------------------------------

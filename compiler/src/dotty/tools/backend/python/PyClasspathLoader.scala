@@ -7,6 +7,7 @@ import dotty.tools.dotc.report
 import java.io.File
 import java.util.jar.JarFile
 import scala.collection.mutable
+import scala.util.boundary, boundary.break
 
 /** Walks the compile classpath AND the compile's output directory for
  *  `.pyir` entries and deserializes them into `Support`-tagged
@@ -140,10 +141,10 @@ object PyClasspathLoader:
       required: Boolean,
       visitedFiles: mutable.HashSet[String],
       inputs: mutable.ListBuffer[PyLinker.Input]
-  )(using Context): Unit =
+  )(using Context): Unit = boundary:
     val canon =
       try jarFile.getCanonicalPath.nn catch case _: java.io.IOException => jarFile.getAbsolutePath.nn
-    if !visitedFiles.add(canon) then return
+    if !visitedFiles.add(canon) then break()
     try
       val jar = new JarFile(jarFile)
       try
