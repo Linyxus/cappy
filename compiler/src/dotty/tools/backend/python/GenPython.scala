@@ -4385,9 +4385,7 @@ private class PyCodeGen()(using genCtx: Context):
     )(resultTpe, pos)
 
   /** Emit an attribute assignment. Always lowered to `setattr(obj, name, value)`
-   *  so keyword names and non-literal names work uniformly. Phase 2 can
-   *  optimize the literal-identifier case to direct `obj.name = value` via
-   *  a dedicated IR shape if desired. */
+   *  so keyword names and non-literal names work uniformly. */
   private def genDynamicSetAttr(
       receiver: PyTree,
       nameExpr: PyTree,
