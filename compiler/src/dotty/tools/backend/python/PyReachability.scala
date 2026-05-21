@@ -193,31 +193,30 @@ object PyReachability:
     private val worklist = mutable.ArrayDeque.empty[Work]
     private def enqueue(w: Work): Unit = worklist += w
 
-    // --- Inheritance graph (precomputed) ----------------------------
-    // directDescendants[C] = every class whose superClass or interfaces
-    // directly contains C. Built lazily with transitiveAncestors below.
-    private val directDescendants: Map[PyClassName, Set[PyClassName]] =
-      val acc = mutable.HashMap.empty[PyClassName, mutable.HashSet[PyClassName]]
-      for c <- classByName.valuesIterator do
-        c.superClassName.foreach { s => acc.getOrElseUpdate(s, mutable.HashSet.empty) += c.name }
-        c.interfaces.foreach { i => acc.getOrElseUpdate(i, mutable.HashSet.empty) += c.name }
-      acc.view.mapValues(_.toSet).toMap
-
     /** Memo for [[ancestorsOf]]. Scoped to this `Analyzer` instance,
      *  so it is dropped when the analyzer is GC'd after `analyze()`
      *  returns. */
     private val ancestorsCache = mutable.HashMap.empty[PyClassName, Set[PyClassName]]
 
-    /** Memos for [[resolveInstanceMethod]] and [[gatherDescendants]].
-     *  Both are pure functions of the immutable `classByName` /
-     *  `directDescendants` graph, which never changes within an
-     *  `Analyzer` instance, so the results are stable for the whole
-     *  `analyze()` pass. These dominate link time: `instantiate` and
-     *  `logVirtualCall` resolve the same `(class, method)` pairs and
-     *  re-walk the same descendant subtrees thousands of times. */
+    /** Memo for [[resolveInstanceMethod]], a pure function of the
+     *  immutable `classByName` graph that never changes within an
+     *  `Analyzer` instance, so its results are stable for the whole
+     *  `analyze()` pass. It dominates link time: `instantiate` and
+     *  `logVirtualCall` resolve the same `(class, method)` pairs
+     *  thousands of times. */
     private val resolveCache =
       mutable.HashMap.empty[(PyClassName, PyMethodName), Option[(PyClassName, PyMethodName)]]
-    private val descendantsCache = mutable.HashMap.empty[PyClassName, Set[PyClassName]]
+
+    /** For each class `C`, the set of already-instantiated classes that
+     *  are `C` itself or a descendant of `C`. Maintained incrementally
+     *  by [[instantiate]] (which already walks the ancestor chain), so
+     *  [[logVirtualCall]] can dispatch a freshly-discovered virtual call
+     *  to exactly the live receivers under a static type — the precise
+     *  `instantiated ∩ descendants(staticRecv)` intersection — without
+     *  scanning all descendants of a high type (`Object`, `FunctionN`,
+     *  `IterableOnce`), which spans the whole graph. */
+    private val instantiatedDescendants =
+      mutable.HashMap.empty[PyClassName, mutable.HashSet[PyClassName]]
 
     /** Transitively reachable ancestors of `cls`, not including `cls`
      *  itself. Runtime-provided ancestors are included (they are class
@@ -398,6 +397,9 @@ object PyReachability:
       val chain = cls +: ancestorsOf(cls).toSeq
       val methodsToReplay = mutable.HashSet.empty[PyMethodName]
       for a <- chain do
+        // Register `cls` as a live receiver under itself and every
+        // ancestor, so `logVirtualCall` can find it by static type.
+        instantiatedDescendants.getOrElseUpdate(a, mutable.HashSet.empty) += cls
         state.get(a).foreach(as => methodsToReplay ++= as.virtualCallLog)
       for m <- methodsToReplay do
         resolveInstanceMethod(cls, m).foreach { case (owner, method) =>
@@ -456,6 +458,18 @@ object PyReachability:
      *  list-collect-applyorelse-default}-missing.md`. We still avoid
      *  enqueuing analysis on runtime-provided owners. */
     private def logVirtualCall(staticRecv: PyClassName, m: PyMethodName): Unit =
+      // Dispatch `method` to every already-instantiated descendant-or-self
+      // of `staticRecv`. `instantiatedDescendants(staticRecv)` is exactly
+      // that intersection, maintained incrementally by `instantiate`, so
+      // there is no scan of the (potentially whole-graph) descendant set.
+      def dispatchLive(method: PyMethodName): Unit =
+        instantiatedDescendants.get(staticRecv).foreach { live =>
+          for d <- live do
+            resolveInstanceMethod(d, method).foreach { case (owner, mth) =>
+              if !isRuntimeProvided(owner) then
+                enqueue(Work.AnalyzeMethod(owner, mth))
+            }
+        }
       // Log against the receiver and every ancestor so that a future
       // instantiation of a deeper descendant (whose ancestors transit
       // through `staticRecv`) still sees this call.
@@ -469,15 +483,7 @@ object PyReachability:
             enqueue(Work.AnalyzeMethod(owner, method))
         }
       // Dispatch to already-instantiated descendants.
-      val candidates = staticRecv +: gatherDescendants(staticRecv).toSeq
-      for d <- candidates do
-        state.get(d).foreach { ds =>
-          if ds.isInstantiated then
-            resolveInstanceMethod(d, m).foreach { case (owner, method) =>
-              if !isRuntimeProvided(owner) then
-                enqueue(Work.AnalyzeMethod(owner, method))
-            }
-        }
+      dispatchLive(m)
       // The `library-py`-compiled `scala.FunctionN.pyir` emits each
       // `apply_mc<X><Y>_sp__...` specialized variant as a body that
       // calls `this.apply__Ljava_dlang_dObject*__Ljava_dlang_dObject`
@@ -498,14 +504,7 @@ object PyReachability:
               if !isRuntimeProvided(owner) then
                 enqueue(Work.AnalyzeMethod(owner, method))
             }
-          for d <- candidates do
-            state.get(d).foreach { ds =>
-              if ds.isInstantiated then
-                resolveInstanceMethod(d, boxed).foreach { case (owner, method) =>
-                  if !isRuntimeProvided(owner) then
-                    enqueue(Work.AnalyzeMethod(owner, method))
-                }
-            }
+          dispatchLive(boxed)
       }
 
     /** When `m` is an `apply` variant of a Scala `FunctionN` (boxed,
@@ -526,21 +525,6 @@ object PyReachability:
           List.fill(arity)(objectRef),
           objectRef
         ))
-
-    private def gatherDescendants(cls: PyClassName): Set[PyClassName] =
-      descendantsCache.get(cls) match
-        case Some(cached) => cached
-        case None =>
-          val seen = mutable.HashSet.empty[PyClassName]
-          val stack = mutable.ArrayDeque.empty[PyClassName]
-          directDescendants.get(cls).foreach(_.foreach(stack += _))
-          while stack.nonEmpty do
-            val d = stack.removeHead()
-            if seen.add(d) then
-              directDescendants.get(d).foreach(_.foreach(stack += _))
-          val result = seen.toSet
-          descendantsCache(cls) = result
-          result
 
     /** Walk `start`'s superchain (including `start`) and return the
      *  first class that defines an instance method with name `m`.
@@ -586,9 +570,8 @@ object PyReachability:
         val cn = cur.get
         classByName.get(cn) match
           case Some(cd) =>
-            cd.methods.find(md => md.name == m && isInstanceMethod(md.flags.namespace)) match
-              case Some(_) => found = Some((cn, m))
-              case None    => cur = cd.superClassName
+            if declaredInstanceMethods(cn).contains(m) then found = Some((cn, m))
+            else cur = cd.superClassName
           case None =>
             cur = None
       // Fall back to a transitive interface-default lookup. BFS through
@@ -612,14 +595,30 @@ object PyReachability:
           val ifaceName = queue.removeHead()
           if seen.add(ifaceName) then
             classByName.get(ifaceName).foreach { ifd =>
-              ifd.methods.find(md => md.name == m && isInstanceMethod(md.flags.namespace)) match
-                case Some(_) => found = Some((ifd.name, m))
-                case None    => ifd.interfaces.foreach(queue += _)
+              if declaredInstanceMethods(ifaceName).contains(m) then found = Some((ifd.name, m))
+              else ifd.interfaces.foreach(queue += _)
             }
       found
 
     private def isInstanceMethod(ns: PyMemberNamespace): Boolean =
       ns == PyMemberNamespace.Public || ns == PyMemberNamespace.Private
+
+    /** Lazy per-class index of the names of instance methods a class
+     *  *declares*. Replaces the linear `cd.methods.find(...)` scan in
+     *  [[resolveInstanceMethodUncached]]: a class on a dispatch chain is
+     *  probed by name many times (once per distinct virtual call routed
+     *  through it), and collection classes carry dozens of methods, so
+     *  the scan is O(chain × methods) per resolve. Built once per class
+     *  on first probe and reused. */
+    private val instanceMethodNames = mutable.HashMap.empty[PyClassName, Set[PyMethodName]]
+    private def declaredInstanceMethods(cn: PyClassName): Set[PyMethodName] =
+      instanceMethodNames.getOrElseUpdate(
+        cn,
+        classByName.get(cn) match
+          case Some(cd) =>
+            cd.methods.iterator.filter(md => isInstanceMethod(md.flags.namespace)).map(_.name).toSet
+          case None => Set.empty
+      )
 
     /** When `className` is a non-ModuleClass that has a `<className>_`
      *  ModuleClass companion in the bundle, return the companion module
