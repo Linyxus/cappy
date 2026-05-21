@@ -62,6 +62,8 @@ val `scala3-compiler-py-bootstrapped` = Build.`scala3-compiler-py-bootstrapped`
 val `stdlib-bench` = Build.`stdlib-bench`
 // Stdlib benchmarks for the Python backend (mirror of stdlib-bench).
 val `stdlib-bench-py` = Build.`stdlib-bench-py`
+// Self-contained Python-backend pattern benchmarks (language patterns, not stdlib).
+val `bench-py` = Build.`bench-py`
 // Experimental TUI REPL prototype for the Python backend.
 val `cappy-repl` = Build.`cappy-repl`
 // Run every test for Python backend. Builds the javalib + library-py jars

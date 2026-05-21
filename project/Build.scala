@@ -2871,6 +2871,30 @@ object Build {
       }.value,
     )
 
+  val runBenchPy = taskKey[Unit]("Compile + run the self-contained Python-backend pattern benchmarks (bench-py).")
+
+  /** Self-contained Python-backend pattern benchmarks. Unlike stdlib-bench-py,
+   *  these measure language *patterns* (numeric loops, recursion, ADT pattern
+   *  match, closures, string building, basic immutable collections) rather than
+   *  per-collection stdlib ops. Python-only results (no JVM/JMH mirror). Same
+   *  on-demand `bin/spc` + `uv run` harness shape as stdlib-bench-py: the Driver
+   *  under `driver-src/` is plain JVM Scala and the bench sources under
+   *  `src/main/scala/.../py/` are -scalapy-only, compiled on demand. */
+  lazy val `bench-py` = project.in(file("bench-py"))
+    .dependsOn(`scala3-library-bootstrapped`)
+    .settings(commonBootstrappedSettings)
+    .settings(
+      bootstrappedScalaInstanceSettings,
+      publish / skip := true,
+      bspEnabled := false,
+      Compile / unmanagedSourceDirectories := Seq(baseDirectory.value / "driver-src"),
+      Compile / mainClass := Some("dotty.tools.benchmarks.py.Driver"),
+      runBenchPy := Def.taskDyn {
+        val root = (ThisBuild / baseDirectory).value.getAbsolutePath
+        (Compile / runMain).toTask(s""" dotty.tools.benchmarks.py.Driver "$root" """)
+      }.value,
+    )
+
   /** Experimental TUI REPL prototype for the Python backend (scala-py branch).
    *
    *  The driver embeds `scala3-compiler-bootstrapped` and drives a

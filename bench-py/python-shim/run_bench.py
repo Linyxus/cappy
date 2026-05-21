@@ -1,19 +1,18 @@
 """pyperf entry-point for a single Scala bench bundle.
 
-The companion JVM Driver (see ``stdlib-bench-py/driver-src/Driver.scala``)
-compiles each ``*.scala`` bench source through ``bin/spc`` to a Python
-bundle, then invokes this script per-bundle inside ``uv run``. Pyperf takes
-care of subprocess fan-out, calibration, warmup, and JSON output; we just
-register one ``bench_time_func`` per ``(op, size)`` pair.
+The companion JVM Driver (see ``bench-py/driver-src/Driver.scala``) compiles
+each ``*.scala`` bench source through ``bin/spc`` to a Python bundle, then
+invokes this script per-bundle inside ``uv run``. Pyperf takes care of
+subprocess fan-out, calibration, warmup, and JSON output; we just register one
+``bench_time_func`` per ``(op, size)`` pair.
 
-Inputs come from the environment so pyperf's own ``argv`` parsing stays
-intact:
+Inputs come from the environment so pyperf's own ``argv`` parsing stays intact:
 
 * ``BENCH_BUNDLE``       absolute path to ``<BenchClass>.py``
 * ``BENCH_QUAL``         Scala-qualified class name, e.g.
-                         ``dotty.tools.benchmarks.py.mutable.HashMapBench``
-* ``BENCH_SIZES``        comma-separated sizes (default ``16,256,4096``)
-* ``BENCH_OPS``          comma-separated ops (default ``build,access,transform,mutate``)
+                         ``dotty.tools.benchmarks.py.numeric.NumericLoopBench``
+* ``BENCH_SIZES``        comma-separated sizes (default ``64,1024``)
+* ``BENCH_OPS``          comma-separated ops (default ``sumLoop``)
 * ``BENCH_INNER_LOOPS``  manual unroll factor (default ``10``).
 
 Pyperf flags (``--processes``, ``--values``, ``--warmups``, ``--min-time``,
@@ -32,7 +31,7 @@ import pyperf
 
 
 def _load_bundle(bundle_path: str) -> dict:
-    """Execute the scpyc bundle as ``__main__`` and return its globals.
+    """Execute the spc bundle as ``__main__`` and return its globals.
 
     The bundle uses ``from __main__ import _scpy_*`` for forward references
     to symbols it defines later, so it MUST run with ``__name__ ==
@@ -104,8 +103,8 @@ def _make_time_func(unroll: int):
 def main() -> None:
     bundle = os.environ["BENCH_BUNDLE"]
     qual = os.environ["BENCH_QUAL"]
-    sizes = [int(s) for s in os.environ.get("BENCH_SIZES", "16,256,4096").split(",")]
-    ops = os.environ.get("BENCH_OPS", "build,access,transform,mutate").split(",")
+    sizes = [int(s) for s in os.environ.get("BENCH_SIZES", "64,1024").split(",")]
+    ops = os.environ.get("BENCH_OPS", "sumLoop").split(",")
     unroll = int(os.environ.get("BENCH_INNER_LOOPS", "10"))
 
     bundle_globals = _load_bundle(bundle)
@@ -130,10 +129,10 @@ def main() -> None:
 
     time_op = _make_time_func(unroll)
     runner = pyperf.Runner()
-    # Bench name includes the immediate package so immutable/mutable
-    # HashMap/HashSet pairs don't collide in the pyperf JSON suite.
+    # Bench name includes the immediate package (the category) so distinct
+    # categories don't collide in the pyperf JSON suite.
     parts = qual.split(".")
-    bench_name = ".".join(parts[-2:])  # e.g. mutable.HashMapBench
+    bench_name = ".".join(parts[-2:])  # e.g. numeric.NumericLoopBench
 
     for size in sizes:
         bench = scpy_new(bench_cls, bench_ctor)

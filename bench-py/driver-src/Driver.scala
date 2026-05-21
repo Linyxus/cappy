@@ -3,15 +3,16 @@ package dotty.tools.benchmarks.py
 import java.io.File
 import scala.sys.process.*
 
-/** Compile each bench source through `bin/spc`, then invoke the
- *  pyperf shim once per bundle. pyperf handles calibration, multi-process
- *  fan-out, warmup, JSON output, and stats. The shim is at
- *  `stdlib-bench-py/python-shim/run_bench.py`; the aggregator that
- *  consolidates results into `notes/benchmark.md` is
- *  `stdlib-bench-py/python-shim/results_to_md.py`.
+/** Compile each bench source through `bin/spc`, then invoke the pyperf shim
+ *  once per bundle. pyperf handles calibration, multi-process fan-out, warmup,
+ *  JSON output, and stats. The shim is at `bench-py/python-shim/run_bench.py`;
+ *  the aggregator that consolidates results into `notes/bench-py.md` is
+ *  `bench-py/python-shim/results_to_md.py`.
  *
- *  Configuration env vars (all optional; defaults in [[BenchEnv]] match
- *  the DEV preset documented in `notes/benchmark.md`):
+ *  Unlike stdlib-bench-py, bench-py is self-contained (language patterns, not
+ *  stdlib collections) and has no JVM/JMH mirror — results are Python-only.
+ *
+ *  Configuration env vars (all optional; defaults below match the DEV preset):
  *
  *    BENCH_PROCESSES   pyperf --processes
  *    BENCH_WARMUPS     pyperf --warmups
@@ -20,8 +21,6 @@ import scala.sys.process.*
  *    BENCH_INNER_LOOPS shim's manual unroll factor (forwarded as env)
  *    BENCH_FILTER      substring match against `Catalog.entries.benchId`
  *    BENCH_QUIET       any non-empty value adds --quiet to pyperf
- *    JMH_RESULTS_JSON  optional path to a JMH `-rf json -rff …` file;
- *                      if set, results_to_md joins ratios into the table
  */
 object Driver:
 
@@ -33,7 +32,6 @@ object Driver:
       innerLoops: Int,
       quiet:      Boolean,
       filter:     Option[String],
-      jmhJson:    Option[String]
   )
 
   private def loadEnv(): BenchEnv =
@@ -45,7 +43,6 @@ object Driver:
       innerLoops = sys.env.getOrElse("BENCH_INNER_LOOPS", "10").toInt,
       quiet      = sys.env.get("BENCH_QUIET").exists(_.nonEmpty),
       filter     = sys.env.get("BENCH_FILTER"),
-      jmhJson    = sys.env.get("JMH_RESULTS_JSON"),
     )
 
   def main(args: Array[String]): Unit =
@@ -54,16 +51,16 @@ object Driver:
       else new File(args(0)).getCanonicalFile
     val env = loadEnv()
 
-    val bundlesDir = new File(repoRoot, "stdlib-bench-py/target/py-bundles")
+    val bundlesDir = new File(repoRoot, "bench-py/target/py-bundles")
     bundlesDir.mkdirs()
-    val resultsDir = new File(repoRoot, "stdlib-bench-py/target/pyperf-results")
+    val resultsDir = new File(repoRoot, "bench-py/target/pyperf-results")
     resultsDir.mkdirs()
     val resultsJson = new File(resultsDir, "all.json")
     if resultsJson.isFile then resultsJson.delete()
 
-    val scpyc   = new File(repoRoot, "bin/spc")
-    val shim    = new File(repoRoot, "stdlib-bench-py/python-shim/run_bench.py")
-    val aggregator = new File(repoRoot, "stdlib-bench-py/python-shim/results_to_md.py")
+    val spc        = new File(repoRoot, "bin/spc")
+    val shim       = new File(repoRoot, "bench-py/python-shim/run_bench.py")
+    val aggregator = new File(repoRoot, "bench-py/python-shim/results_to_md.py")
 
     val selected = env.filter match
       case Some(pat) => Catalog.entries.filter(_.benchId.contains(pat))
@@ -86,7 +83,7 @@ object Driver:
       if bundle.isFile then bundle.delete()
       println(s"[compile] ${entry.benchId}")
       val rc = Process(
-        Seq(scpyc.getAbsolutePath, "-d", benchOut.getAbsolutePath,
+        Seq(spc.getAbsolutePath, "-d", benchOut.getAbsolutePath,
             src.getAbsolutePath),
         repoRoot
       ).!
@@ -125,22 +122,22 @@ object Driver:
       val rc = Process(cmd, repoRoot, benchEnv.toSeq*).!
       if rc != 0 then sys.error(s"pyperf run failed (rc=$rc): ${cmd.mkString(" ")}")
 
-    // 3. Hand off to the aggregator. Markdown table + results.jsonl land
-    //    in the repo root if the JMH JSON is also available.
+    // 3. Hand off to the aggregator. Markdown table + results.jsonl land in
+    //    the repo root (Python-only; no JVM column).
     val aggArgs = Seq(
       "uv", "run", "--project", repoRoot.getAbsolutePath, "--no-sync",
       "python", aggregator.getAbsolutePath,
       "--pyperf-json", resultsJson.getAbsolutePath,
-      "--out-md",      new File(repoRoot, "notes/benchmark.md").getAbsolutePath,
-      "--out-jsonl",   new File(repoRoot, "results.jsonl").getAbsolutePath,
-    ) ++ env.jmhJson.toSeq.flatMap(p => Seq("--jmh-json", p))
+      "--out-md",      new File(repoRoot, "notes/bench-py.md").getAbsolutePath,
+      "--out-jsonl",   new File(repoRoot, "bench-py-results.jsonl").getAbsolutePath,
+    )
     println(s"[aggregate] ${aggArgs.takeRight(6).mkString(" ")}")
     val aggRc = Process(aggArgs, repoRoot).!
     if aggRc != 0 then sys.error(s"aggregator failed (rc=$aggRc)")
 
-  /** scpyc emits the Python class name from `<package>.<bench-class>`. We
-   *  reconstruct the Scala-qualified name from the catalog entry; the
-   *  package is fixed by the bench-py source layout. */
+  /** spc emits the Python class name from `<package>.<bench-class>`. We
+   *  reconstruct the Scala-qualified name from the catalog entry; the package
+   *  prefix is fixed by the bench-py source layout. */
   private def scalaQualName(entry: Catalog.Entry, bundle: File): String =
-    val parts = entry.benchId.split("\\.").toList   // e.g. "mutable" :: "ArrayBufferBench" :: Nil
+    val parts = entry.benchId.split("\\.").toList   // e.g. "numeric" :: "NumericLoopBench" :: Nil
     s"dotty.tools.benchmarks.py.${parts.mkString(".")}"
