@@ -93,7 +93,7 @@ object Build {
    *  each release is a reviewable commit. Combined with `baseVersion` to form
    *  `dottyVersion` when `PYBUILD=yes`, e.g. `3.9.0-RC1-PY0.1.0`.
    */
-  val pyVersion = "0.1.7"
+  val pyVersion = "0.1.8"
 
   /** Final version of Scala compiler, controlled by environment variables.
    *
@@ -2780,10 +2780,10 @@ object Build {
 
   /** Self-contained launcher artifact for the Python-backend compiler.
    *
-   *  Published as `scpyc_3` under PYBUILD. Sole source is `PyMain.scala`,
+   *  Published as `cappyc_3` under PYBUILD. Sole source is `PyMain.scala`,
    *  which wraps `dotty.tools.dotc.Main` and:
    *    - extracts the bundled support jars (`scala-library-py`, `scala-pylib-py`,
-   *      embedded under `/scpy/` as resources) into `~/.cache/scpyc/<version>/`,
+   *      embedded under `/scpy/` as resources) into `~/.cache/cappyc/<version>/`,
    *    - splices them onto the user's `-classpath`,
    *    - injects `-scalapy`.
    *
@@ -2828,7 +2828,7 @@ object Build {
         Seq(pylibOut, libpyOut)
       }.taskValue,
     )
-    .settings(pyPublishSettings("spc"))
+    .settings(pyPublishSettings("cappyc"))
 
   //lazy val `scala3-bench` = project.in(file("bench")).asDottyBench(NonBootstrapped)
   //lazy val `scala3-bench-bootstrapped` = project.in(file("bench")).asDottyBench(Bootstrapped)
@@ -2907,6 +2907,15 @@ object Build {
    *  The `cappy.classpath` / `cappy.repoRoot` system properties pin the
    *  same support classpath the test harness uses, so the REPL behaves
    *  identically under `sbt run` and `sbt test`.
+   *
+   *  Published as `cappy-repl_3` under PYBUILD (see `pyPublishSettings`).
+   *  The released app is self-contained the same way the `cappyc` compiler
+   *  launcher is: a `resourceGenerator` bundles the three support jars under
+   *  `/scpy/`, and `Launcher.ensureSupportClasspath` extracts them into
+   *  `~/.cache/cappy-repl/<version>/` and sets `cappy.classpath` on startup
+   *  whenever the property isn't already supplied by sbt. `cappy.repoRoot`
+   *  is left at its default (`.`), so the released REPL must be launched from
+   *  a directory containing a compatible uv project (pyproject.toml + uv.lock).
    */
   lazy val `cappy-repl` = project.in(file("cappy-repl"))
     .dependsOn(`scala3-compiler-bootstrapped`)
@@ -2915,10 +2924,32 @@ object Build {
       bootstrappedScalaInstanceSettings,
       publish / skip := true,
       bspEnabled := false,
+      crossPaths := true,
       Compile / mainClass := Some("dotty.tools.cappyrepl.Main"),
       run / fork := true,
       run / connectInput := true,
       libraryDependencies += "xyz.matthieucourt" %% "layoutz" % "0.7.0",
+      // Bundle the support jars the REPL's *compile* classpath needs so the
+      // released app resolves them without the repo present. Only under
+      // PYBUILD — dev `sbt run`/tests get `cappy.classpath` via javaOptions
+      // below and never touch these resources. The jars stay off the JVM cp
+      // (extracted onto dotc's -classpath only), same rationale as PyMain.
+      Compile / resourceGenerators += Def.task {
+        if (isPyBuild) {
+          val out = (Compile / resourceManaged).value / "scpy"
+          IO.createDirectory(out)
+          val stdlib = (`scala-library-bootstrapped` / Compile / packageBin).value
+          val pylib  = (`scala-pylib-py`   / Compile / packageBin).value
+          val libpy  = (`scala-library-py` / Compile / packageBin).value
+          val stdlibOut = out / "scala-library-bootstrapped.jar"
+          val pylibOut  = out / "scala-pylib-py.jar"
+          val libpyOut  = out / "scala-library-py.jar"
+          IO.copyFile(stdlib, stdlibOut)
+          IO.copyFile(pylib, pylibOut)
+          IO.copyFile(libpy, libpyOut)
+          Seq(stdlibOut, pylibOut, libpyOut)
+        } else Seq.empty
+      }.taskValue,
       Compile / run / javaOptions ++= Seq(
         s"-Dcappy.repoRoot=${(ThisBuild / baseDirectory).value.getAbsolutePath}",
         s"-Dcappy.classpath=${
@@ -2950,6 +2981,7 @@ object Build {
         ) ++ forwardedProps
       },
     )
+    .settings(pyPublishSettings("cappy-repl"))
 
   val testcasesOutputDir = taskKey[Seq[String]]("Root directory where tests classes are generated")
   val testcasesSourceRoot = taskKey[String]("Root directory where tests sources are generated")
@@ -3098,8 +3130,8 @@ object Build {
    *  cannot accidentally pull a forked compiler.
    */
   lazy val pyOrganization = "io.github.linyxus.scalapy"
-  lazy val pyHomepage = url("https://github.com/linyxus/scala3-py")
-  lazy val pyScmInfo = ScmInfo(pyHomepage, "scm:git:git@github.com:linyxus/scala3-py.git")
+  lazy val pyHomepage = url("https://github.com/linyxus/cappy")
+  lazy val pyScmInfo = ScmInfo(pyHomepage, "scm:git:git@github.com:linyxus/cappy.git")
   lazy val pyDeveloper = Developer(
     id = "linyxus",
     name = "Yichen Xu",

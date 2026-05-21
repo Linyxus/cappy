@@ -4,8 +4,9 @@
 #
 # Reads `pyVersion` from project/Build.scala, runs sbt with PYBUILD=yes
 # against the publishable subset, syncs the staged Maven layout into the
-# gh-pages worktree, regenerates apps/scpyc.json, and creates a release
-# commit. Does NOT push — the user reviews and pushes manually.
+# gh-pages worktree, regenerates the apps/*.json channel descriptors
+# (cappyc, cappy-repl), and creates a release commit. Does NOT push — the
+# user reviews and pushes manually.
 #
 # Pre-conditions:
 #   - Both the active worktree and ../scala3-py-ghpages must be clean.
@@ -21,7 +22,7 @@ GHPAGES_APPS="${GHPAGES_WORKTREE}/apps"
 STAGING="${REPO_ROOT}/target/release-staging"
 
 GROUP_PATH="io/github/linyxus/scalapy"
-GHPAGES_BASE_URL="https://linyxus.github.io/scala3-py"
+GHPAGES_BASE_URL="https://linyxus.github.io/cappy"
 
 # (sbt task, published module dir under the group path)
 PROJECTS_AND_MODULES=(
@@ -32,7 +33,8 @@ PROJECTS_AND_MODULES=(
   "scala3-compiler-bootstrapped|scala3-compiler-py_3"
   "scala-pylib-py|scala-pylib-py_3"
   "scala-library-py|scala-library-py_3"
-  "scala3-compiler-py-bootstrapped|spc_3"
+  "scala3-compiler-py-bootstrapped|cappyc_3"
+  "cappy-repl|cappy-repl_3"
 )
 
 die() { echo "pyrelease.sh: $*" >&2; exit 1; }
@@ -111,14 +113,18 @@ mkdir -p "${GHPAGES_MAVEN}/${GROUP_PATH}"
 # alongside them.
 rsync -a "${STAGING}/${GROUP_PATH}/" "${GHPAGES_MAVEN}/${GROUP_PATH}/"
 
-# --- Regenerate apps/scpyc.json --------------------------------------------
-cat > "${GHPAGES_APPS}/spc.json" <<JSON
+# --- Regenerate app channel descriptors ------------------------------------
+# `spc` was renamed to `cappyc`; drop the stale descriptor so the channel
+# no longer advertises the old app name.
+rm -f "${GHPAGES_APPS}/spc.json"
+
+cat > "${GHPAGES_APPS}/cappyc.json" <<JSON
 {
-  "spc": {
-    "name": "spc",
+  "cappyc": {
+    "name": "cappyc",
     "mainClass": "dotty.tools.dotc.PyMain",
     "dependencies": [
-      "io.github.linyxus.scalapy:spc_3:${FULL_VERSION}"
+      "io.github.linyxus.scalapy:cappyc_3:${FULL_VERSION}"
     ],
     "repositories": [
       "central",
@@ -131,11 +137,36 @@ cat > "${GHPAGES_APPS}/spc.json" <<JSON
 }
 JSON
 # scala-library-py and scala-pylib-py are intentionally NOT listed as
-# transitive deps of spc_3: their classes overlap with scala-stdlib-py
+# transitive deps of cappyc_3: their classes overlap with scala-stdlib-py
 # (the JVM runtime stdlib), so putting them on JVM cp causes runtime
-# conflicts. They are bundled inside spc_3.jar as /scpy/*.jar resources
-# and PyMain extracts them into ~/.cache/spc/<version>/ on first run,
+# conflicts. They are bundled inside cappyc_3.jar as /scpy/*.jar resources
+# and PyMain extracts them into ~/.cache/cappyc/<version>/ on first run,
 # placing them on the *compile* classpath only.
+
+# --- Regenerate apps/cappy-repl.json ---------------------------------------
+cat > "${GHPAGES_APPS}/cappy-repl.json" <<JSON
+{
+  "cappy-repl": {
+    "name": "cappy-repl",
+    "mainClass": "dotty.tools.cappyrepl.Main",
+    "dependencies": [
+      "io.github.linyxus.scalapy:cappy-repl_3:${FULL_VERSION}"
+    ],
+    "repositories": [
+      "central",
+      "${GHPAGES_BASE_URL}/maven"
+    ],
+    "java-options": []
+  }
+}
+JSON
+# Like cappyc, the three support jars the REPL compiles against
+# (scala-library-bootstrapped, scala-pylib-py, scala-library-py) are bundled
+# inside cappy-repl_3.jar under /scpy/ rather than listed as POM deps, for the
+# same JVM-cp-conflict reason. Launcher.ensureSupportClasspath extracts them to
+# ~/.cache/cappy-repl/<version>/ and sets cappy.classpath on first run. The REPL
+# drives `uv run python` from the current directory (cappy.repoRoot defaults to
+# "."), so it must be launched from a dir with a compatible uv project.
 
 # --- Commit ----------------------------------------------------------------
 git -C "$GHPAGES_WORKTREE" add -A

@@ -409,6 +409,10 @@ object Main extends LayoutzApp[Main.State, Main.Msg]:
     output
 
   def main(args: Array[String]): Unit =
+    // Point `cappy.classpath` at the bundled support jars when running as the
+    // released app (no-op under sbt, which sets it via javaOptions). Must run
+    // before the lazy `driver` is constructed, since it reads the property.
+    Launcher.ensureSupportClasspath()
     try run
     finally
       if driver != null then driver.shutdown()
