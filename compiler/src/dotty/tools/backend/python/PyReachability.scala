@@ -208,6 +208,17 @@ object PyReachability:
      *  returns. */
     private val ancestorsCache = mutable.HashMap.empty[PyClassName, Set[PyClassName]]
 
+    /** Memos for [[resolveInstanceMethod]] and [[gatherDescendants]].
+     *  Both are pure functions of the immutable `classByName` /
+     *  `directDescendants` graph, which never changes within an
+     *  `Analyzer` instance, so the results are stable for the whole
+     *  `analyze()` pass. These dominate link time: `instantiate` and
+     *  `logVirtualCall` resolve the same `(class, method)` pairs and
+     *  re-walk the same descendant subtrees thousands of times. */
+    private val resolveCache =
+      mutable.HashMap.empty[(PyClassName, PyMethodName), Option[(PyClassName, PyMethodName)]]
+    private val descendantsCache = mutable.HashMap.empty[PyClassName, Set[PyClassName]]
+
     /** Transitively reachable ancestors of `cls`, not including `cls`
      *  itself. Runtime-provided ancestors are included (they are class
      *  names we *might* want to log virtual calls against, even if we
@@ -377,13 +388,20 @@ object PyReachability:
               enqueue(Work.AnalyzeMethod(ancestor, m.name))
         }
       // Replay every accumulated virtual-call log on the new vtable.
+      // `logVirtualCall` propagates each method into the receiver's log
+      // AND every ancestor's log, so the same method recurs across the
+      // chain's logs. Resolution only depends on `cls`, not on which
+      // ancestor carried the entry, so collect the union once and
+      // resolve each method a single time — otherwise a method logged
+      // high in a deep hierarchy is re-resolved once per ancestor that
+      // also holds it, which is the dominant link-time cost.
       val chain = cls +: ancestorsOf(cls).toSeq
+      val methodsToReplay = mutable.HashSet.empty[PyMethodName]
       for a <- chain do
-        state.get(a).foreach { as =>
-          for m <- as.virtualCallLog do
-            resolveInstanceMethod(cls, m).foreach { case (owner, method) =>
-              enqueue(Work.AnalyzeMethod(owner, method))
-            }
+        state.get(a).foreach(as => methodsToReplay ++= as.virtualCallLog)
+      for m <- methodsToReplay do
+        resolveInstanceMethod(cls, m).foreach { case (owner, method) =>
+          enqueue(Work.AnalyzeMethod(owner, method))
         }
 
     private def analyzeMethod(owner: PyClassName, method: PyMethodName): Unit = boundary:
@@ -510,14 +528,19 @@ object PyReachability:
         ))
 
     private def gatherDescendants(cls: PyClassName): Set[PyClassName] =
-      val seen = mutable.HashSet.empty[PyClassName]
-      val stack = mutable.ArrayDeque.empty[PyClassName]
-      directDescendants.get(cls).foreach(_.foreach(stack += _))
-      while stack.nonEmpty do
-        val d = stack.removeHead()
-        if seen.add(d) then
-          directDescendants.get(d).foreach(_.foreach(stack += _))
-      seen.toSet
+      descendantsCache.get(cls) match
+        case Some(cached) => cached
+        case None =>
+          val seen = mutable.HashSet.empty[PyClassName]
+          val stack = mutable.ArrayDeque.empty[PyClassName]
+          directDescendants.get(cls).foreach(_.foreach(stack += _))
+          while stack.nonEmpty do
+            val d = stack.removeHead()
+            if seen.add(d) then
+              directDescendants.get(d).foreach(_.foreach(stack += _))
+          val result = seen.toSet
+          descendantsCache(cls) = result
+          result
 
     /** Walk `start`'s superchain (including `start`) and return the
      *  first class that defines an instance method with name `m`.
@@ -542,6 +565,17 @@ object PyReachability:
      *  wins; cycles (mutual-recursive interface tangles introduced by
      *  ScalaPy support libraries) are guarded by `seen`. */
     private def resolveInstanceMethod(
+        start:  PyClassName,
+        m:      PyMethodName
+    ): Option[(PyClassName, PyMethodName)] =
+      resolveCache.get((start, m)) match
+        case Some(cached) => cached
+        case None =>
+          val result = resolveInstanceMethodUncached(start, m)
+          resolveCache((start, m)) = result
+          result
+
+    private def resolveInstanceMethodUncached(
         start:  PyClassName,
         m:      PyMethodName
     ): Option[(PyClassName, PyMethodName)] =

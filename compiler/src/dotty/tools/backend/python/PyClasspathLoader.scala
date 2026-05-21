@@ -5,6 +5,8 @@ import dotty.tools.dotc.core.Contexts.Context
 import dotty.tools.dotc.report
 
 import java.io.File
+import java.lang.ref.SoftReference
+import java.util.concurrent.ConcurrentHashMap
 import java.util.jar.JarFile
 import scala.collection.mutable
 import scala.util.boundary, boundary.break
@@ -45,6 +47,31 @@ object PyClasspathLoader:
    */
   private val SupportEntryMarkers: List[String] =
     List("scala-pylib-py", "scala-library-py")
+
+  /** Process-wide cache of deserialized support `.pyir` keyed by jar
+   *  identity (`path:lastModified:length`). The support jars are
+   *  identical across every compilation unit in a run — and across
+   *  every compile in a long-lived JVM such as the test harness — so
+   *  deserializing them once and reusing the immutable `PyLinker.Input`
+   *  list saves the per-CU re-deserialization of the whole stdlib
+   *  (≈7.5MB / ~4400 classes).
+   *
+   *  Correctness: the key embeds the jar's last-modified time and
+   *  length, so a rebuilt support jar (same path, new contents)
+   *  produces a fresh key and misses the cache. Values are held
+   *  through a [[SoftReference]] so the GC may reclaim the (large)
+   *  deserialized class set under memory pressure; a cleared entry is
+   *  simply recomputed. Inputs are always tagged
+   *  [[PyLinker.InputSource.Support]] — the only source a jar entry is
+   *  ever loaded with — so the cached list is reusable verbatim.
+   */
+  private val jarInputCache =
+    new ConcurrentHashMap[String, SoftReference[List[PyLinker.Input]]]()
+
+  private def jarCacheKey(jarFile: File): String =
+    val canon =
+      try jarFile.getCanonicalPath.nn catch case _: java.io.IOException => jarFile.getAbsolutePath.nn
+    s"$canon:${jarFile.lastModified()}:${jarFile.length()}"
 
   /** Load every `.pyir` on the classpath (and any left over at the top
    *  level of the output dir), tagged [[PyLinker.InputSource.Support]].
@@ -145,24 +172,42 @@ object PyClasspathLoader:
     val canon =
       try jarFile.getCanonicalPath.nn catch case _: java.io.IOException => jarFile.getAbsolutePath.nn
     if !visitedFiles.add(canon) then break()
+
+    val key = jarCacheKey(jarFile)
+    val cached = Option(jarInputCache.get(key)).flatMap(ref => Option(ref.get()))
+    cached match
+      case Some(loaded) =>
+        inputs ++= loaded
+      case None =>
+        try
+          val loaded = deserializeJar(jarFile, source)
+          jarInputCache.put(key, new SoftReference(loaded))
+          inputs ++= loaded
+        catch
+          case e: PyIRException        => reportLoadFailure(jarFile, required, e)
+          case e: java.io.IOException  => reportLoadFailure(jarFile, required, e)
+
+  /** Deserialize every `.pyir` entry of `jarFile` into Support inputs.
+   *  Pure with respect to the compiler `Context`; failures propagate so
+   *  the caller can route them through [[reportLoadFailure]] (and skip
+   *  caching the failed result). */
+  private def deserializeJar(jarFile: File, source: PyLinker.InputSource): List[PyLinker.Input] =
+    val out = mutable.ListBuffer.empty[PyLinker.Input]
+    val jar = new JarFile(jarFile)
     try
-      val jar = new JarFile(jarFile)
-      try
-        val entries = jar.entries()
-        while entries.hasMoreElements do
-          val entry = entries.nextElement()
-          if !entry.isDirectory && entry.getName.nn.endsWith(".pyir") then
-            val is = jar.getInputStream(entry)
-            try
-              val bytes = is.readAllBytes()
-              val cu = PyIRDeserializer.deserialize(bytes)
-              if cu.classes.nonEmpty then
-                inputs += PyLinker.Input(cu.classes, cu.mainEntry, source)
-            finally is.close()
-      finally jar.close()
-    catch
-      case e: PyIRException        => reportLoadFailure(jarFile, required, e)
-      case e: java.io.IOException  => reportLoadFailure(jarFile, required, e)
+      val entries = jar.entries()
+      while entries.hasMoreElements do
+        val entry = entries.nextElement()
+        if !entry.isDirectory && entry.getName.nn.endsWith(".pyir") then
+          val is = jar.getInputStream(entry)
+          try
+            val bytes = is.readAllBytes()
+            val cu = PyIRDeserializer.deserialize(bytes)
+            if cu.classes.nonEmpty then
+              out += PyLinker.Input(cu.classes, cu.mainEntry, source)
+          finally is.close()
+    finally jar.close()
+    out.toList
 
   private def loadFromDir(
       dir: File,
