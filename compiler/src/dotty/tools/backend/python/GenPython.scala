@@ -883,17 +883,16 @@ private class PyCodeGen()(using genCtx: Context):
     val fields = mutable.ListBuffer.empty[PyFieldDef]
     val methods = mutable.ListBuffer.empty[PyMethodDef]
 
-    // Pre-pass: identify synthetic `@JavaStatic` helpers whose body still
-    // needs `self`. Must run before any method-body codegen so both the
-    // def site and the call sites observe the same demotion decision.
+    // The `@JavaStatic`-helper demotion (`anonfunDemotedToInstance`) is
+    // computed once CU-wide in `genCompilationUnit` BEFORE any class body
+    // is generated, so the set is already fully populated by the time we
+    // reach here. `genClassMembers` is only ever entered via
+    // `genCompilationUnit` -> `genClassDef`, under the SAME
+    // extern/primitive/Array guard the CU-wide pre-pass uses, so re-running
+    // the identical scan per class was pure duplicated work — every
+    // synthetic anonfun/`$superArg$` body got walked by
+    // `needsSelfDespiteStatic` twice.
     val members = collectMemberDefs(td)
-    for tree <- members do
-      tree match
-        case dd: DefDef if !dd.symbol.isClassConstructor =>
-          if needsSelfDespiteStatic(dd) then
-            anonfunDemotedToInstance += dd.symbol
-        case _ => ()
-
     for tree <- members do
       tree match
         case vd: ValDef =>
