@@ -27,9 +27,42 @@ class PyEncoding(using Context):
   private val pyDefn = PyDefinitions.pydefn
   private val reportedMalformedExterns = scala.collection.mutable.Set.empty[Symbol]
 
+  // --- Per-symbol encoding caches ------------------------------------
+  //
+  // `encodeClassName`, `encodeMethodName`, `encodeFieldName`, and the
+  // non-array branch of `encodeTypeRef` / `encodeType` are pure functions
+  // of their argument's symbol within ONE compilation unit: this
+  // `PyEncoding` is instantiated per CU (`new PyEncoding()` in GenPython)
+  // under a stable `Context`, so symbol identity is fixed for the
+  // instance's lifetime. GenPython calls these at every reference site —
+  // the same handful of class/method/field symbols recur thousands of
+  // times — and each call otherwise repeats an owner-chain walk, a
+  // `javaClassName` string split + per-segment `sanitizeName`, and (for
+  // methods) a full param/result type-ref encoding. Memoizing on symbol
+  // identity removes that repeated work. Emitted Python is byte-identical;
+  // the one observable difference is that a `_scpy_`-collision
+  // `report.warning` raised inside `sanitizeName` now fires once per
+  // symbol instead of once per reference (strictly fewer duplicate
+  // diagnostics).
+  //
+  // The class cache keys on the ORIGINAL `sym` (before the module-class
+  // re-anchor), so a lookup never has to recompute the rewire. The type
+  // caches key on `tp.typeSymbol`, which fully determines the non-array
+  // result; array types recurse uncached because each `JavaArrayType` is a
+  // fresh instance whose element structure (not just `typeSymbol`) drives
+  // the result.
+  private val classNameCache  = scala.collection.mutable.HashMap.empty[Symbol, PyClassName]
+  private val methodNameCache = scala.collection.mutable.HashMap.empty[Symbol, PyMethodName]
+  private val fieldNameCache  = scala.collection.mutable.HashMap.empty[Symbol, PyFieldName]
+  private val typeRefCache    = scala.collection.mutable.HashMap.empty[Symbol, PyTypeRef]
+  private val typeCache       = scala.collection.mutable.HashMap.empty[Symbol, PyType]
+
   // --- Class names ---------------------------------------------------
 
   def encodeClassName(sym: Symbol): PyClassName =
+    classNameCache.getOrElseUpdate(sym, computeClassName(sym))
+
+  private def computeClassName(sym: Symbol): PyClassName =
     // For Java-defined module classes, re-anchor to the companion class.
     val rewired =
       if sym.isAllOf(ModuleClass | JavaDefined) && sym.linkedClass.exists then
@@ -106,6 +139,9 @@ class PyEncoding(using Context):
   // can't collide.
 
   def encodeMethodName(sym: Symbol): PyMethodName =
+    methodNameCache.getOrElseUpdate(sym, computeMethodName(sym))
+
+  private def computeMethodName(sym: Symbol): PyMethodName =
     val simpleName =
       if sym.isClassConstructor then PySimpleMethodName.Constructor
       else
@@ -155,6 +191,9 @@ class PyEncoding(using Context):
   // --- Field names ---------------------------------------------------
 
   def encodeFieldName(sym: Symbol): PyFieldName =
+    fieldNameCache.getOrElseUpdate(sym, computeFieldName(sym))
+
+  private def computeFieldName(sym: Symbol): PyFieldName =
     // Owner-mangle fields whose user-facing access is genuinely
     // private — i.e. no public/protected accessor exposes them. This
     // matches JVM `resolveField`-by-declaring-class semantics for the
@@ -292,22 +331,24 @@ class PyEncoding(using Context):
           case PyArrayRef(base, dims) => PyArrayRef(base, dims + 1)
           case other                  => PyArrayRef(other, 1)
       case _ =>
-        val sym = tp.typeSymbol
-        if isFacadeSymbol(sym) then PyClassRef(PyClassName.ObjectClass)
-        else if sym == defn.IntClass then PyPrimRef.IntRef
-        else if sym == defn.LongClass then PyPrimRef.LongRef
-        else if sym == defn.FloatClass then PyPrimRef.FloatRef
-        else if sym == defn.DoubleClass then PyPrimRef.DoubleRef
-        else if sym == defn.BooleanClass then PyPrimRef.BooleanRef
-        else if sym == defn.CharClass then PyPrimRef.CharRef
-        else if sym == defn.ByteClass then PyPrimRef.ByteRef
-        else if sym == defn.ShortClass then PyPrimRef.ShortRef
-        else if sym == defn.UnitClass then PyPrimRef.VoidRef
-        else if sym == defn.NothingClass then PyPrimRef.NothingRef
-        else if sym == defn.NullClass then PyPrimRef.NullRef
-        else if sym == defn.StringClass then PyClassRef(PyClassName.StringClass)
-        else if sym.exists && sym.isClass then PyClassRef(encodeClassName(sym))
-        else PyClassRef(PyClassName.ObjectClass)
+        typeRefCache.getOrElseUpdate(tp.typeSymbol, computeTypeRef(tp.typeSymbol))
+
+  private def computeTypeRef(sym: Symbol): PyTypeRef =
+    if isFacadeSymbol(sym) then PyClassRef(PyClassName.ObjectClass)
+    else if sym == defn.IntClass then PyPrimRef.IntRef
+    else if sym == defn.LongClass then PyPrimRef.LongRef
+    else if sym == defn.FloatClass then PyPrimRef.FloatRef
+    else if sym == defn.DoubleClass then PyPrimRef.DoubleRef
+    else if sym == defn.BooleanClass then PyPrimRef.BooleanRef
+    else if sym == defn.CharClass then PyPrimRef.CharRef
+    else if sym == defn.ByteClass then PyPrimRef.ByteRef
+    else if sym == defn.ShortClass then PyPrimRef.ShortRef
+    else if sym == defn.UnitClass then PyPrimRef.VoidRef
+    else if sym == defn.NothingClass then PyPrimRef.NothingRef
+    else if sym == defn.NullClass then PyPrimRef.NullRef
+    else if sym == defn.StringClass then PyClassRef(PyClassName.StringClass)
+    else if sym.exists && sym.isClass then PyClassRef(encodeClassName(sym))
+    else PyClassRef(PyClassName.ObjectClass)
 
   /** Convert a post-erasure Scala type to a runtime `PyType` (attached to
    *  `PyTree` nodes). */
@@ -315,22 +356,24 @@ class PyEncoding(using Context):
     tp match
       case _: JavaArrayType => PyArrayType
       case _ =>
-        val sym = tp.typeSymbol
-        if isFacadeSymbol(sym) then PyAnyType
-        else if sym == defn.IntClass then PyIntType
-        else if sym == defn.LongClass then PyLongType
-        else if sym == defn.FloatClass then PyFloatType
-        else if sym == defn.DoubleClass then PyDoubleType
-        else if sym == defn.BooleanClass then PyBooleanType
-        else if sym == defn.CharClass then PyCharType
-        else if sym == defn.ByteClass then PyByteType
-        else if sym == defn.ShortClass then PyShortType
-        else if sym == defn.UnitClass then PyVoidType
-        else if sym == defn.NothingClass then PyNothingType
-        else if sym == defn.NullClass then PyNullType
-        else if sym == defn.StringClass then PyStringType
-        else if sym.exists && sym.isClass then PyClassType(encodeClassName(sym))
-        else PyAnyType
+        typeCache.getOrElseUpdate(tp.typeSymbol, computeType(tp.typeSymbol))
+
+  private def computeType(sym: Symbol): PyType =
+    if isFacadeSymbol(sym) then PyAnyType
+    else if sym == defn.IntClass then PyIntType
+    else if sym == defn.LongClass then PyLongType
+    else if sym == defn.FloatClass then PyFloatType
+    else if sym == defn.DoubleClass then PyDoubleType
+    else if sym == defn.BooleanClass then PyBooleanType
+    else if sym == defn.CharClass then PyCharType
+    else if sym == defn.ByteClass then PyByteType
+    else if sym == defn.ShortClass then PyShortType
+    else if sym == defn.UnitClass then PyVoidType
+    else if sym == defn.NothingClass then PyNothingType
+    else if sym == defn.NullClass then PyNullType
+    else if sym == defn.StringClass then PyStringType
+    else if sym.exists && sym.isClass then PyClassType(encodeClassName(sym))
+    else PyAnyType
 
   /** Original source name for diagnostics. */
   def originalNameOf(sym: Symbol): PyOriginalName =
