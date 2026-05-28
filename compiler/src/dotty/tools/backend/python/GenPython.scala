@@ -3870,45 +3870,63 @@ private class PyCodeGen()(using genCtx: Context):
    *  call site, which is after all hoists, preserving order.
    */
   private def genArgsPreservingOrder(argTrees: List[Tree]): List[PyTree] =
-    case class Snap(prefixSize: Int, expr: PyTree)
-    val snaps: List[Snap] = argTrees.map { tree =>
-      val before = pendingLocalDefs.size
-      val expr = genExpr(tree)
-      Snap(before, expr)
-    }
+    val startSize = pendingLocalDefs.size
+    // Generate args strictly left-to-right, recording the size of
+    // `pendingLocalDefs` observed BEFORE each arg. `pendingLocalDefs` only
+    // ever grows during this loop (a sibling arg's hoists are never flushed
+    // mid-sequence — flushing is the parent's job, after the call expr is
+    // built), so these prefix sizes are non-decreasing.
+    val exprs    = mutable.ArrayBuffer.empty[PyTree]
+    val prefixes = mutable.ArrayBuffer.empty[Int]
+    for tree <- argTrees do
+      prefixes += pendingLocalDefs.size
+      exprs    += genExpr(tree)
     val finalSize = pendingLocalDefs.size
 
-    // First arg whose generation grew `pendingLocalDefs`.
-    val firstPushIdx = snaps.iterator.zipWithIndex.find { case (snap, i) =>
-      val nextPrefix = if i + 1 < snaps.size then snaps(i + 1).prefixSize else finalSize
-      nextPrefix > snap.prefixSize
-    }.map(_._2)
+    // Fast path: no arg hoisted anything, so every arg is an inline
+    // expression evaluated at the call site and source order already
+    // holds. Because the prefix sizes are non-decreasing, an unchanged
+    // total size is exactly equivalent to the old `firstPushIdx == None`,
+    // and we skip the per-arg lift scan entirely (the common case).
+    if finalSize == startSize then return exprs.toList
 
-    firstPushIdx match
-      case None => snaps.map(_.expr)
-      case Some(k) =>
-        val insertAt = snaps(k).prefixSize
-        val out = mutable.ArrayBuffer.empty[PyTree]
-        var inserted = 0
-        for ((snap, i) <- snaps.zipWithIndex)
-          if i < k && !isPureArgExpr(snap.expr) then
-            val pos = snap.expr.pos
-            val tpe = snap.expr.tpe
-            val name = freshArgTempName()
-            val tempRef = PyVarRef(name)(tpe, pos)
-            val tempDef = PyVarDef(
-              name         = name,
-              originalName = PyOriginalName.NoOriginalName,
-              vtpe         = tpe,
-              mutable      = false,
-              rhs          = snap.expr
-            )(pos)
-            pendingLocalDefs.insert(insertAt + inserted, tempDef)
-            inserted += 1
-            out += tempRef
-          else
-            out += snap.expr
-        out.toList
+    // First arg whose generation grew `pendingLocalDefs`. `prefixes` is an
+    // indexed buffer, so the neighbour lookup is O(1) (the old List-indexed
+    // `snaps(i + 1)` made this scan O(n^2)).
+    val n = exprs.size
+    var k = -1
+    var i = 0
+    while k < 0 && i < n do
+      val nextPrefix = if i + 1 < n then prefixes(i + 1) else finalSize
+      if nextPrefix > prefixes(i) then k = i
+      i += 1
+    if k < 0 then return exprs.toList // defensive; unreachable given growth
+
+    val insertAt = prefixes(k)
+    val out = mutable.ArrayBuffer.empty[PyTree]
+    var inserted = 0
+    var j = 0
+    while j < n do
+      val expr = exprs(j)
+      if j < k && !isPureArgExpr(expr) then
+        val pos = expr.pos
+        val tpe = expr.tpe
+        val name = freshArgTempName()
+        val tempRef = PyVarRef(name)(tpe, pos)
+        val tempDef = PyVarDef(
+          name         = name,
+          originalName = PyOriginalName.NoOriginalName,
+          vtpe         = tpe,
+          mutable      = false,
+          rhs          = expr
+        )(pos)
+        pendingLocalDefs.insert(insertAt + inserted, tempDef)
+        inserted += 1
+        out += tempRef
+      else
+        out += expr
+      j += 1
+    out.toList
   end genArgsPreservingOrder
 
   /** Pure leaf — re-evaluating it has no observable side effects, so
