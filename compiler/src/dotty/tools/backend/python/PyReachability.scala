@@ -165,6 +165,19 @@ object PyReachability:
     private val classByName: Map[PyClassName, PyClassDef] =
       (userClasses.iterator ++ supportClasses.iterator).map(c => c.name -> c).toMap
 
+    /** Per-class method lookup by name, first declaration wins (matching
+     *  the former `methods.find(_.name == ...)` scan). Built once so
+     *  [[analyzeMethod]] resolves a body in O(1) instead of scanning the
+     *  owner's entire method list on every reachable method — that linear
+     *  scan dominated link time on method-dense stdlib classes (e.g.
+     *  collection ops). */
+    private val methodsByName: Map[PyClassName, Map[PyMethodName, PyMethodDef]] =
+      classByName.view.mapValues { c =>
+        val byName = mutable.HashMap.empty[PyMethodName, PyMethodDef]
+        c.methods.foreach(m => if !byName.contains(m.name) then byName(m.name) = m)
+        byName.toMap
+      }.toMap
+
     /** Mutable per-class facts. Classes absent from this map are
      *  unreachable; query helpers on [[Result]] collapse that to
      *  `false`. We pre-insert an entry at first touch in
@@ -411,7 +424,7 @@ object PyReachability:
       val s = stateOf(owner)
       if !s.reachableMethods.add(method) then break()
       enqueue(Work.ReachClass(owner))
-      classByName.get(owner).flatMap(_.methods.find(_.name == method)) match
+      methodsByName.get(owner).flatMap(_.get(method)) match
         case Some(mdef) => mdef.body.foreach(walkTree)
         case None =>
           // Not a direct member — either inherited only, or missing.
