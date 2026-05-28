@@ -289,6 +289,32 @@ object PyLinker:
 
       LinkedBundle(orderForEmission(userClasses), mainEntry)
 
+    /** Guardrail for the no-rewrite reachability fast path. When true,
+     *  every fast-path skip is cross-checked against a full re-analysis
+     *  and a divergence is a hard error — validating the DCE-stability
+     *  invariant the fast path relies on. Run the py test suite with this
+     *  flipped to `true` after any change to the analyzer; ship `false`
+     *  (the check then costs one boolean test per converged CU). */
+    private val VerifyReachabilityFixpoint = false
+
+    private def verifyNoRewriteFixpoint(
+        fast:           List[PyClassDef],
+        methodPruned:   List[PyClassDef],
+        mainEntry:      Option[PyIREmitter.MainEntry],
+        userClassNames: Set[PyClassName]
+    ): Unit =
+      val viaReanalyze =
+        applyReachability(
+          methodPruned,
+          analyzeReachability(methodPruned, mainEntry, userClassNames),
+          userClassNames)
+      if fast != viaReanalyze then
+        error(
+          "Python backend: no-rewrite reachability fast path diverged from a " +
+          s"full re-analysis (fast=${fast.size} classes, reanalyzed=" +
+          s"${viaReanalyze.size}); the DCE-stability invariant is violated.",
+          PyPosition.NoPosition)
+
     private def optimizeReachability(
         classes:        List[PyClassDef],
         mainEntry:      Option[PyIREmitter.MainEntry],
@@ -300,8 +326,28 @@ object PyLinker:
 
       while iteration < maxReachabilityIterations do
         val methodPrunedClasses = pruneReachableClassesAndMethods(current, reach)
-        val rewrittenClasses =
+        val (rewrittenClasses, rewroteStores) =
           rewriteDeadSupportInitStores(methodPrunedClasses, reach, userClassNames)
+
+        if !rewroteStores then
+          // No body was rewritten, so the only transform this iteration
+          // applied is pruning unreachable classes/methods
+          // (`rewrittenClasses` is structurally `methodPrunedClasses`).
+          // Removing `analyze`-unreachable elements cannot change the
+          // reachability facts of any SURVIVING element: roots are user
+          // classes + prelude/dispatch seeds (never "all support
+          // classes"), propagation flows only through reachable bodies,
+          // and virtual dispatch only targets instantiated classes.
+          // `applyReachability` consults `reach` solely per surviving
+          // class, so re-analyzing `methodPrunedClasses` would yield the
+          // same emitted set. Skip the (whole-stdlib) re-analysis — this
+          // is the common case, and the re-analysis was the dominant
+          // per-CU link cost.
+          val kept = applyReachability(methodPrunedClasses, reach, userClassNames)
+          if VerifyReachabilityFixpoint then
+            verifyNoRewriteFixpoint(kept, methodPrunedClasses, mainEntry, userClassNames)
+          break(kept)
+
         val nextReach =
           analyzeReachability(rewrittenClasses, mainEntry, userClassNames)
 
@@ -417,7 +463,13 @@ object PyLinker:
         classes:        List[PyClassDef],
         reach:          PyReachability.Result,
         userClassNames: Set[PyClassName]
-    ): List[PyClassDef] =
+    ): (List[PyClassDef], Boolean) =
+      // Set true iff at least one dead init store is actually replaced.
+      // Every other arm of `rewriteTree` rebuilds a structurally identical
+      // node, so a false flag means the returned classes are equivalent to
+      // the input — which `optimizeReachability` relies on to skip a
+      // redundant whole-stdlib re-analysis.
+      var rewroteAnyStore = false
       val supportClassNames =
         classes.iterator.map(_.name).filterNot(userClassNames.contains).toSet
       val declaredSupportFields =
@@ -511,6 +563,7 @@ object PyLinker:
           PyVarDef(name, originalName, vtpe, mutable, rewriteTree(rhs, ctx))(tree.pos)
 
         case PyAssign(lhs, rhs) if shouldRewriteDeadStore(lhs, ctx) =>
+          rewroteAnyStore = true
           replacementForDeadStore(rhs, tree.pos, ctx)
 
         case PyAssign(lhs, rhs) =>
@@ -633,7 +686,7 @@ object PyLinker:
         case _: PyClassOf | _: PyLiteral =>
           tree
 
-      classes.map { cls =>
+      val rewritten = classes.map { cls =>
         if userClassNames.contains(cls.name) then cls
         else
           val methods = cls.methods.map { method =>
@@ -644,6 +697,7 @@ object PyLinker:
           }
           cls.copy(methods = methods)
       }
+      (rewritten, rewroteAnyStore)
 
     private def collectEmittedFieldRefs(classes: List[PyClassDef]): Set[PyFieldName] =
       val refs = mutable.HashSet.empty[PyFieldName]
