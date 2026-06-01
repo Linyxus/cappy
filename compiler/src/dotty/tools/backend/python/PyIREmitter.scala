@@ -1152,6 +1152,10 @@ object PyIREmitter:
             line("else:")
             indent(); defaultStmts.foreach(emitStmt); dedent()
 
+      case PyUnaryOp(PyUnaryCode.Throw, ex) =>
+        // `throw` in statement position is a plain `raise`.
+        line(s"raise ${exprToStr(ex)}")
+
       case _: PyUnitLit =>
         ()  // unit in statement position is a no-op
 
