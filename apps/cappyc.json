@@ -3,7 +3,7 @@
     "name": "cappyc",
     "mainClass": "dotty.tools.dotc.PyMain",
     "dependencies": [
-      "io.github.linyxus.scalapy:cappyc_3:3.9.0-RC1-PY0.1.8"
+      "io.github.linyxus.scalapy:cappyc_3:3.9.0-RC1-PY0.1.9"
     ],
     "repositories": [
       "central",
