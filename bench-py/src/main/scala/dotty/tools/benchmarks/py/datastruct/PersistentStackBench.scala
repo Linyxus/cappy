@@ -1,5 +1,7 @@
 package dotty.tools.benchmarks.py.datastruct
 
+import scala.annotation.tailrec
+
 /** Immutable persistent stack via covariant case-class cons cells. Tests
  *  +A/Nothing ADTs, per-push allocation, structural sharing, and
  *  pattern-match dispatch per pop/walk step. */
@@ -17,13 +19,17 @@ class PersistentStackBench:
     case PFrame(top, rest) => (top, rest)
     case PEmpty            => throw new RuntimeException("empty")
 
-  def sumTop(s: PStack[Int]): Long = s match
-    case PEmpty            => 0L
-    case PFrame(top, rest) => top.toLong + sumTop(rest)
+  def sumTop(s: PStack[Int]): Long =
+    @tailrec def loop(t: PStack[Int], acc: Long): Long = t match
+      case PEmpty            => acc
+      case PFrame(top, rest) => loop(rest, acc + top.toLong)
+    loop(s, 0L)
 
-  def length(s: PStack[Int]): Int = s match
-    case PEmpty         => 0
-    case PFrame(_, rest) => 1 + length(rest)
+  def length(s: PStack[Int]): Int =
+    @tailrec def loop(t: PStack[Int], acc: Int): Int = t match
+      case PEmpty          => acc
+      case PFrame(_, rest) => loop(rest, acc + 1)
+    loop(s, 0)
 
   def build(n: Int): PStack[Int] =
     var s: PStack[Int] = PEmpty
