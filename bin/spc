@@ -9,7 +9,21 @@ scala_pylib_py_root="$ROOT/pylib-py/target/scala-pylib-py"
 scala_library_py_root="$ROOT/library-py/target/scala-library-py"
 
 find_jar() {
-  find "$1" -type f -name "$2" ! -name "*-sources.jar" ! -name "*-javadoc.jar" | LC_ALL=C sort | head -1
+  # Pick the most recently built jar. Name-sorting is wrong when several
+  # build-version dirs coexist (e.g. 3.8.5 vs 3.9.0), since the lexically
+  # smaller — and usually older — version would win.
+  find "$1" -type f -name "$2" ! -name "*-sources.jar" ! -name "*-javadoc.jar" -print0 2>/dev/null \
+    | xargs -0 ls -t 2>/dev/null | head -1
+}
+
+# Succeeds (0) if any .scala/.java source under $1 is newer than jar $2, or if
+# the jar is missing. Used to detect a support jar that has fallen behind its
+# sources — the usual cause of "<symbol> resolved to a stub symbol" crashes.
+sources_newer_than_jar() {
+  local src_dir="$1" jar="$2"
+  [ -d "$src_dir" ] || return 1
+  [ -n "$jar" ] && [ -f "$jar" ] || return 0
+  [ -n "$(find "$src_dir" -type f \( -name '*.scala' -o -name '*.java' \) -newer "$jar" -print -quit 2>/dev/null)" ]
 }
 
 resolve_scala_py_classpath() {
@@ -21,13 +35,31 @@ resolve_scala_py_classpath() {
   scala_pylib_py="$(find_jar "$scala_pylib_py_root" "scala-pylib-py_3-*.jar")"
   scala_library_py="$(find_jar "$scala_library_py_root" "scala-library-py_3-*.jar")"
 
-  if [ -z "$scala_library" ] || [ ! -f "$scala_library" ] ||
-     [ -z "$scala_pylib_py" ] || [ ! -f "$scala_pylib_py" ] ||
-     [ -z "$scala_library_py" ] || [ ! -f "$scala_library_py" ]; then
-    echo "Building ScalaPy support jars (required for scpyc) ..." >&2
+  # Rebuild when a jar is missing, or when the py support sources have moved on
+  # past their packaged jar. The py jars are cleaned before repackaging so a
+  # stale, lexically-smaller version dir can't linger and shadow the fresh one.
+  local need_library=0 need_py=0
+  if [ -z "$scala_library" ] || [ ! -f "$scala_library" ]; then
+    need_library=1
+  fi
+  if [ -z "$scala_pylib_py" ] || [ ! -f "$scala_pylib_py" ] ||
+     sources_newer_than_jar "$ROOT/pylib-py/src" "$scala_pylib_py" ||
+     [ -z "$scala_library_py" ] || [ ! -f "$scala_library_py" ] ||
+     sources_newer_than_jar "$ROOT/library-py/src" "$scala_library_py"; then
+    need_py=1
+  fi
+
+  if [ "$need_library" = "1" ] || [ "$need_py" = "1" ]; then
+    local tasks=""
+    [ "$need_library" = "1" ] && tasks="scala-library-bootstrapped/Compile/packageBin"
+    if [ "$need_py" = "1" ]; then
+      [ -n "$tasks" ] && tasks="$tasks; "
+      tasks="${tasks}scala-pylib-py/clean; scala-pylib-py/Compile/packageBin; scala-library-py/clean; scala-library-py/Compile/packageBin"
+    fi
+    echo "Rebuilding ScalaPy support jars (missing or out of date with sources) ..." >&2
     (
       cd "$ROOT" &&
-      sbt --client "scala-library-bootstrapped/Compile/packageBin; scala-pylib-py/Compile/packageBin; scala-library-py/Compile/packageBin"
+      sbt --client "$tasks"
     ) >&2 || exit 1
 
     scala_library="$(find_jar "$scala_library_root" "scala-library-*.jar")"
