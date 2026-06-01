@@ -93,7 +93,7 @@ object Build {
    *  each release is a reviewable commit. Combined with `baseVersion` to form
    *  `dottyVersion` when `PYBUILD=yes`, e.g. `3.9.0-RC1-PY0.1.0`.
    */
-  val pyVersion = "0.1.8"
+  val pyVersion = "0.1.9"
 
   /** Final version of Scala compiler, controlled by environment variables.
    *
