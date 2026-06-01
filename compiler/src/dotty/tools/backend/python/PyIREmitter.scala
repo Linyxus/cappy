@@ -500,14 +500,78 @@ object PyIREmitter:
       line("_scpy_kind = \"" + classKindLiteral(cls.kind) + "\"")
       line("_scpy_superclass = " + classSuperclassLiteral(cls))
       line("_scpy_interfaces = " + classInterfacesLiteral(cls.interfaces))
-      line("def getClass__Ljava_dlang_dClass(self):")
-      indent()
-      line("return _scpy_class_of_instance(self)")
-      dedent()
+      // `getClass` is identical (`_scpy_class_of_instance(self)`) for every
+      // class, and `_scpy_Object` already defines it in the prelude. Skip
+      // the per-class copy whenever the class inherits that definition
+      // through its Python MRO — the common case, and ~530 redundant
+      // copies in a trivial program. The Throwable subtree is the only
+      // exclusion: it roots at the Python builtin `Exception`, which has
+      // no `getClass`, so those classes must keep their own.
+      if emitsOwnGetClass(cls) then
+        line("def getClass__Ljava_dlang_dClass(self):")
+        indent()
+        line("return _scpy_class_of_instance(self)")
+        dedent()
+
+    /** True iff `cls` must carry its own `getClass` forwarder rather than
+     *  inheriting the identical one from `_scpy_Object`.
+     *
+     *  A class whose Python MRO bottoms out at `_scpy_Object` inherits the
+     *  prelude definition verbatim, so re-emitting it is pure bloat. That
+     *  covers the overwhelming majority: a class with no nominal super
+     *  (`superClass == None`, i.e. `extends Object`) is rooted at
+     *  `_scpy_Object` by `buildBasesList`, and any nominal super/interface
+     *  chain bottoms out there too.
+     *
+     *  Two cases must keep their own copy:
+     *   - Throwable descendants: they root at the Python builtin
+     *     `Exception` (see `buildBasesList`), which carries no `getClass`.
+     *     Emitting across the whole subtree (not just the bundle
+     *     `Throwable` root) stays sound when an exception is runtime-
+     *     provided rather than bundled.
+     *   - `@extern`-rooted classes whose foreign Python base — and whose
+     *     interfaces — never reach `_scpy_Object`.
+     */
+    private def emitsOwnGetClass(cls: PyClassDef): Boolean =
+      isThrowableDescendant(cls) || !rootsAtScpyObject(cls.name)
+
+    private val rootsAtObjectMemo = mutable.Map.empty[PyClassName, Boolean]
+
+    /** True iff the Python MRO of `name` includes `_scpy_Object` — i.e. the
+     *  class's base chain bottoms out at the runtime `Object` (which owns
+     *  the prelude `getClass`) rather than at a foreign Python class.
+     *  Follows the actual emitted base structure: a `None` nominal super
+     *  is `extends Object` (rooted at `_scpy_Object`); an `Extern` super is
+     *  foreign and only reaches `_scpy_Object` through an interface. A
+     *  recursion cycle conservatively yields `false` (keep the own copy). */
+    private def rootsAtScpyObject(name: PyClassName): Boolean =
+      if name == PyClassName.ObjectClass then true
+      else rootsAtObjectMemo.get(name) match
+        case Some(known) => known
+        case None =>
+          rootsAtObjectMemo(name) = false  // cycle guard: assume not until proven
+          val result = classByName.get(name) match
+            case Some(c) =>
+              c.superClass match
+                case None => true  // `extends Object` → rooted at _scpy_Object
+                case Some(PyClassSuper.Nominal(sup)) =>
+                  rootsAtScpyObject(sup) || c.interfaces.exists(rootsAtScpyObject)
+                case Some(PyClassSuper.Extern(_, _)) =>
+                  c.interfaces.exists(rootsAtScpyObject)
+            case None =>
+              // Runtime-provided (or unknown) class: follow its recorded
+              // links. Unknown names resolve to `false` → own copy emitted.
+              PyIRRuntime.providedClass(name).exists { pc =>
+                pc.superClass.exists(rootsAtScpyObject) || pc.interfaces.exists(rootsAtScpyObject)
+              }
+          rootsAtObjectMemo(name) = result
+          result
 
     private def emitClassRegistration(cls: PyClassDef): Unit =
-      val clsId = classIdentifier(cls.name)
-      line(s"_scpy_register_class($clsId, $clsId._scpy_full_name, $clsId._scpy_kind, $clsId._scpy_superclass, $clsId._scpy_interfaces, simple_name=$clsId._scpy_simple_name, jvm_name=$clsId._scpy_jvm_name)")
+      // Every argument was just read straight off the class body's
+      // metadata attributes; pass the class once and let the prelude
+      // helper read them, instead of repeating the identifier 7x.
+      line(s"_scpy_register_class_from_type(${classIdentifier(cls.name)})")
 
     /** True iff `cls` carries a synthesized `<clinit>` method —
      *  `MoveStatics` lifts every `@scala.annotation.static val/var`

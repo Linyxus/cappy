@@ -1607,6 +1607,21 @@ object PyIRRuntime:
        |            pass
        |    return clazz
        |
+       |def _scpy_register_class_from_type(py_type):
+       |    # Convenience wrapper for the codegen registration site: read the
+       |    # class's metadata attributes (set inline in the class body by
+       |    # `emitClassMetadata`) off `py_type` rather than spelling each one
+       |    # out at every call site.
+       |    return _scpy_register_class(
+       |        py_type,
+       |        py_type._scpy_full_name,
+       |        py_type._scpy_kind,
+       |        py_type._scpy_superclass,
+       |        py_type._scpy_interfaces,
+       |        simple_name=py_type._scpy_simple_name,
+       |        jvm_name=py_type._scpy_jvm_name,
+       |    )
+       |
        |def _scpy_simple_name_of(value):
        |    # Returns the user-visible Scala simple name of `value`'s class
        |    # (e.g. `D1` for `object D1 extends Enumeration` defined inside
