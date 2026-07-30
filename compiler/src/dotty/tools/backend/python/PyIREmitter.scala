@@ -2282,7 +2282,6 @@ object PyIREmitter:
           // positions don't show up here.
           t match
             case p: Product => p.productIterator.foreach(visitChild(_, bound))
-            case _          => ()
       def visitChild(child: Any, bound: Set[String]): Unit = child match
         case t: PyTree    => visit(t, bound)
         case xs: Seq[?]   => xs.foreach(visitChild(_, bound))
